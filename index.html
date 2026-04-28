@@ -75,6 +75,12 @@
         return `${mins}:${String(secs).padStart(2, "0")} /mi`;
       }
 
+      function placeSuffix(n) {
+        if (n === 11 || n === 12 || n === 13) return `${n}th`;
+        const s = ["th","st","nd","rd"];
+        return `${n}${s[n % 10] || s[0]}`;
+      }
+
       // ── Athlete time helpers ─────────────────────────────────────────────────
       function segmentDuration(athlete, segIndex) {
         const times = athlete.splits;
@@ -242,6 +248,115 @@
             return { ...ath, startOffset: newStart, splits: newSplits, finished: newSplits[SEGMENTS.length - 1] !== null };
           }));
           setEditTarget(null);
+        }
+
+        function exportCSV() {
+          const headers = ["Place","Athlete",...SEGMENTS.map(s => s+" Time"),"Chip Time","Gun Time","Swim Pace (/100y)","Bike Speed (mph)","Run Pace (/mi)"];
+          const rows = sorted.map((ath, place) => {
+            const chip = totalChipTime(ath);
+            const gt   = gunTime(ath);
+            const swimMs = segmentDuration(ath, 0);
+            const bikeMs = segmentDuration(ath, 2);
+            const runMs  = segmentDuration(ath, 4);
+            return [
+              place + 1, ath.name,
+              ...SEGMENTS.map((_, si) => { const d = segmentDuration(ath, si); return d !== null ? formatElapsed(d) : ""; }),
+              chip !== null ? formatElapsed(chip) : "",
+              gt   !== null ? formatElapsed(gt)   : "",
+              calcSwimPace(swimMs, swimYards) ?? "",
+              calcBikeMph(bikeMs, bikeMiles)  ?? "",
+              calcRunPace(runMs,  runMiles)   ?? "",
+            ];
+          });
+          const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\r\n");
+          const a = Object.assign(document.createElement("a"), {
+            href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" })),
+            download: "triathlon-results.csv",
+          });
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        }
+
+        function printCertificates() {
+          const medalEmoji  = ["🥇","🥈","🥉"];
+          const medalColors = ["#d4a017","#8a9ba8","#b87333"];
+          const certHTML = sorted.map((ath, place) => {
+            const chip   = totalChipTime(ath);
+            const gt     = gunTime(ath);
+            const swimMs = segmentDuration(ath, 0);
+            const bikeMs = segmentDuration(ath, 2);
+            const runMs  = segmentDuration(ath, 4);
+            const sp = calcSwimPace(swimMs, swimYards);
+            const bp = calcBikeMph(bikeMs, bikeMiles);
+            const rp = calcRunPace(runMs, runMiles);
+            const pColor = place < 3 ? medalColors[place] : "#5a86a8";
+            const medal  = place < 3 ? medalEmoji[place] : "🏅";
+            const segPills = SEGMENTS.map((seg, si) => {
+              const dur = segmentDuration(ath, si);
+              return dur !== null ? `<div class="seg"><div class="seg-name">${seg}</div><div class="seg-time">${formatElapsed(dur)}</div></div>` : "";
+            }).join("");
+            return `
+              <div class="cert">
+                <div class="watermark">🏊 🚴 🏃</div>
+                <div class="top-rule"></div>
+                <div class="event">Youth Tri · Cooper Fitness Center · Spring 2026</div>
+                <div class="medal-emoji">${medal}</div>
+                <div class="place" style="color:${pColor}">${placeSuffix(place+1)} Place</div>
+                <div class="name">${ath.name}</div>
+                <div class="time-row">
+                  <div class="time-block"><div class="time-label">Chip Time</div><div class="time-val">${chip !== null ? formatElapsed(chip) : "--"}</div></div>
+                  ${gt !== null ? `<div class="time-block"><div class="time-label">Gun Time</div><div class="time-val gun">${formatElapsed(gt)}</div></div>` : ""}
+                </div>
+                <div class="segs">${segPills}</div>
+                <div class="paces">
+                  ${sp ? `<span>🏊 ${sp}</span>` : ""}
+                  ${bp ? `<span>🚴 ${bp}</span>` : ""}
+                  ${rp ? `<span>🏃 ${rp}</span>` : ""}
+                </div>
+                <div class="bottom-rule"></div>
+                <div class="dist-note">Swim ${swimYards}y · Bike ${bikeMiles}mi · Run ${runMiles}mi</div>
+              </div>`;
+          }).join("");
+
+          const win = window.open("", "_blank");
+          win.document.write(`<!DOCTYPE html><html><head>
+            <meta charset="UTF-8">
+            <title>Certificates — Youth Tri Spring 2026</title>
+            <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet">
+            <style>
+              *{box-sizing:border-box;margin:0;padding:0;}
+              @page{size:landscape;margin:.35in;}
+              body{background:#fff;font-family:'DM Sans',Arial,sans-serif;}
+              .cert{
+                width:100%;height:calc(100vh - .7in);
+                page-break-after:always;break-after:page;
+                display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+                border:5px solid #00aeef;border-radius:14px;
+                background:linear-gradient(150deg,#f0f8ff 0%,#ffffff 55%,#e8f4fb 100%);
+                padding:28px 50px;position:relative;overflow:hidden;
+              }
+              .cert::after{content:'';position:absolute;inset:10px;border:1.5px solid rgba(0,174,239,.25);border-radius:10px;pointer-events:none;}
+              .watermark{position:absolute;font-size:120px;opacity:.04;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;pointer-events:none;}
+              .top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00aeef,transparent);}
+              .event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;text-align:center;}
+              .medal-emoji{font-size:48px;line-height:1;}
+              .place{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:4px;}
+              .name{font-family:'Bebas Neue',sans-serif;font-size:68px;letter-spacing:5px;color:#071829;line-height:1;text-align:center;}
+              .time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}
+              .time-block{text-align:center;}
+              .time-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}
+              .time-val{font-family:'Bebas Neue',sans-serif;font-size:38px;letter-spacing:3px;color:#071829;}
+              .time-val.gun{color:#b87a00;}
+              .segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}
+              .seg{text-align:center;}
+              .seg-name{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}
+              .seg-time{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#0d3a6e;}
+              .paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}
+              .paces span{font-size:11px;color:#5a86a8;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,174,239,.3);border-radius:20px;padding:3px 12px;}
+              .dist-note{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#aac4d8;}
+              @media print{.cert{break-after:page;}}
+            </style>
+          </head><body>${certHTML}<script>window.onload=()=>window.print();<\/script></body></html>`);
+          win.document.close();
         }
 
         const allFinished  = athletes.length > 0 && athletes.every(a => a.finished);
@@ -523,12 +638,25 @@
               {/* ── RESULTS ── */}
               {view === "results" && (
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 4 }}>
-                    Final Results
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8" }}>Final Results</div>
+                      <div style={{ fontSize: 11, color: "#3a6080", marginTop: 2 }}>
+                        Swim {swimYards}y &nbsp;&middot;&nbsp; Bike {bikeMiles}mi &nbsp;&middot;&nbsp; Run {runMiles}mi
+                      </div>
+                    </div>
+                    {anyStarted && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button onClick={exportCSV} style={{ ...btnStyle("#48cae4", true), padding: "7px 14px", fontSize: 12 }}>
+                          &#11015; Export CSV
+                        </button>
+                        <button onClick={printCertificates} style={{ ...btnStyle("#ffd166", true), padding: "7px 14px", fontSize: 12 }}>
+                          &#127942; Print Certificates
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <div style={{ fontSize: 11, color: "#3a6080", marginBottom: 12 }}>
-                    Swim {swimYards}y &nbsp;&middot;&nbsp; Bike {bikeMiles}mi &nbsp;&middot;&nbsp; Run {runMiles}mi
-                  </div>
+                  <div style={{ marginBottom: 12 }} />
                   {!anyStarted ? (
                     <div style={{ textAlign: "center", color: "#5a86a8", fontSize: 13, padding: "40px 20px" }}>
                       No race data yet — head to <strong style={{ color: "#00aeef" }}>Race</strong> to start timing.
