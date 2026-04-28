@@ -21,9 +21,11 @@
     <script type="text/babel">
       const { useState, useEffect, useRef } = React;
 
-      const SEGMENTS = ["Swim", "T1", "Bike", "T2", "Run", "Finish"];
-      const segColors = ["#00aeef", "#48cae4", "#ffd166", "#48cae4", "#f4742b", "#4ade80"];
+      // Run is the final segment — logging it ends the race for that athlete
+      const SEGMENTS  = ["Swim", "T1", "Bike", "T2", "Run"];
+      const segColors = ["#00aeef", "#48cae4", "#ffd166", "#48cae4", "#f4742b"];
 
+      // ── Formatting helpers ───────────────────────────────────────────────────
       function formatTime(ms) {
         if (ms === null || ms === undefined) return "--:--.-";
         const totalSecs = Math.floor(ms / 1000);
@@ -41,7 +43,6 @@
         return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
       }
 
-      // Parse "MM:SS" or "MM:SS.T" back to ms
       function parseTimeInput(str) {
         if (!str) return null;
         const match = str.trim().match(/^(\d+):(\d{2})(?:\.(\d))?$/);
@@ -52,6 +53,29 @@
         return (mins * 60 + secs) * 1000 + tenths * 100;
       }
 
+      // ── Pace calculators ─────────────────────────────────────────────────────
+      function calcSwimPace(ms, yards) {
+        if (!ms || !yards || yards <= 0) return null;
+        const secsPerHundred = (ms / 1000) / yards * 100;
+        const mins = Math.floor(secsPerHundred / 60);
+        const secs = Math.floor(secsPerHundred % 60);
+        return `${mins}:${String(secs).padStart(2, "0")} /100y`;
+      }
+
+      function calcBikeMph(ms, miles) {
+        if (!ms || !miles || miles <= 0) return null;
+        return `${(miles / (ms / 3600000)).toFixed(1)} mph`;
+      }
+
+      function calcRunPace(ms, miles) {
+        if (!ms || !miles || miles <= 0) return null;
+        const minsPerMile = (ms / 60000) / miles;
+        const mins = Math.floor(minsPerMile);
+        const secs = Math.floor((minsPerMile - mins) * 60);
+        return `${mins}:${String(secs).padStart(2, "0")} /mi`;
+      }
+
+      // ── Athlete time helpers ─────────────────────────────────────────────────
       function segmentDuration(athlete, segIndex) {
         const times = athlete.splits;
         if (segIndex === 0) {
@@ -68,7 +92,6 @@
         return last - athlete.startOffset;
       }
 
-      // Gun time = time from clock-zero to finish (raw finish split value)
       function gunTime(athlete) {
         const last = athlete.splits[SEGMENTS.length - 1];
         return last !== null ? last : null;
@@ -78,6 +101,7 @@
         return { id, name, startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
       }
 
+      // ── Style helpers ────────────────────────────────────────────────────────
       function btnStyle(color, outline = false) {
         return {
           background: outline ? "transparent" : color,
@@ -93,9 +117,10 @@
       }
 
       function thStyle(color) {
-        return { textAlign: "center", padding: "8px 6px", color, fontWeight: 700, letterSpacing: 1, fontSize: 10, textTransform: "uppercase" };
+        return { textAlign: "center", padding: "8px 6px", color, fontWeight: 700, letterSpacing: 1, fontSize: 10, textTransform: "uppercase", whiteSpace: "nowrap" };
       }
 
+      // ── App ──────────────────────────────────────────────────────────────────
       function App() {
         const [view, setView] = useState("setup");
         const [athletes, setAthletes] = useState([
@@ -108,18 +133,22 @@
           { id: 7, name: "Nixon",   startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false },
           { id: 8, name: "Jack",    startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false },
         ]);
-        const [clockMs, setClockMs] = useState(0);
+
+        // Race distances for pace calculations
+        const [swimYards, setSwimYards] = useState(100);
+        const [bikeMiles, setBikeMiles] = useState(6);
+        const [runMiles,  setRunMiles]  = useState(1.5);
+
+        const [clockMs, setClockMs]         = useState(0);
         const [clockRunning, setClockRunning] = useState(false);
         const [clockStarted, setClockStarted] = useState(false);
         const [resetConfirm, setResetConfirm] = useState(false);
+        const [editTarget, setEditTarget]   = useState(null);
+        const [editValues, setEditValues]   = useState({});
 
-        // Edit panel: which athlete index is open for editing
-        const [editTarget, setEditTarget] = useState(null);
-        const [editValues, setEditValues] = useState({});
-
-        const clockRef = useRef(null);
+        const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
-        const offsetRef = useRef(0);
+        const offsetRef    = useRef(0);
 
         useEffect(() => {
           if (clockRunning) {
@@ -134,20 +163,10 @@
           return () => clearInterval(clockRef.current);
         }, [clockRunning]);
 
-        function startClock() {
-          offsetRef.current = 0;
-          setClockMs(0);
-          setClockRunning(true);
-          setClockStarted(true);
-        }
-        function pauseClock() { setClockRunning(false); }
+        function startClock()  { offsetRef.current = 0; setClockMs(0); setClockRunning(true); setClockStarted(true); }
+        function pauseClock()  { setClockRunning(false); }
         function resumeClock() { setClockRunning(true); }
-        function resetClock() {
-          setClockRunning(false);
-          setClockStarted(false);
-          offsetRef.current = 0;
-          setClockMs(0);
-        }
+        function resetClock()  { setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0); }
 
         function resetTimers() {
           setAthletes(a => a.map(ath => freshAthlete(ath.name, ath.id)));
@@ -157,28 +176,17 @@
           setView("setup");
         }
 
-        function addAthlete() {
-          setAthletes(a => [...a, freshAthlete("", Date.now())]);
-        }
-
-        function removeAthlete(i) {
-          if (athletes.length === 1) return;
-          setAthletes(a => a.filter((_, idx) => idx !== i));
-        }
-
-        function updateName(i, val) {
-          setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, name: val } : ath));
-        }
+        function addAthlete()      { setAthletes(a => [...a, freshAthlete("", Date.now())]); }
+        function removeAthlete(i)  { if (athletes.length > 1) setAthletes(a => a.filter((_, idx) => idx !== i)); }
+        function updateName(i, v)  { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, name: v } : ath)); }
 
         function moveAthlete(i, dir) {
-          const newArr = [...athletes];
-          const target = i + dir;
-          if (target < 0 || target >= newArr.length) return;
-          [newArr[i], newArr[target]] = [newArr[target], newArr[i]];
-          setAthletes(newArr);
+          const arr = [...athletes], t = i + dir;
+          if (t < 0 || t >= arr.length) return;
+          [arr[i], arr[t]] = [arr[t], arr[i]];
+          setAthletes(arr);
         }
 
-        // Navigate to race view WITHOUT starting the clock
         function goToRace() {
           setAthletes(a => a.map((ath, i) => ({ ...ath, name: ath.name || `Athlete ${i + 1}` })));
           setView("race");
@@ -188,7 +196,6 @@
           setAthletes(a => a.map((ath, i) => i === athleteIdx ? { ...ath, startOffset: clockMs, started: true } : ath));
         }
 
-        // Send off every athlete that hasn't started yet — all at current clock time
         function sendOffAll() {
           setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: clockMs, started: true }));
         }
@@ -198,7 +205,8 @@
             if (i !== athleteIdx) return ath;
             const newSplits = [...ath.splits];
             newSplits[segIndex] = clockMs;
-            return { ...ath, splits: newSplits, finished: segIndex === SEGMENTS.length - 1 };
+            const finished = segIndex === SEGMENTS.length - 1;
+            return { ...ath, splits: newSplits, finished };
           }));
         }
 
@@ -206,18 +214,12 @@
           return athlete.splits.findIndex(s => s === null);
         }
 
-        // Open the edit panel for an athlete, pre-filling current gun times
         function openEdit(athleteIdx) {
-          if (editTarget === athleteIdx) {
-            setEditTarget(null);
-            return;
-          }
+          if (editTarget === athleteIdx) { setEditTarget(null); return; }
           const ath = athletes[athleteIdx];
           const vals = {};
           if (ath.startOffset !== null) vals["start"] = formatTime(ath.startOffset);
-          ath.splits.forEach((s, si) => {
-            if (s !== null) vals[si] = formatTime(s);
-          });
+          ath.splits.forEach((s, si) => { if (s !== null) vals[si] = formatTime(s); });
           setEditValues(vals);
           setEditTarget(athleteIdx);
         }
@@ -225,10 +227,10 @@
         function saveEdits(athleteIdx) {
           setAthletes(a => a.map((ath, i) => {
             if (i !== athleteIdx) return ath;
-            let newStartOffset = ath.startOffset;
+            let newStart = ath.startOffset;
             if (editValues["start"] !== undefined) {
               const ms = parseTimeInput(editValues["start"]);
-              if (ms !== null) newStartOffset = ms;
+              if (ms !== null) newStart = ms;
             }
             const newSplits = [...ath.splits];
             SEGMENTS.forEach((_, si) => {
@@ -237,14 +239,13 @@
                 if (ms !== null) newSplits[si] = ms;
               }
             });
-            const finished = newSplits[SEGMENTS.length - 1] !== null;
-            return { ...ath, startOffset: newStartOffset, splits: newSplits, finished };
+            return { ...ath, startOffset: newStart, splits: newSplits, finished: newSplits[SEGMENTS.length - 1] !== null };
           }));
           setEditTarget(null);
         }
 
-        const allFinished = athletes.length > 0 && athletes.every(a => a.finished);
-        const anyStarted  = athletes.some(a => a.started);
+        const allFinished  = athletes.length > 0 && athletes.every(a => a.finished);
+        const anyStarted   = athletes.some(a => a.started);
         const anyUnstarted = athletes.some(a => !a.started);
 
         const sorted = [...athletes].sort((a, b) => {
@@ -256,15 +257,13 @@
         });
 
         const editInputStyle = {
-          background: "#071829",
-          border: "1px solid rgba(0,174,239,0.4)",
-          borderRadius: 4,
-          padding: "6px 10px",
-          color: "#e8f4fb",
-          fontSize: 13,
-          width: 90,
-          outline: "none",
-          fontFamily: "monospace",
+          background: "#071829", border: "1px solid rgba(0,174,239,0.4)", borderRadius: 4,
+          padding: "6px 10px", color: "#e8f4fb", fontSize: 13, width: 90, outline: "none", fontFamily: "monospace",
+        };
+
+        const distInputStyle = {
+          background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4,
+          padding: "8px 10px", color: "#e8f4fb", fontSize: 14, width: 80, outline: "none", textAlign: "center",
         };
 
         return (
@@ -297,33 +296,33 @@
 
             <div style={{ maxWidth: 640, margin: "0 auto", padding: "16px 16px 60px" }}>
 
-              {/* STOPWATCH — sticky */}
+              {/* STOPWATCH */}
               <div style={{ background: "#0c2240", borderRadius: 8, border: "1px solid rgba(0,174,239,0.3)", padding: "14px 20px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
                 <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 56, letterSpacing: 4, color: clockRunning ? "#00aeef" : clockStarted ? "#ffd166" : "#3a6080", lineHeight: 1 }}>
                   {formatTime(clockMs)}
                 </div>
                 <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 12, flexWrap: "wrap" }}>
-                  {!clockStarted ? (
-                    <button onClick={startClock} style={btnStyle("#00aeef")}>Start Clock</button>
-                  ) : clockRunning ? (
-                    <button onClick={pauseClock} style={btnStyle("#ffd166")}>Pause</button>
-                  ) : (
-                    <button onClick={resumeClock} style={btnStyle("#4ade80")}>Resume</button>
-                  )}
+                  {!clockStarted
+                    ? <button onClick={startClock} style={btnStyle("#00aeef")}>Start Clock</button>
+                    : clockRunning
+                      ? <button onClick={pauseClock} style={btnStyle("#ffd166")}>Pause</button>
+                      : <button onClick={resumeClock} style={btnStyle("#4ade80")}>Resume</button>
+                  }
                   <button onClick={resetClock} style={btnStyle("#5a86a8", true)}>Reset Clock</button>
-                  {!resetConfirm ? (
-                    <button onClick={() => setResetConfirm(true)} style={btnStyle("#f4742b", true)}>Reset All</button>
-                  ) : (
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <span style={{ fontSize: 12, color: "#f4742b" }}>Keep names, clear all times?</span>
-                      <button onClick={resetTimers} style={{ ...btnStyle("#f4742b"), padding: "6px 12px", fontSize: 12 }}>Yes</button>
-                      <button onClick={() => setResetConfirm(false)} style={{ ...btnStyle("#5a86a8", true), padding: "6px 12px", fontSize: 12 }}>No</button>
-                    </div>
-                  )}
+                  {!resetConfirm
+                    ? <button onClick={() => setResetConfirm(true)} style={btnStyle("#f4742b", true)}>Reset All</button>
+                    : (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ fontSize: 12, color: "#f4742b" }}>Keep names, clear all times?</span>
+                        <button onClick={resetTimers} style={{ ...btnStyle("#f4742b"), padding: "6px 12px", fontSize: 12 }}>Yes</button>
+                        <button onClick={() => setResetConfirm(false)} style={{ ...btnStyle("#5a86a8", true), padding: "6px 12px", fontSize: 12 }}>No</button>
+                      </div>
+                    )
+                  }
                 </div>
               </div>
 
-              {/* ── SETUP VIEW ── */}
+              {/* ── SETUP ── */}
               {view === "setup" && (
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>
@@ -332,61 +331,64 @@
                   {athletes.map((ath, i) => (
                     <div key={ath.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-                        <button onClick={() => moveAthlete(i, -1)} disabled={i === 0} style={{
-                          background: "none", border: "none", color: i === 0 ? "#1a3a5c" : "#5a86a8",
-                          cursor: i === 0 ? "default" : "pointer", fontSize: 12, padding: "1px 4px", lineHeight: 1,
-                        }}>▲</button>
-                        <button onClick={() => moveAthlete(i, 1)} disabled={i === athletes.length - 1} style={{
-                          background: "none", border: "none", color: i === athletes.length - 1 ? "#1a3a5c" : "#5a86a8",
-                          cursor: i === athletes.length - 1 ? "default" : "pointer", fontSize: 12, padding: "1px 4px", lineHeight: 1,
-                        }}>▼</button>
+                        <button onClick={() => moveAthlete(i, -1)} disabled={i === 0} style={{ background: "none", border: "none", color: i === 0 ? "#1a3a5c" : "#5a86a8", cursor: i === 0 ? "default" : "pointer", fontSize: 12, padding: "1px 4px", lineHeight: 1 }}>▲</button>
+                        <button onClick={() => moveAthlete(i, 1)} disabled={i === athletes.length - 1} style={{ background: "none", border: "none", color: i === athletes.length - 1 ? "#1a3a5c" : "#5a86a8", cursor: i === athletes.length - 1 ? "default" : "pointer", fontSize: 12, padding: "1px 4px", lineHeight: 1 }}>▼</button>
                       </div>
                       <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#00aeef", flexShrink: 0 }}>{i + 1}</div>
-                      <input
-                        value={ath.name}
-                        onChange={e => updateName(i, e.target.value)}
-                        placeholder={`Athlete ${i + 1} name`}
-                        style={{ flex: 1, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "10px 14px", color: "#e8f4fb", fontSize: 14, outline: "none" }}
-                      />
+                      <input value={ath.name} onChange={e => updateName(i, e.target.value)} placeholder={`Athlete ${i + 1} name`}
+                        style={{ flex: 1, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "10px 14px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
                       {athletes.length > 1 && (
                         <button onClick={() => removeAthlete(i)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
                       )}
                     </div>
                   ))}
+
                   <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                     <button onClick={addAthlete} style={btnStyle("#48cae4", true)}>+ Add Athlete</button>
                     <button onClick={goToRace} style={btnStyle("#00aeef")}>Go to Race &#8594;</button>
                   </div>
-                  <div style={{ marginTop: 16, background: "#0a3358", borderLeft: "3px solid #00aeef", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#7aa8c8" }}>
-                    Snake start: tap <strong style={{ color: "#48cae4" }}>Send Off</strong> for each athlete as they dive in (or <strong style={{ color: "#ffd166" }}>Send Off All</strong> for a simultaneous start). Tap segment buttons to log splits. Use <strong style={{ color: "#48cae4" }}>Edit Times</strong> on any athlete to correct a mis-tap.
+
+                  {/* Race distances */}
+                  <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>
+                      Race Distances &nbsp;&mdash;&nbsp; <span style={{ color: "#48cae4", fontWeight: 400 }}>used for pace calculations</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={{ fontSize: 11, color: "#00aeef", letterSpacing: 1 }}>SWIM (yards)</label>
+                        <input type="number" min="1" value={swimYards} onChange={e => setSwimYards(Number(e.target.value))} style={distInputStyle} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={{ fontSize: 11, color: "#ffd166", letterSpacing: 1 }}>BIKE (miles)</label>
+                        <input type="number" min="0.1" step="0.1" value={bikeMiles} onChange={e => setBikeMiles(Number(e.target.value))} style={distInputStyle} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <label style={{ fontSize: 11, color: "#f4742b", letterSpacing: 1 }}>RUN (miles)</label>
+                        <input type="number" min="0.1" step="0.1" value={runMiles} onChange={e => setRunMiles(Number(e.target.value))} style={distInputStyle} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 14, background: "#0a3358", borderLeft: "3px solid #00aeef", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#7aa8c8" }}>
+                    Tap <strong style={{ color: "#48cae4" }}>Send Off</strong> per athlete at dive-in, or <strong style={{ color: "#ffd166" }}>Send Off All</strong> for simultaneous starts. Tap segments in order — <strong style={{ color: "#f4742b" }}>Run</strong> ends their race. Use <strong style={{ color: "#48cae4" }}>Edit Times</strong> to correct any mis-tap.
                   </div>
                 </div>
               )}
 
-              {/* ── RACE VIEW ── */}
+              {/* ── RACE ── */}
               {view === "race" && (
                 <div>
-                  {/* START RACE banner — shown until clock is running */}
                   {!clockStarted && (
                     <div style={{ background: "linear-gradient(135deg,#0a3358,#0d3a6e)", border: "2px solid #00aeef", borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
-                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", marginBottom: 12 }}>
-                        Ready to Race?
-                      </div>
-                      <button
-                        onClick={startClock}
-                        style={{ ...btnStyle("#00aeef"), fontSize: 18, padding: "14px 40px", letterSpacing: 3, fontFamily: "'Bebas Neue'" }}
-                      >
+                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", marginBottom: 12 }}>Ready to Race?</div>
+                      <button onClick={startClock} style={{ ...btnStyle("#00aeef"), fontSize: 18, padding: "14px 40px", letterSpacing: 3, fontFamily: "'Bebas Neue'" }}>
                         &#9654; START RACE
                       </button>
                     </div>
                   )}
 
-                  {/* SEND OFF ALL button */}
                   {clockStarted && anyUnstarted && (
-                    <button
-                      onClick={sendOffAll}
-                      style={{ ...btnStyle("#ffd166"), width: "100%", marginBottom: 12, fontSize: 14, letterSpacing: 2 }}
-                    >
+                    <button onClick={sendOffAll} style={{ ...btnStyle("#ffd166"), width: "100%", marginBottom: 12, fontSize: 14, letterSpacing: 2 }}>
                       &#9654;&#9654; Send Off All (Simultaneous Start)
                     </button>
                   )}
@@ -408,22 +410,21 @@
                         border: `1px solid ${done ? "#4ade80" : ath.started ? "rgba(0,174,239,0.3)" : "rgba(255,255,255,0.06)"}`,
                         overflow: "hidden",
                       }}>
-                        {/* Athlete header row */}
+                        {/* Header row */}
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: done ? "#4ade80" : "#00aeef", lineHeight: 1, minWidth: 24 }}>{i + 1}</div>
                             <div>
                               <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</div>
                               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                                {ath.started && (
-                                  <span style={{ fontSize: 11, color: "#5a86a8" }}>
-                                    Chip: <span style={{ color: "#48cae4" }}>{formatElapsed(chipElapsed)}</span>
-                                  </span>
+                                {ath.started && !done && (
+                                  <span style={{ fontSize: 11, color: "#5a86a8" }}>Chip: <span style={{ color: "#48cae4" }}>{formatElapsed(chipElapsed)}</span></span>
                                 )}
-                                {done && gt !== null && (
-                                  <span style={{ fontSize: 11, color: "#5a86a8" }}>
-                                    Gun: <span style={{ color: "#ffd166" }}>{formatElapsed(gt)}</span>
-                                  </span>
+                                {done && (
+                                  <>
+                                    <span style={{ fontSize: 11, color: "#5a86a8" }}>Chip: <span style={{ color: "#4ade80" }}>{formatElapsed(totalChipTime(ath))}</span></span>
+                                    {gt !== null && <span style={{ fontSize: 11, color: "#5a86a8" }}>Gun: <span style={{ color: "#ffd166" }}>{formatElapsed(gt)}</span></span>}
+                                  </>
                                 )}
                               </div>
                             </div>
@@ -431,9 +432,7 @@
                           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                             {done && <span style={{ fontSize: 11, fontWeight: 700, color: "#4ade80", letterSpacing: 1 }}>DONE</span>}
                             {!ath.started && clockStarted && (
-                              <button onClick={() => sendOff(i)} style={{ ...btnStyle("#00aeef"), padding: "6px 14px", fontSize: 12 }}>
-                                Send Off
-                              </button>
+                              <button onClick={() => sendOff(i)} style={{ ...btnStyle("#00aeef"), padding: "6px 14px", fontSize: 12 }}>Send Off</button>
                             )}
                             {ath.started && (
                               <button onClick={() => openEdit(i)} style={{ ...btnStyle(isEditing ? "#f4742b" : "#5a86a8", true), padding: "5px 10px", fontSize: 11 }}>
@@ -470,36 +469,24 @@
                         {isEditing && (
                           <div style={{ padding: "14px", background: "#071829", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>
-                              Edit Gun Times &nbsp;(MM:SS.T format)
+                              Edit Gun Times &nbsp;(MM:SS.T)
                             </div>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                              {/* Send off time */}
                               {ath.startOffset !== null && (
                                 <div>
                                   <div style={{ fontSize: 10, color: "#5a86a8", marginBottom: 4 }}>Send Off</div>
-                                  <input
-                                    value={editValues["start"] ?? ""}
-                                    onChange={e => setEditValues(v => ({ ...v, start: e.target.value }))}
-                                    style={editInputStyle}
-                                    placeholder="00:00.0"
-                                  />
+                                  <input value={editValues["start"] ?? ""} onChange={e => setEditValues(v => ({ ...v, start: e.target.value }))} style={editInputStyle} placeholder="00:00.0" />
                                 </div>
                               )}
-                              {/* Each logged split */}
                               {SEGMENTS.map((seg, si) => ath.splits[si] !== null && (
                                 <div key={si}>
                                   <div style={{ fontSize: 10, color: segColors[si], marginBottom: 4 }}>{seg}</div>
-                                  <input
-                                    value={editValues[si] !== undefined ? editValues[si] : ""}
-                                    onChange={e => setEditValues(v => ({ ...v, [si]: e.target.value }))}
-                                    style={editInputStyle}
-                                    placeholder="00:00.0"
-                                  />
+                                  <input value={editValues[si] !== undefined ? editValues[si] : ""} onChange={e => setEditValues(v => ({ ...v, [si]: e.target.value }))} style={editInputStyle} placeholder="00:00.0" />
                                 </div>
                               ))}
                             </div>
-                            <div style={{ marginTop: 10, fontSize: 11, color: "#3a6080" }}>
-                              All times are gun times (from clock zero). Chip times are recalculated automatically.
+                            <div style={{ marginTop: 8, fontSize: 11, color: "#3a6080" }}>
+                              Times are gun times from clock zero. Chip times recalculate automatically.
                             </div>
                             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                               <button onClick={() => saveEdits(i)} style={{ ...btnStyle("#4ade80"), padding: "7px 18px", fontSize: 12 }}>Save</button>
@@ -519,11 +506,14 @@
                 </div>
               )}
 
-              {/* ── RESULTS VIEW ── */}
+              {/* ── RESULTS ── */}
               {view === "results" && (
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 4 }}>
                     Final Results
+                  </div>
+                  <div style={{ fontSize: 11, color: "#3a6080", marginBottom: 12 }}>
+                    Swim {swimYards}y &nbsp;&middot;&nbsp; Bike {bikeMiles}mi &nbsp;&middot;&nbsp; Run {runMiles}mi
                   </div>
                   {!anyStarted ? (
                     <div style={{ textAlign: "center", color: "#5a86a8", fontSize: 13, padding: "40px 20px" }}>
@@ -533,28 +523,41 @@
                     <div style={{ overflowX: "auto" }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                         <thead>
-                          <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-                            <th style={thStyle("#5a86a8")}>Place</th>
+                          <tr style={{ borderBottom: "2px solid rgba(255,255,255,0.1)" }}>
+                            <th style={thStyle("#5a86a8")}>#</th>
                             <th style={{ ...thStyle("#5a86a8"), textAlign: "left" }}>Athlete</th>
                             {SEGMENTS.map((seg, si) => <th key={si} style={thStyle(segColors[si])}>{seg}</th>)}
                             <th style={thStyle("#4ade80")}>Chip</th>
                             <th style={thStyle("#ffd166")}>Gun</th>
+                            <th style={{ ...thStyle("#00aeef"), borderLeft: "1px solid rgba(255,255,255,0.08)" }}>Swim Pace</th>
+                            <th style={thStyle("#ffd166")}>Bike</th>
+                            <th style={thStyle("#f4742b")}>Run Pace</th>
                           </tr>
                         </thead>
                         <tbody>
                           {sorted.map((ath, place) => {
                             const chip = totalChipTime(ath);
-                            const gt = gunTime(ath);
+                            const gt   = gunTime(ath);
+                            const swimMs = segmentDuration(ath, 0);
+                            const bikeMs = segmentDuration(ath, 2);
+                            const runMs  = segmentDuration(ath, 4);
+                            const sp = calcSwimPace(swimMs, swimYards);
+                            const bp = calcBikeMph(bikeMs, bikeMiles);
+                            const rp = calcRunPace(runMs, runMiles);
+                            const placeColor = place === 0 ? "#4ade80" : place === 1 ? "#ffd166" : place === 2 ? "#48cae4" : "#5a86a8";
                             return (
-                              <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: place === 0 && chip !== null ? "rgba(74,222,128,0.05)" : "transparent" }}>
-                                <td style={{ padding: "10px 10px", fontFamily: "'Bebas Neue'", fontSize: 20, color: place === 0 ? "#4ade80" : place === 1 ? "#ffd166" : place === 2 ? "#48cae4" : "#5a86a8" }}>{place + 1}</td>
-                                <td style={{ padding: "10px 10px", fontWeight: 700, color: "#e8f4fb", whiteSpace: "nowrap" }}>{ath.name}</td>
+                              <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: place === 0 && chip !== null ? "rgba(74,222,128,0.04)" : "transparent" }}>
+                                <td style={{ padding: "10px 8px", fontFamily: "'Bebas Neue'", fontSize: 20, color: placeColor }}>{place + 1}</td>
+                                <td style={{ padding: "10px 8px", fontWeight: 700, color: "#e8f4fb", whiteSpace: "nowrap" }}>{ath.name}</td>
                                 {SEGMENTS.map((_, si) => {
                                   const dur = segmentDuration(ath, si);
                                   return <td key={si} style={{ padding: "10px 6px", textAlign: "center", color: segColors[si], fontWeight: 600, whiteSpace: "nowrap" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>;
                                 })}
                                 <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 800, color: "#4ade80", whiteSpace: "nowrap" }}>{chip !== null ? formatElapsed(chip) : "--"}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 700, color: "#ffd166", whiteSpace: "nowrap" }}>{gt !== null ? formatElapsed(gt) : "--"}</td>
+                                <td style={{ padding: "10px 8px", textAlign: "center", color: "#00aeef", whiteSpace: "nowrap", borderLeft: "1px solid rgba(255,255,255,0.08)" }}>{sp ?? "--"}</td>
+                                <td style={{ padding: "10px 8px", textAlign: "center", color: "#ffd166", whiteSpace: "nowrap" }}>{bp ?? "--"}</td>
+                                <td style={{ padding: "10px 8px", textAlign: "center", color: "#f4742b", whiteSpace: "nowrap" }}>{rp ?? "--"}</td>
                               </tr>
                             );
                           })}
