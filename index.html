@@ -152,6 +152,13 @@
         const [editTarget, setEditTarget]   = useState(null);
         const [editValues, setEditValues]   = useState({});
 
+        // Saved race presets (persisted to localStorage)
+        const [savedRaces, setSavedRaces] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("tri-saved-races") || "[]"); } catch { return []; }
+        });
+        const [saveRaceName, setSaveRaceName] = useState("");
+        const [deleteConfirm, setDeleteConfirm] = useState(null);
+
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
         const offsetRef    = useRef(0);
@@ -180,6 +187,38 @@
           setResetConfirm(false);
           setEditTarget(null);
           setView("setup");
+        }
+
+        function persistRaces(races) {
+          setSavedRaces(races);
+          localStorage.setItem("tri-saved-races", JSON.stringify(races));
+        }
+
+        function saveRace() {
+          const name = saveRaceName.trim() || `Race ${savedRaces.length + 1}`;
+          const entry = {
+            id: Date.now(),
+            name,
+            savedAt: new Date().toLocaleDateString(),
+            athletes: athletes.map(a => ({ name: a.name })),
+            swimYards, bikeMiles, runMiles,
+          };
+          persistRaces([...savedRaces, entry]);
+          setSaveRaceName("");
+        }
+
+        function loadRace(race) {
+          setAthletes(race.athletes.map((a, i) => freshAthlete(a.name, i + 1)));
+          setSwimYards(race.swimYards);
+          setBikeMiles(race.bikeMiles);
+          setRunMiles(race.runMiles);
+          resetClock();
+          setEditTarget(null);
+        }
+
+        function deleteRace(id) {
+          persistRaces(savedRaces.filter(r => r.id !== id));
+          setDeleteConfirm(null);
         }
 
         function addAthlete()      { setAthletes(a => [...a, freshAthlete("", Date.now())]); }
@@ -482,6 +521,60 @@
                         <input type="number" min="0.1" step="0.1" value={runMiles} onChange={e => setRunMiles(Number(e.target.value))} style={distInputStyle} />
                       </div>
                     </div>
+                  </div>
+
+                  {/* ── Saved Races ── */}
+                  <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>
+                      Saved Race Presets
+                    </div>
+
+                    {/* Save current setup */}
+                    <div style={{ display: "flex", gap: 8, marginBottom: savedRaces.length > 0 ? 14 : 0 }}>
+                      <input
+                        value={saveRaceName}
+                        onChange={e => setSaveRaceName(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && saveRace()}
+                        placeholder="Race name (e.g. Spring 2026)"
+                        style={{ flex: 1, background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "8px 12px", color: "#e8f4fb", fontSize: 13, outline: "none" }}
+                      />
+                      <button onClick={saveRace} style={{ ...btnStyle("#4ade80"), padding: "8px 16px", fontSize: 12, whiteSpace: "nowrap" }}>
+                        Save Setup
+                      </button>
+                    </div>
+
+                    {/* Saved race list */}
+                    {savedRaces.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {savedRaces.map(race => (
+                          <div key={race.id} style={{ background: "#071829", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: "#e8f4fb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{race.name}</div>
+                              <div style={{ fontSize: 11, color: "#3a6080", marginTop: 2 }}>
+                                {race.athletes.length} athletes &nbsp;&middot;&nbsp; {race.swimYards}y / {race.bikeMiles}mi / {race.runMiles}mi &nbsp;&middot;&nbsp; {race.savedAt}
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                              <button onClick={() => loadRace(race)} style={{ ...btnStyle("#00aeef"), padding: "5px 12px", fontSize: 11 }}>Load</button>
+                              {deleteConfirm === race.id ? (
+                                <>
+                                  <button onClick={() => deleteRace(race.id)} style={{ ...btnStyle("#f4742b"), padding: "5px 10px", fontSize: 11 }}>Delete?</button>
+                                  <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle("#5a86a8", true), padding: "5px 10px", fontSize: 11 }}>No</button>
+                                </>
+                              ) : (
+                                <button onClick={() => setDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 16, cursor: "pointer", padding: "0 4px" }}>&times;</button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {savedRaces.length === 0 && (
+                      <div style={{ fontSize: 12, color: "#3a6080", marginTop: 6 }}>
+                        No presets saved yet — set up your athletes &amp; distances above, then save.
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ marginTop: 14, background: "#0a3358", borderLeft: "3px solid #00aeef", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#7aa8c8" }}>
