@@ -404,6 +404,13 @@
                     const gt = gunTime(ath);
                     const isEditing = editTarget === i;
 
+                    // Live elapsed time for whichever segment the athlete is currently in
+                    const liveSegMs = (!done && next >= 0)
+                      ? (next === 0
+                          ? (ath.startOffset !== null ? clockMs - ath.startOffset : null)
+                          : (ath.splits[next - 1] !== null ? clockMs - ath.splits[next - 1] : null))
+                      : null;
+
                     return (
                       <div key={ath.id} style={{
                         background: "#0c2240", borderRadius: 8, marginBottom: 10,
@@ -418,7 +425,14 @@
                               <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</div>
                               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                                 {ath.started && !done && (
-                                  <span style={{ fontSize: 11, color: "#5a86a8" }}>Chip: <span style={{ color: "#48cae4" }}>{formatElapsed(chipElapsed)}</span></span>
+                                  <>
+                                    <span style={{ fontSize: 11, color: "#5a86a8" }}>Chip: <span style={{ color: "#48cae4" }}>{formatElapsed(chipElapsed)}</span></span>
+                                    {liveSegMs !== null && next >= 0 && (
+                                      <span style={{ fontSize: 11, color: "#5a86a8" }}>
+                                        {SEGMENTS[next]}: <span style={{ color: segColors[next], fontWeight: 700 }}>{formatElapsed(liveSegMs)}</span>
+                                      </span>
+                                    )}
+                                  </>
                                 )}
                                 {done && (
                                   <>
@@ -458,7 +472,7 @@
                                     color: logged ? segColors[si] : isNext ? "#071829" : "#3a6080",
                                     fontWeight: 700, fontSize: 12, letterSpacing: 0.5, transition: "all 0.15s",
                                   }}>
-                                  {seg}{logged && dur !== null ? ` · ${formatElapsed(dur)}` : ""}
+                                  {seg}{logged && dur !== null ? ` · ${formatElapsed(dur)}` : isNext && liveSegMs !== null ? ` · ${formatElapsed(liveSegMs)}` : ""}
                                 </button>
                               );
                             })}
