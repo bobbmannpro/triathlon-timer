@@ -459,35 +459,66 @@
           if (currentUser) rtdb.ref("users/" + currentUser.uid + "/races").set(races).catch(console.error);
         }
 
+        function mergeAthletesToLibrary(raceAthletes) {
+          const existingKeys = new Set(savedAthletes.map(a => (athleteName(a) || a.name || "").trim().toLowerCase()));
+          const toAdd = [];
+          raceAthletes.forEach(a => {
+            const fullName = athleteName(a) || a.name || "";
+            const key = fullName.trim().toLowerCase();
+            if (!key) return;
+            if (!existingKeys.has(key)) {
+              toAdd.push({ id: Date.now() + Math.random(), name: fullName, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0] || "9-10", dob: a.dob || "" });
+              existingKeys.add(key);
+            }
+          });
+          if (toAdd.length > 0) persistSavedAthletes([...savedAthletes, ...toAdd]);
+        }
+
         function saveRace() {
           const name = saveRaceName.trim() || `Race ${savedRaces.length + 1}`;
+          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null }));
           const entry = {
-            id: Date.now(),
-            name,
+            id: Date.now(), name,
             savedAt: new Date().toLocaleDateString(),
-            ageGroups,
-            courses,
-            athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null })),
+            ageGroups, courses, units,
+            certConfig,
+            athletes: raceAthletes,
           };
           persistRaces([...savedRaces, entry]);
+          mergeAthletesToLibrary(athletes);
           setSaveRaceName("");
         }
 
         function updateSavedRace() {
           if (!loadedRaceId) return;
+          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId }));
           const updated = savedRaces.map(r => r.id === loadedRaceId
-            ? { ...r, ageGroups, courses, units, athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId })), savedAt: new Date().toLocaleString() }
+            ? { ...r, ageGroups, courses, units, certConfig, athletes: raceAthletes, savedAt: new Date().toLocaleString() }
             : r);
           persistRaces(updated);
+          mergeAthletesToLibrary(athletes);
         }
         function loadRace(race) {
           setLoadedRaceId(race.id);
           if (race.units) setUnits(race.units);
+          if (race.certConfig) setCertConfig(race.certConfig);
           const loadedCourses = race.courses || [{ id: 1, name: "Sprint", swimYards: race.swimYards || 100, bikeMiles: race.bikeMiles || 6, runMiles: race.runMiles || 1.5 }];
           const loadedAgeGroups = race.ageGroups || DEFAULT_AGE_GROUPS;
           setCourses(loadedCourses);
           setAgeGroups(loadedAgeGroups);
-          setAthletes(race.athletes.map((a, i) => ({ ...freshAthlete(a.name, i + 1), gender: a.gender || "Male", ageGroup: a.ageGroup || loadedAgeGroups[0] || "9-10", dob: a.dob || "", courseId: a.courseId || loadedCourses[0].id })));
+          setAthletes(race.athletes.map((a, i) => {
+            const base = freshAthlete(a.name, i + 1);
+            return {
+              ...base,
+              firstName: a.firstName !== undefined ? a.firstName : base.firstName,
+              lastName: a.lastName !== undefined ? a.lastName : base.lastName,
+              name: a.name || base.name,
+              gender: a.gender || "Male",
+              ageGroup: a.ageGroup || loadedAgeGroups[0] || "9-10",
+              dob: a.dob || "",
+              courseId: a.courseId || loadedCourses[0].id
+            };
+          }));
           resetClock();
           setEditTarget(null);
         }
@@ -1403,7 +1434,7 @@
                       <div>
                         <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#4ade80" }}>Athletes</div>
                         <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>
-                          {savedAthletes.length === 0 ? "Manage your team roster" : `${savedAthletes.length} athlete${savedAthletes.length > 1 ? "s" : ""} in roster`}
+                          {(() => { const cnt = allRaceAthletes().length; return cnt === 0 ? "Your athlete library" : `${cnt} athlete${cnt !== 1 ? "s" : ""} in library`; })()}
                         </div>
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#4ade80" }}>&#8594;</div>
@@ -1529,60 +1560,6 @@
                     );
                   })()}
 
-                  {/* ── Team Roster ── */}
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 14 }}>
-                    Team Roster &nbsp;&mdash;&nbsp; <span style={{ color: "#4ade80", fontWeight: 400 }}>saved across races</span>
-                  </div>
-
-                  {savedAthletes.length === 0 && (
-                    <div style={{ background: "#0a1e36", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 8, padding: "20px", textAlign: "center", color: "#3a6080", fontSize: 13, marginBottom: 14 }}>
-                      No athletes in roster yet — add your team below.
-                    </div>
-                  )}
-
-                  {savedAthletes.map((ath, i) => (
-                    <div key={ath.id} style={{ marginBottom: 10 }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                        <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#4ade80", flexShrink: 0 }}>{i + 1}</div>
-                        <input value={ath.firstName || ath.name || ""} onChange={e => updateSavedAthlete(ath.id, "firstName", e.target.value)} placeholder="First"
-                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
-                        <input value={ath.lastName || ""} onChange={e => updateSavedAthlete(ath.id, "lastName", e.target.value)} placeholder="Last"
-                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
-                        <button onClick={() => removeSavedAthlete(ath.id)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
-                      </div>
-                      <div style={{ display: "flex", gap: 8, marginLeft: 38 }}>
-                        <select value={ath.gender} onChange={e => updateSavedAthlete(ath.id, "gender", e.target.value)}
-                          style={{ background: "#0c2240", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 4, padding: "5px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                        </select>
-                        <select value={ath.ageGroup} onChange={e => updateSavedAthlete(ath.id, "ageGroup", e.target.value)}
-                          style={{ background: "#0c2240", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 4, padding: "5px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
-                          {ageGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
-                        </select>
-                        <input type="date" value={ath.dob || ""} onChange={e => updateSavedAthlete(ath.id, "dob", e.target.value)} title="Date of Birth"
-                          style={{ background: "#0c2240", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 12, outline: "none", colorScheme: "dark" }} />
-                        {ath.dob && calcAge(ath.dob) !== null && (
-                          <div style={{ background: "#071829", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 4, padding: "5px 8px", fontSize: 12, color: "#4ade80", fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
-                            Age {calcAge(ath.dob)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-
-                  <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-                    <button onClick={addSavedAthlete} style={btnStyle("#4ade80", true)}>+ Add Athlete</button>
-                    {savedAthletes.length > 0 && (
-                      <button onClick={loadRosterToRace} style={btnStyle("#00aeef")}>Load Roster to Race &#8594;</button>
-                    )}
-                  </div>
-
-                  {savedAthletes.length > 0 && (
-                    <div style={{ marginTop: 14, background: "#0a3358", borderLeft: "3px solid #4ade80", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#7aa8c8" }}>
-                      <strong style={{ color: "#4ade80" }}>Load Roster to Race</strong> copies these athletes into the race setup so you can adjust distances and start timing.
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -1851,14 +1828,14 @@
                         </div>
                         <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#00aeef", flexShrink: 0 }}>{i + 1}</div>
                         <input value={ath.firstName || ""} onChange={e => updateFirstName(i, e.target.value)} placeholder="First"
-                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "8px 8px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
                         <input value={ath.lastName || ""} onChange={e => updateLastName(i, e.target.value)} placeholder="Last"
-                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "8px 8px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
                         {athletes.length > 1 && (
                           <button onClick={() => removeAthlete(i)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
                         )}
                       </div>
-                      <div style={{ display: "flex", gap: 8, marginLeft: 46 }}>
+                      <div style={{ display: "flex", gap: 8, marginLeft: 46, flexWrap: "wrap" }}>
                         <select value={ath.gender} onChange={e => updateGender(i, e.target.value)}
                           style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "5px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
                           <option value="Male">Male</option>
@@ -2170,12 +2147,12 @@
                           {livePublishError && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6, maxWidth: 280, lineHeight: 1.4 }}>{livePublishError}</div>}
                         </div>
                       ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 6, padding: "6px 12px", display: "inline-flex" }}>
-                          <span style={{ fontSize: 11, color: "#5a86a8" }}>LIVE CODE</span>
-                          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 20, color: "#ffd166", letterSpacing: 4 }}>{liveRaceCode}</span>
+                        <div style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 6, padding: "6px 12px" }}>
+                          <span style={{ fontSize: 11, color: "#5a86a8", letterSpacing: 1 }}>LIVE</span>
+                          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#ffd166", letterSpacing: 4 }}>{liveRaceCode}</span>
                           <span style={{ fontSize: 10, color: "#5a86a8" }}>share with spectators</span>
                           <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
-                            style={{ background: "none", border: "none", color: "#3a6080", cursor: "pointer", fontSize: 14, padding: "0 2px" }}>&times;</button>
+                            style={{ background: "none", border: "none", color: "#3a6080", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>&times;</button>
                         </div>
                       )}
                     </div>
