@@ -54,6 +54,9 @@
       firebase.initializeApp(firebaseConfig);
       var auth = firebase.auth();
       var db = firebase.firestore();
+      db.enablePersistence({ synchronizeTabs: true }).catch(function(e) {
+        console.log("Persistence unavailable:", e.code);
+      });
     </script>
     <script type="text/babel" data-presets="react">
       const { useState, useEffect, useRef } = React;
@@ -340,10 +343,12 @@
             courses, segments: SEGMENTS, updatedAt: Date.now()
           };
           try {
-            await db.collection("liveRaces").doc(code).set(payload);
+            const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
+            await Promise.race([db.collection("liveRaces").doc(code).set(payload), timeout]);
             return true;
           } catch(e) {
-            console.error("publishLiveRace failed:", e.code, e.message);
+            console.error("publishLiveRace failed:", e.code || "", e.message);
+            if (e.message === "timeout") return "Connection timed out — check your internet and try again.";
             return `${e.code}: ${e.message}`;
           }
         }
