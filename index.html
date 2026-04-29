@@ -13,6 +13,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet" />
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -26,6 +29,19 @@
     <div id="root"></div>
     <script>
       var LOGO_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNjAgNjQiPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjMwIiBmaWxsPSIjMDcxODI5Ii8+CiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwYWVlZiIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHRleHQgeD0iMzIiIHk9IjQyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyMiIgZm9udC13ZWlnaHQ9IjkwMCIgZmlsbD0iIzAwYWVlZiI+VDwvdGV4dD4KICA8dGV4dCB4PSI3NCIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxzYW5zLXNlcmlmIiBmb250LXNpemU9IjI4IiBmb250LXdlaWdodD0iOTAwIiBsZXR0ZXItc3BhY2luZz0iMiIgZmlsbD0iIzFhMWEyZSI+VElNRTwvdGV4dD4KICA8dGV4dCB4PSI3NCIgeT0iNjIiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxzYW5zLXNlcmlmIiBmb250LXNpemU9IjE4IiBmb250LXdlaWdodD0iOTAwIiBsZXR0ZXItc3BhY2luZz0iNCIgZmlsbD0iIzAwYWVlZiI+QVRIT048L3RleHQ+Cjwvc3ZnPg==";
+    </script>
+    <script>
+      const firebaseConfig = {
+        apiKey: "AIzaSyCDMEMg22g22LdtSYDDKnK2al2n7bGPDhY",
+        authDomain: "timeathon.firebaseapp.com",
+        projectId: "timeathon",
+        storageBucket: "timeathon.firebasestorage.app",
+        messagingSenderId: "1068021372190",
+        appId: "1:1068021372190:web:5891801b76b228c860650f"
+      };
+      firebase.initializeApp(firebaseConfig);
+      var auth = firebase.auth();
+      var db = firebase.firestore();
     </script>
     <script type="text/babel">
       const { useState, useEffect, useRef } = React;
@@ -178,7 +194,17 @@
         const [editTarget, setEditTarget]   = useState(null);
         const [editValues, setEditValues]   = useState({});
 
-        // Saved race presets (persisted to localStorage)
+        // Auth state
+        const [currentUser, setCurrentUser] = useState(null);
+        const [authLoading, setAuthLoading] = useState(true);
+        const [authMode, setAuthMode] = useState("login");
+        const [authEmail, setAuthEmail] = useState("");
+        const [authPassword, setAuthPassword] = useState("");
+        const [authName, setAuthName] = useState("");
+        const [authError, setAuthError] = useState("");
+        const [authWorking, setAuthWorking] = useState(false);
+
+        // Saved race presets (persisted to localStorage + Firestore)
         const [savedRaces, setSavedRaces] = useState(() => {
           try { return JSON.parse(localStorage.getItem("tri-saved-races") || "[]"); } catch { return []; }
         });
@@ -212,6 +238,53 @@
           return () => clearInterval(clockRef.current);
         }, [clockRunning]);
 
+        // Firebase auth listener — loads Firestore data on login
+        useEffect(() => {
+          const unsub = auth.onAuthStateChanged(async user => {
+            setCurrentUser(user);
+            if (user) {
+              try {
+                const doc = await db.collection("users").doc(user.uid).get();
+                if (doc.exists) {
+                  const data = doc.data();
+                  if (data.races && data.races.length > 0) { setSavedRaces(data.races); localStorage.setItem("tri-saved-races", JSON.stringify(data.races)); }
+                  if (data.athletes && data.athletes.length > 0) { setSavedAthletes(data.athletes); localStorage.setItem("tri-saved-athletes", JSON.stringify(data.athletes)); }
+                }
+              } catch(e) { console.error("Firestore load:", e); }
+            }
+            setAuthLoading(false);
+          });
+          return unsub;
+        }, []);
+
+        async function authSignIn() {
+          setAuthError(""); setAuthWorking(true);
+          try { await auth.signInWithEmailAndPassword(authEmail, authPassword); }
+          catch(e) { setAuthError(friendlyAuthError(e.code)); }
+          setAuthWorking(false);
+        }
+        async function authSignUp() {
+          setAuthError(""); setAuthWorking(true);
+          try {
+            const cred = await auth.createUserWithEmailAndPassword(authEmail, authPassword);
+            await cred.user.updateProfile({ displayName: authName });
+            setCurrentUser({ ...cred.user, displayName: authName });
+          } catch(e) { setAuthError(friendlyAuthError(e.code)); }
+          setAuthWorking(false);
+        }
+        async function authResetPassword() {
+          if (!authEmail) { setAuthError("Enter your email first."); return; }
+          setAuthWorking(true);
+          try { await auth.sendPasswordResetEmail(authEmail); setAuthError("Reset email sent — check your inbox."); }
+          catch(e) { setAuthError(friendlyAuthError(e.code)); }
+          setAuthWorking(false);
+        }
+        function authSignOut() { auth.signOut(); setSavedRaces([]); setSavedAthletes([]); }
+        function friendlyAuthError(code) {
+          const map = { "auth/invalid-email": "Invalid email address.", "auth/user-not-found": "No account with that email.", "auth/wrong-password": "Incorrect password.", "auth/email-already-in-use": "An account with that email already exists.", "auth/weak-password": "Password must be at least 6 characters.", "auth/invalid-credential": "Incorrect email or password." };
+          return map[code] || "Something went wrong. Please try again.";
+        }
+
         function startClock() {
           offsetRef.current = 0;
           setClockMs(0);
@@ -236,6 +309,7 @@
         function persistRaces(races) {
           setSavedRaces(races);
           localStorage.setItem("tri-saved-races", JSON.stringify(races));
+          if (currentUser) db.collection("users").doc(currentUser.uid).set({ races }, { merge: true }).catch(console.error);
         }
 
         function saveRace() {
@@ -257,8 +331,7 @@
           const updated = savedRaces.map(r => r.id === loadedRaceId
             ? { ...r, ageGroups, courses, units, athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId })), savedAt: new Date().toLocaleString() }
             : r);
-          setSavedRaces(updated);
-          localStorage.setItem("tri-saved-races", JSON.stringify(updated));
+          persistRaces(updated);
         }
         function loadRace(race) {
           setLoadedRaceId(race.id);
@@ -281,6 +354,7 @@
         function persistSavedAthletes(list) {
           setSavedAthletes(list);
           localStorage.setItem("tri-saved-athletes", JSON.stringify(list));
+          if (currentUser) db.collection("users").doc(currentUser.uid).set({ athletes: list }, { merge: true }).catch(console.error);
         }
         function addSavedAthlete() {
           persistSavedAthletes([...savedAthletes, { id: Date.now(), name: "", gender: "Male", ageGroup: ageGroups[0] || "9-10", dob: "" }]);
@@ -301,8 +375,7 @@
                 : a
             )
           }));
-          setSavedRaces(updatedRaces);
-          localStorage.setItem("tri-saved-races", JSON.stringify(updatedRaces));
+          persistRaces(updatedRaces);
           persistSavedAthletes(savedAthletes.map(a =>
             a.name.trim().toLowerCase() === oldKey
               ? { ...a, name: newData.name, gender: newData.gender, ageGroup: newData.ageGroup, dob: newData.dob }
@@ -761,6 +834,69 @@
           padding: "8px 10px", color: "#e8f4fb", fontSize: 14, width: 80, outline: "none", textAlign: "center",
         };
 
+        // Auth loading screen
+        if (authLoading) return (
+          <div style={{ minHeight: "100vh", background: "#071829", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 42, letterSpacing: 6, color: "#f0f6ff" }}><span style={{ color: "#00aeef" }}>Time</span>athon</div>
+              <div style={{ fontSize: 12, color: "#3a6080", letterSpacing: 2, marginTop: 8 }}>LOADING…</div>
+            </div>
+          </div>
+        );
+
+        // Login / Sign up screen
+        if (!currentUser) return (
+          <div style={{ minHeight: "100vh", background: "#071829", fontFamily: "'DM Sans', Arial, sans-serif", color: "#e8f4fb", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+            <div style={{ width: "100%", maxWidth: 400 }}>
+              <div style={{ textAlign: "center", marginBottom: 32 }}>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 52, letterSpacing: 6, color: "#f0f6ff", lineHeight: 1 }}><span style={{ color: "#00aeef" }}>Time</span>athon</div>
+                <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 6 }}>Swim &nbsp;&middot;&nbsp; Bike &nbsp;&middot;&nbsp; Run</div>
+              </div>
+
+              <div style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 12, padding: "28px 24px" }}>
+                <div style={{ display: "flex", marginBottom: 24, background: "#071829", borderRadius: 6, padding: 3 }}>
+                  {[["login","Sign In"],["signup","Create Account"]].map(([mode, label]) => (
+                    <button key={mode} onClick={() => { setAuthMode(mode); setAuthError(""); }}
+                      style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 700, letterSpacing: 1, background: authMode === mode ? "#00aeef" : "transparent", color: authMode === mode ? "#071829" : "#5a86a8", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {authMode === "signup" && (
+                    <input value={authName} onChange={e => setAuthName(e.target.value)} placeholder="Your name"
+                      style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 6, padding: "12px 14px", color: "#e8f4fb", fontSize: 14, outline: "none", width: "100%" }} />
+                  )}
+                  <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="Email address"
+                    onKeyDown={e => e.key === "Enter" && (authMode === "login" ? authSignIn() : authSignUp())}
+                    style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 6, padding: "12px 14px", color: "#e8f4fb", fontSize: 14, outline: "none", width: "100%" }} />
+                  <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="Password"
+                    onKeyDown={e => e.key === "Enter" && (authMode === "login" ? authSignIn() : authSignUp())}
+                    style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 6, padding: "12px 14px", color: "#e8f4fb", fontSize: 14, outline: "none", width: "100%" }} />
+
+                  {authError && (
+                    <div style={{ fontSize: 12, color: authError.includes("sent") ? "#4ade80" : "#f87171", background: authError.includes("sent") ? "rgba(74,222,128,0.08)" : "rgba(248,113,113,0.08)", border: `1px solid ${authError.includes("sent") ? "rgba(74,222,128,0.2)" : "rgba(248,113,113,0.2)"}`, borderRadius: 6, padding: "8px 12px" }}>
+                      {authError}
+                    </div>
+                  )}
+
+                  <button onClick={authMode === "login" ? authSignIn : authSignUp} disabled={authWorking}
+                    style={{ background: "#00aeef", border: "none", borderRadius: 6, padding: "13px", fontSize: 14, fontWeight: 700, color: "#071829", cursor: authWorking ? "default" : "pointer", opacity: authWorking ? 0.7 : 1, letterSpacing: 1 }}>
+                    {authWorking ? "Please wait…" : authMode === "login" ? "Sign In" : "Create Account"}
+                  </button>
+
+                  {authMode === "login" && (
+                    <button onClick={authResetPassword} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 12, cursor: "pointer", textAlign: "center", padding: "4px" }}>
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
         return (
           <div style={{ minHeight: "100vh", background: "#071829", fontFamily: "'DM Sans', Arial, sans-serif", color: "#e8f4fb" }}>
 
@@ -775,6 +911,9 @@
               <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4 }}>
                 Swim &nbsp;&middot;&nbsp; Bike &nbsp;&middot;&nbsp; Run
               </div>
+              <button onClick={authSignOut} title="Sign out" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "4px 8px", letterSpacing: 1 }}>
+                {currentUser?.displayName ? currentUser.displayName.split(" ")[0] : currentUser?.email?.split("@")[0]} &nbsp;&#8594;
+              </button>
             </div>
 
             {/* NAV — only during race flow */}
