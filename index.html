@@ -184,6 +184,9 @@
         });
         const [saveRaceName, setSaveRaceName] = useState("");
         const [deleteConfirm, setDeleteConfirm] = useState(null);
+        const [raceMode, setRaceMode] = useState("separate");
+        const [showAthletePicker, setShowAthletePicker] = useState(false);
+        const [athletePickerSearch, setAthletePickerSearch] = useState("");
 
         // Saved athlete roster (persisted to localStorage — separate from race-specific athletes)
         const [savedAthletes, setSavedAthletes] = useState(() => {
@@ -207,7 +210,15 @@
           return () => clearInterval(clockRef.current);
         }, [clockRunning]);
 
-        function startClock()  { offsetRef.current = 0; setClockMs(0); setClockRunning(true); setClockStarted(true); }
+        function startClock() {
+          offsetRef.current = 0;
+          setClockMs(0);
+          setClockRunning(true);
+          setClockStarted(true);
+          if (raceMode === "simultaneous") {
+            setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: 0, started: true }));
+          }
+        }
         function pauseClock()  { setClockRunning(false); }
         function resumeClock() { setClockRunning(true); }
         function resetClock()  { setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0); }
@@ -320,6 +331,30 @@
         }
 
         function addAthlete()           { setAthletes(a => [...a, freshAthlete("", Date.now(), "Male", "9-10", courses[0]?.id || null)]); }
+
+        function allRaceAthletes() {
+          const seen = new Map();
+          savedRaces.forEach(race => {
+            (race.athletes || []).forEach(a => {
+              if (!a.name || !a.name.trim()) return;
+              const key = a.name.trim().toLowerCase();
+              if (!seen.has(key)) seen.set(key, { name: a.name.trim(), gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0], dob: a.dob || "" });
+            });
+          });
+          (savedAthletes || []).forEach(a => {
+            if (!a.name || !a.name.trim()) return;
+            const key = a.name.trim().toLowerCase();
+            if (!seen.has(key)) seen.set(key, { name: a.name.trim(), gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0], dob: a.dob || "" });
+          });
+          return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+        }
+
+        function addAthleteFromPicker(picked) {
+          const base = freshAthlete(picked.name, Date.now(), picked.gender, picked.ageGroup);
+          setAthletes(a => [...a, { ...base, dob: picked.dob || "", courseId: courses[0]?.id || null }]);
+          setShowAthletePicker(false);
+          setAthletePickerSearch("");
+        }
         function removeAthlete(i)       { if (athletes.length > 1) setAthletes(a => a.filter((_, idx) => idx !== i)); }
 
         // ── Course management ─────────────────────────────────────────────────────
@@ -928,6 +963,14 @@
               {/* ── SETUP ── */}
               {view === "setup" && (
                 <div>
+                  {/* Race mode toggle */}
+                  <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "#5a86a8", letterSpacing: 1, textTransform: "uppercase", flexShrink: 0 }}>Start Mode</span>
+                    {[["separate","Separate Start","#00aeef"],["simultaneous","Simultaneous Start","#ffd166"]].map(([mode, label, col]) => (
+                      <button key={mode} onClick={() => setRaceMode(mode)} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 700, letterSpacing: 1, background: raceMode === mode ? col : "transparent", color: raceMode === mode ? "#071829" : "#5a86a8", border: `1px solid ${raceMode === mode ? col : "rgba(255,255,255,0.1)"}`, borderRadius: 4, cursor: "pointer" }}>{label}</button>
+                    ))}
+                  </div>
+
                   <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>
                     Athletes
                   </div>
@@ -957,6 +1000,11 @@
                         </select>
                         <input type="date" value={ath.dob || ""} onChange={e => updateDob(i, e.target.value)} title="Date of Birth"
                           style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 12, outline: "none", colorScheme: "dark" }} />
+                        {ath.dob && calcAge(ath.dob) !== null && (
+                          <div style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "5px 8px", fontSize: 12, color: "#00aeef", fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
+                            Age {calcAge(ath.dob)}
+                          </div>
+                        )}
                         {courses.length > 1 && (
                           <select value={ath.courseId || courses[0].id} onChange={e => updateAthleteCourse(i, Number(e.target.value))}
                             style={{ background: "#0c2240", border: "1px solid rgba(255,209,102,0.35)", borderRadius: 4, padding: "5px 10px", color: "#ffd166", fontSize: 12, outline: "none", cursor: "pointer" }}>
@@ -968,11 +1016,64 @@
                   ))}
 
                   <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-                    <button onClick={addAthlete} style={btnStyle("#48cae4", true)}>+ Add Athlete</button>
+                    <button onClick={() => { setAthletePickerSearch(""); setShowAthletePicker(true); }} style={btnStyle("#48cae4", true)}>+ Add Athlete</button>
                     <button onClick={goToRace} style={btnStyle("#00aeef")}>Go to Race &#8594;</button>
                     <button onClick={() => csvInputRef.current.click()} style={btnStyle("#48cae4", true)}>&#8679; Import CSV</button>
                     <input ref={csvInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSVImport} />
                   </div>
+
+                  {/* Athlete picker modal */}
+                  {showAthletePicker && (() => {
+                    const roster = allRaceAthletes();
+                    const filtered = athletePickerSearch.trim()
+                      ? roster.filter(a => a.name.toLowerCase().includes(athletePickerSearch.toLowerCase()))
+                      : roster;
+                    return (
+                      <div style={{ position: "fixed", inset: 0, background: "rgba(7,24,41,0.92)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+                        onClick={e => { if (e.target === e.currentTarget) { setShowAthletePicker(false); setAthletePickerSearch(""); } }}>
+                        <div style={{ background: "#0c2240", borderTop: "2px solid #00aeef", borderRadius: "12px 12px 0 0", width: "100%", maxWidth: 500, maxHeight: "70vh", display: "flex", flexDirection: "column", padding: "16px 16px 24px" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#e8f4fb", letterSpacing: 1 }}>Add Athlete</div>
+                            <button onClick={() => { setShowAthletePicker(false); setAthletePickerSearch(""); }} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: 0 }}>&times;</button>
+                          </div>
+                          <input
+                            autoFocus
+                            value={athletePickerSearch}
+                            onChange={e => setAthletePickerSearch(e.target.value)}
+                            placeholder="Search athletes…"
+                            style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 6, padding: "9px 12px", color: "#e8f4fb", fontSize: 13, outline: "none", marginBottom: 10, width: "100%", boxSizing: "border-box" }}
+                          />
+                          <div style={{ overflowY: "auto", flex: 1 }}>
+                            {/* New blank athlete */}
+                            <button onClick={() => { addAthlete(); setShowAthletePicker(false); setAthletePickerSearch(""); }}
+                              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "rgba(0,174,239,0.08)", border: "1px dashed rgba(0,174,239,0.3)", borderRadius: 6, padding: "10px 12px", color: "#48cae4", fontSize: 13, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
+                              <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
+                              <span style={{ fontWeight: 700 }}>New Athlete</span>
+                            </button>
+                            {filtered.length === 0 && athletePickerSearch && (
+                              <div style={{ fontSize: 12, color: "#3a6080", textAlign: "center", padding: "12px 0" }}>No match — use New Athlete above.</div>
+                            )}
+                            {filtered.map((ath, idx) => {
+                              const age = calcAge(ath.dob);
+                              const alreadyAdded = athletes.some(a => a.name.trim().toLowerCase() === ath.name.toLowerCase());
+                              return (
+                                <button key={idx} onClick={() => !alreadyAdded && addAthleteFromPicker(ath)} disabled={alreadyAdded}
+                                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "transparent", border: "1px solid rgba(0,174,239,0.1)", borderRadius: 6, padding: "9px 12px", color: alreadyAdded ? "#3a6080" : "#e8f4fb", fontSize: 13, cursor: alreadyAdded ? "default" : "pointer", marginBottom: 4, textAlign: "left" }}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ath.name}</div>
+                                    <div style={{ fontSize: 11, color: "#5a86a8" }}>
+                                      {ath.gender}{ath.ageGroup ? ` · ${ath.ageGroup}` : ""}{age !== null ? ` · Age ${age}` : ""}
+                                    </div>
+                                  </div>
+                                  {alreadyAdded && <span style={{ fontSize: 10, color: "#3a6080", flexShrink: 0 }}>already added</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* ── Courses (distances) ── */}
                   <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
@@ -1117,7 +1218,10 @@
                   </div>
 
                   <div style={{ marginTop: 14, background: "#0a3358", borderLeft: "3px solid #00aeef", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#7aa8c8" }}>
-                    Tap <strong style={{ color: "#48cae4" }}>Send Off</strong> per athlete at dive-in, or <strong style={{ color: "#ffd166" }}>Send Off All</strong> for simultaneous starts. Tap segments in order — <strong style={{ color: "#f4742b" }}>Run</strong> ends their race. Use <strong style={{ color: "#48cae4" }}>Edit Times</strong> to correct any mis-tap.
+                    {raceMode === "simultaneous"
+                      ? <>All athletes start the moment you press <strong style={{ color: "#ffd166" }}>START RACE</strong>. Tap segments in order — <strong style={{ color: "#f4742b" }}>Run</strong> ends their race. Use <strong style={{ color: "#48cae4" }}>Edit Times</strong> to correct any mis-tap.</>
+                      : <>Tap <strong style={{ color: "#48cae4" }}>Send Off</strong> per athlete at dive-in, or <strong style={{ color: "#ffd166" }}>Send Off All</strong> for a mass start. Tap segments in order — <strong style={{ color: "#f4742b" }}>Run</strong> ends their race. Use <strong style={{ color: "#48cae4" }}>Edit Times</strong> to correct any mis-tap.</>
+                    }
                   </div>
                 </div>
               )}
@@ -1126,15 +1230,18 @@
               {view === "race" && (
                 <div>
                   {!clockStarted && (
-                    <div style={{ background: "linear-gradient(135deg,#0a3358,#0d3a6e)", border: "2px solid #00aeef", borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
-                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", marginBottom: 12 }}>Ready to Race?</div>
-                      <button onClick={startClock} style={{ ...btnStyle("#00aeef"), fontSize: 18, padding: "14px 40px", letterSpacing: 3, fontFamily: "'Bebas Neue'" }}>
+                    <div style={{ background: "linear-gradient(135deg,#0a3358,#0d3a6e)", border: `2px solid ${raceMode === "simultaneous" ? "#ffd166" : "#00aeef"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
+                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", marginBottom: 4 }}>Ready to Race?</div>
+                      {raceMode === "simultaneous" && (
+                        <div style={{ fontSize: 11, color: "#ffd166", marginBottom: 10, letterSpacing: 1 }}>SIMULTANEOUS START — all athletes go at once</div>
+                      )}
+                      <button onClick={startClock} style={{ ...btnStyle(raceMode === "simultaneous" ? "#ffd166" : "#00aeef"), fontSize: 18, padding: "14px 40px", letterSpacing: 3, fontFamily: "'Bebas Neue'" }}>
                         &#9654; START RACE
                       </button>
                     </div>
                   )}
 
-                  {clockStarted && anyUnstarted && (
+                  {clockStarted && anyUnstarted && raceMode === "separate" && (
                     <button onClick={sendOffAll} style={{ ...btnStyle("#ffd166"), width: "100%", marginBottom: 12, fontSize: 14, letterSpacing: 2 }}>
                       &#9654;&#9654; Send Off All (Simultaneous Start)
                     </button>
@@ -1169,7 +1276,12 @@
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: done ? "#4ade80" : "#00aeef", lineHeight: 1, minWidth: 24 }}>{i + 1}</div>
                             <div>
-                              <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</div>
+                              <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+                                <span style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</span>
+                                {ath.dob && calcAge(ath.dob) !== null && (
+                                  <span style={{ fontSize: 11, color: "#5a86a8" }}>Age {calcAge(ath.dob)}</span>
+                                )}
+                              </div>
                               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                                 {ath.started && !done && (
                                   <>
