@@ -258,6 +258,7 @@
         const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", birthday: "", gender: "", role: "participant" });
         const [profileSaving, setProfileSaving] = useState(false);
         const [profileSaved, setProfileSaved] = useState(false);
+        const [profileError, setProfileError] = useState("");
         const [newPassword, setNewPassword] = useState("");
         const [pwSaving, setPwSaving] = useState(false);
         const [pwMsg, setPwMsg] = useState("");
@@ -305,7 +306,14 @@
                   if (data.races && data.races.length > 0) { setSavedRaces(data.races); localStorage.setItem("tri-saved-races", JSON.stringify(data.races)); }
                   if (data.athletes && data.athletes.length > 0) { setSavedAthletes(data.athletes); localStorage.setItem("tri-saved-athletes", JSON.stringify(data.athletes)); }
                 }
-              } catch(e) { console.error("Firestore load:", e); }
+              } catch(e) {
+                console.error("Firestore load:", e);
+                // Fall back to localStorage
+                try {
+                  const cached = localStorage.getItem("tri-user-profile");
+                  if (cached) { const p = JSON.parse(cached); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "participant" }); }
+                } catch(_) {}
+              }
             }
             setAuthLoading(false);
           });
@@ -1584,21 +1592,24 @@
                         </div>
                       </div>
                       <button onClick={async () => {
-                        setProfileSaving(true); setProfileSaved(false);
+                        setProfileSaving(true); setProfileSaved(false); setProfileError("");
                         const displayName = `${editProfile.firstName.trim()} ${editProfile.lastName.trim()}`;
                         const updated = { ...editProfile, displayName, email: currentUser.email };
-                        try {
-                          await currentUser.updateProfile({ displayName });
-                          await db.collection("users").doc(currentUser.uid).set({ profile: updated }, { merge: true });
-                          setUserProfile(updated);
-                          setProfileSaved(true);
-                          setTimeout(() => setProfileSaved(false), 2500);
-                        } catch(e) { console.error(e); }
+                        try { await currentUser.updateProfile({ displayName }); } catch(e) { console.error("Auth update:", e); }
+                        // Always update local state and localStorage immediately
+                        setUserProfile(updated);
+                        localStorage.setItem("tri-user-profile", JSON.stringify(updated));
+                        setProfileSaved(true);
+                        setTimeout(() => setProfileSaved(false), 2500);
+                        // Attempt Firestore in background
+                        db.collection("users").doc(currentUser.uid).set({ profile: updated }, { merge: true })
+                          .catch(e => { console.error("Firestore profile save:", e); setProfileError("Saved locally — cloud sync failed."); });
                         setProfileSaving(false);
                       }} disabled={profileSaving}
                         style={{ background: profileSaved ? "#4ade80" : "#00aeef", border: "none", borderRadius: 6, padding: "11px", fontSize: 13, fontWeight: 700, color: "#071829", cursor: profileSaving ? "default" : "pointer", opacity: profileSaving ? 0.7 : 1, transition: "background 0.3s" }}>
                         {profileSaving ? "Saving…" : profileSaved ? "✓ Saved" : "Save Changes"}
                       </button>
+                      {profileError && <div style={{ fontSize: 11, color: "#ffd166", marginTop: 8, textAlign: "center" }}>{profileError}</div>}
                     </div>
                   </div>
 
