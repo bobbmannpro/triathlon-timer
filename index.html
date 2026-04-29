@@ -295,17 +295,29 @@
             if (user) {
               try {
                 const snap = await rtdb.ref("users/" + user.uid).once("value");
-                if (snap.exists()) {
-                  const data = snap.val();
-                  if (data.profile) { setUserProfile(data.profile); setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "participant" }); localStorage.setItem("tri-user-profile", JSON.stringify(data.profile)); }
-                  if (data.races && data.races.length > 0) { setSavedRaces(data.races); localStorage.setItem("tri-saved-races", JSON.stringify(data.races)); }
-                  if (data.athletes && data.athletes.length > 0) { setSavedAthletes(data.athletes); localStorage.setItem("tri-saved-athletes", JSON.stringify(data.athletes)); }
+                const data = snap.exists() ? snap.val() : {};
+
+                // Profile: RTDB → localStorage fallback
+                if (data.profile) {
+                  setUserProfile(data.profile);
+                  setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "participant" });
+                  localStorage.setItem("tri-user-profile", JSON.stringify(data.profile));
                 } else {
-                  // Fall back to localStorage cache
-                  try {
-                    const cached = localStorage.getItem("tri-user-profile");
-                    if (cached) { const p = JSON.parse(cached); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "participant" }); }
-                  } catch(_) {}
+                  try { const c = localStorage.getItem("tri-user-profile"); if (c) { const p = JSON.parse(c); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "participant" }); } } catch(_) {}
+                }
+
+                // Races: RTDB → localStorage fallback, then push local up to RTDB if missing
+                if (data.races && data.races.length > 0) {
+                  setSavedRaces(data.races); localStorage.setItem("tri-saved-races", JSON.stringify(data.races));
+                } else {
+                  try { const c = localStorage.getItem("tri-saved-races"); if (c) { const r = JSON.parse(c); if (r.length > 0) { setSavedRaces(r); rtdb.ref("users/" + user.uid + "/races").set(r).catch(console.error); } } } catch(_) {}
+                }
+
+                // Athletes: RTDB → localStorage fallback, then push local up to RTDB if missing
+                if (data.athletes && data.athletes.length > 0) {
+                  setSavedAthletes(data.athletes); localStorage.setItem("tri-saved-athletes", JSON.stringify(data.athletes));
+                } else {
+                  try { const c = localStorage.getItem("tri-saved-athletes"); if (c) { const a = JSON.parse(c); if (a.length > 0) { setSavedAthletes(a); rtdb.ref("users/" + user.uid + "/athletes").set(a).catch(console.error); } } } catch(_) {}
                 }
               } catch(e) { console.error("RTDB load:", e); }
             }
