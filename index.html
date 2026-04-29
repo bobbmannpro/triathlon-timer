@@ -1181,11 +1181,13 @@
                                   const done = splitDurs[si] !== null;
                                   const isCurrent = curSeg === si;
                                   const col = liveSegColors[si % liveSegColors.length];
+                                  const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
+                                  const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (liveRace.clockMs || 0) - prevMs : null;
                                   return (
-                                    <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? "rgba(0,174,239,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? "rgba(0,174,239,0.2)" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
-                                      <div style={{ fontSize: 8, color: done ? col : isCurrent ? "#4a9abf" : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
-                                      <div style={{ fontSize: 11, color: done ? "#e8f4fb" : isCurrent ? "#4a7a9b" : "#1a3050", fontFamily: done ? "'Bebas Neue'" : "inherit", letterSpacing: done ? 1 : 0 }}>
-                                        {done ? formatElapsed(splitDurs[si]) : isCurrent ? "···" : "—"}
+                                    <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? `${col}10` : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? col + "40" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
+                                      <div style={{ fontSize: 8, color: done ? col : isCurrent ? col : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                      <div style={{ fontSize: 11, color: done ? "#e8f4fb" : isCurrent ? col : "#1a3050", fontFamily: (done || isCurrent) ? "'Bebas Neue'" : "inherit", letterSpacing: (done || isCurrent) ? 1 : 0 }}>
+                                        {done ? formatElapsed(splitDurs[si]) : isCurrent && curSegMs !== null ? formatElapsed(curSegMs) : "—"}
                                       </div>
                                     </div>
                                   );
@@ -1716,11 +1718,13 @@
                                       const done = splitDurs[si] !== null;
                                       const isCurrent = curSeg === si;
                                       const col = watchSegColors[si % watchSegColors.length];
+                                      const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
+                                      const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (liveRace.clockMs || 0) - prevMs : null;
                                       return (
-                                        <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? "rgba(0,174,239,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? "rgba(0,174,239,0.2)" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
-                                          <div style={{ fontSize: 8, color: done ? col : isCurrent ? "#4a9abf" : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
-                                          <div style={{ fontSize: 11, color: done ? "#e8f4fb" : isCurrent ? "#4a7a9b" : "#1a3050", fontFamily: done ? "'Bebas Neue'" : "inherit", letterSpacing: done ? 1 : 0 }}>
-                                            {done ? formatElapsed(splitDurs[si]) : isCurrent ? "···" : "—"}
+                                        <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? `${col}10` : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? col + "40" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
+                                          <div style={{ fontSize: 8, color: done ? col : isCurrent ? col : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                          <div style={{ fontSize: 11, color: done ? "#e8f4fb" : isCurrent ? col : "#1a3050", fontFamily: (done || isCurrent) ? "'Bebas Neue'" : "inherit", letterSpacing: (done || isCurrent) ? 1 : 0 }}>
+                                            {done ? formatElapsed(splitDurs[si]) : isCurrent && curSegMs !== null ? formatElapsed(curSegMs) : "—"}
                                           </div>
                                         </div>
                                       );
