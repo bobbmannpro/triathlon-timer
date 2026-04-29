@@ -15,7 +15,6 @@
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet" />
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
@@ -55,7 +54,6 @@
       };
       firebase.initializeApp(firebaseConfig);
       var auth = firebase.auth();
-      var db = firebase.firestore();
       var rtdb = firebase.database();
     </script>
     <script type="text/babel" data-presets="react">
@@ -296,21 +294,20 @@
             setCurrentUser(user);
             if (user) {
               try {
-                const doc = await db.collection("users").doc(user.uid).get();
-                if (doc.exists) {
-                  const data = doc.data();
-                  if (data.profile) { setUserProfile(data.profile); setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "participant" }); }
+                const snap = await rtdb.ref("users/" + user.uid).once("value");
+                if (snap.exists()) {
+                  const data = snap.val();
+                  if (data.profile) { setUserProfile(data.profile); setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "participant" }); localStorage.setItem("tri-user-profile", JSON.stringify(data.profile)); }
                   if (data.races && data.races.length > 0) { setSavedRaces(data.races); localStorage.setItem("tri-saved-races", JSON.stringify(data.races)); }
                   if (data.athletes && data.athletes.length > 0) { setSavedAthletes(data.athletes); localStorage.setItem("tri-saved-athletes", JSON.stringify(data.athletes)); }
+                } else {
+                  // Fall back to localStorage cache
+                  try {
+                    const cached = localStorage.getItem("tri-user-profile");
+                    if (cached) { const p = JSON.parse(cached); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "participant" }); }
+                  } catch(_) {}
                 }
-              } catch(e) {
-                console.error("Firestore load:", e);
-                // Fall back to localStorage
-                try {
-                  const cached = localStorage.getItem("tri-user-profile");
-                  if (cached) { const p = JSON.parse(cached); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "participant" }); }
-                } catch(_) {}
-              }
+              } catch(e) { console.error("RTDB load:", e); }
             }
             setAuthLoading(false);
           });
@@ -332,7 +329,8 @@
             const cred = await auth.createUserWithEmailAndPassword(authEmail, authPassword);
             await cred.user.updateProfile({ displayName });
             const profile = { firstName: authFirstName.trim(), lastName: authLastName.trim(), displayName, email: authEmail, birthday: authBirthday, gender: authGender, role: authRole, createdAt: new Date().toISOString() };
-            await db.collection("users").doc(cred.user.uid).set({ profile }, { merge: true });
+            await rtdb.ref("users/" + cred.user.uid + "/profile").set(profile);
+            localStorage.setItem("tri-user-profile", JSON.stringify(profile));
             setUserProfile(profile);
           } catch(e) { setAuthError(friendlyAuthError(e.code)); }
           setAuthWorking(false);
@@ -439,7 +437,7 @@
         function persistRaces(races) {
           setSavedRaces(races);
           localStorage.setItem("tri-saved-races", JSON.stringify(races));
-          if (currentUser) db.collection("users").doc(currentUser.uid).set({ races }, { merge: true }).catch(console.error);
+          if (currentUser) rtdb.ref("users/" + currentUser.uid + "/races").set(races).catch(console.error);
         }
 
         function saveRace() {
@@ -484,7 +482,7 @@
         function persistSavedAthletes(list) {
           setSavedAthletes(list);
           localStorage.setItem("tri-saved-athletes", JSON.stringify(list));
-          if (currentUser) db.collection("users").doc(currentUser.uid).set({ athletes: list }, { merge: true }).catch(console.error);
+          if (currentUser) rtdb.ref("users/" + currentUser.uid + "/athletes").set(list).catch(console.error);
         }
         function addSavedAthlete() {
           persistSavedAthletes([...savedAthletes, { id: Date.now(), name: "", gender: "Male", ageGroup: ageGroups[0] || "9-10", dob: "" }]);
@@ -1599,8 +1597,8 @@
                         setProfileSaved(true);
                         setTimeout(() => setProfileSaved(false), 2500);
                         // Attempt Firestore in background
-                        db.collection("users").doc(currentUser.uid).set({ profile: updated }, { merge: true })
-                          .catch(e => { console.error("Firestore profile save:", e); setProfileError("Saved locally — cloud sync failed."); });
+                        rtdb.ref("users/" + currentUser.uid + "/profile").set(updated)
+                          .catch(e => { console.error("RTDB profile save:", e); setProfileError("Saved locally — cloud sync failed."); });
                         setProfileSaving(false);
                       }} disabled={profileSaving}
                         style={{ background: profileSaved ? "#4ade80" : "#00aeef", border: "none", borderRadius: 6, padding: "11px", fontSize: 13, fontWeight: 700, color: "#071829", cursor: profileSaving ? "default" : "pointer", opacity: profileSaving ? 0.7 : 1, transition: "background 0.3s" }}>
