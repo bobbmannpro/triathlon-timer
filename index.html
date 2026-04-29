@@ -16,16 +16,28 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       body { background: #071829; }
       input:focus { border-color: rgba(0,174,239,0.7) !important; }
+      #splash { position:fixed; inset:0; background:#071829; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:9999; transition:opacity 0.3s; }
+      #splash.hide { opacity:0; pointer-events:none; }
+      #splash-logo { font-size:52px; font-family:Arial Black,sans-serif; letter-spacing:6px; color:#f0f6ff; }
+      #splash-logo span { color:#00aeef; }
+      #splash-sub { font-size:11px; letter-spacing:4px; color:#5a86a8; margin-top:8px; }
+      #splash-dot { width:8px; height:8px; background:#00aeef; border-radius:50%; margin-top:32px; animation:pulse 1s ease-in-out infinite; }
+      @keyframes pulse { 0%,100%{opacity:0.2;transform:scale(0.8)} 50%{opacity:1;transform:scale(1.2)} }
     </style>
   </head>
   <body>
+    <div id="splash">
+      <div id="splash-logo"><span>Time</span>athon</div>
+      <div id="splash-sub">SWIM &nbsp;·&nbsp; BIKE &nbsp;·&nbsp; RUN</div>
+      <div id="splash-dot"></div>
+    </div>
     <div id="root"></div>
     <script>
       var LOGO_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNjAgNjQiPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjMwIiBmaWxsPSIjMDcxODI5Ii8+CiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwYWVlZiIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHRleHQgeD0iMzIiIHk9IjQyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyMiIgZm9udC13ZWlnaHQ9IjkwMCIgZmlsbD0iIzAwYWVlZiI+VDwvdGV4dD4KICA8dGV4dCB4PSI3NCIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxzYW5zLXNlcmlmIiBmb250LXNpemU9IjI4IiBmb250LXdlaWdodD0iOTAwIiBsZXR0ZXItc3BhY2luZz0iMiIgZmlsbD0iIzFhMWEyZSI+VElNRTwvdGV4dD4KICA8dGV4dCB4PSI3NCIgeT0iNjIiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxzYW5zLXNlcmlmIiBmb250LXNpemU9IjE4IiBmb250LXdlaWdodD0iOTAwIiBsZXR0ZXItc3BhY2luZz0iNCIgZmlsbD0iIzAwYWVlZiI+QVRIT048L3RleHQ+Cjwvc3ZnPg==";
@@ -43,7 +55,7 @@
       var auth = firebase.auth();
       var db = firebase.firestore();
     </script>
-    <script type="text/babel">
+    <script type="text/babel" data-presets="react">
       const { useState, useEffect, useRef } = React;
 
       // Run is the final segment — logging it ends the race for that athlete
@@ -330,8 +342,8 @@
             await db.collection("liveRaces").doc(code).set(payload);
             return true;
           } catch(e) {
-            console.error("publishLiveRace failed:", e);
-            return false;
+            console.error("publishLiveRace failed:", e.code, e.message);
+            return e.message || "Unknown error";
           }
         }
 
@@ -2039,8 +2051,8 @@
                             setLivePublishError("");
                             const code = generateRaceCode();
                             const ok = await publishLiveRace(code);
-                            if (ok) { setLiveRaceCode(code); }
-                            else { setLivePublishError("Could not go live — check Firestore rules."); }
+                            if (ok === true) { setLiveRaceCode(code); }
+                            else { setLivePublishError(ok || "Could not go live — check Firestore rules."); }
                           }} style={{ ...btnStyle("#ffd166", true), padding: "5px 14px", fontSize: 11, letterSpacing: 1 }}>
                             📡 Go Live
                           </button>
@@ -2326,6 +2338,8 @@
       }
 
       ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+      const splash = document.getElementById("splash");
+      if (splash) { splash.classList.add("hide"); setTimeout(() => splash.remove(), 350); }
     </script>
   </body>
 </html>
