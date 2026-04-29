@@ -57,9 +57,6 @@
       var auth = firebase.auth();
       var db = firebase.firestore();
       var rtdb = firebase.database();
-      db.enablePersistence({ synchronizeTabs: true }).catch(function(e) {
-        console.log("Persistence unavailable:", e.code);
-      });
     </script>
     <script type="text/babel" data-presets="react">
       const { useState, useEffect, useRef } = React;
