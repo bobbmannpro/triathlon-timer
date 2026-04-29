@@ -65,25 +65,25 @@
       }
 
       // ── Pace calculators ─────────────────────────────────────────────────────
-      function calcSwimPace(ms, yards) {
-        if (!ms || !yards || yards <= 0) return null;
-        const secsPerHundred = (ms / 1000) / yards * 100;
+      function calcSwimPace(ms, dist, unit) {
+        if (!ms || !dist || dist <= 0) return null;
+        const secsPerHundred = (ms / 1000) / dist * 100;
         const mins = Math.floor(secsPerHundred / 60);
         const secs = Math.floor(secsPerHundred % 60);
-        return `${mins}:${String(secs).padStart(2, "0")} /100y`;
+        return `${mins}:${String(secs).padStart(2, "0")} /100${unit === "meters" ? "m" : "y"}`;
       }
 
-      function calcBikeMph(ms, miles) {
-        if (!ms || !miles || miles <= 0) return null;
-        return `${(miles / (ms / 3600000)).toFixed(1)} mph`;
+      function calcBikeMph(ms, dist, unit) {
+        if (!ms || !dist || dist <= 0) return null;
+        return `${(dist / (ms / 3600000)).toFixed(1)} ${unit === "km" ? "km/h" : "mph"}`;
       }
 
-      function calcRunPace(ms, miles) {
-        if (!ms || !miles || miles <= 0) return null;
-        const minsPerMile = (ms / 60000) / miles;
-        const mins = Math.floor(minsPerMile);
-        const secs = Math.floor((minsPerMile - mins) * 60);
-        return `${mins}:${String(secs).padStart(2, "0")} /mi`;
+      function calcRunPace(ms, dist, unit) {
+        if (!ms || !dist || dist <= 0) return null;
+        const ppu = (ms / 60000) / dist;
+        const mins = Math.floor(ppu);
+        const secs = Math.floor((ppu - mins) * 60);
+        return `${mins}:${String(secs).padStart(2, "0")} /${unit === "km" ? "km" : "mi"}`;
       }
 
       function calcAge(dob) {
@@ -168,6 +168,7 @@
         // Age groups — fully customizable per race
         const [ageGroups, setAgeGroups] = useState(DEFAULT_AGE_GROUPS);
         const [certConfig, setCertConfig] = useState({ eventName: "TriFlow Race Event", accentColor: "#00aeef", orgName: "", customLogoB64: null });
+        const [units, setUnits] = useState({ swim: "yards", bike: "miles", run: "miles" });
         const [loadedRaceId, setLoadedRaceId] = useState(null);
 
         const [clockMs, setClockMs]         = useState(0);
@@ -241,13 +242,14 @@
         function updateSavedRace() {
           if (!loadedRaceId) return;
           const updated = savedRaces.map(r => r.id === loadedRaceId
-            ? { ...r, ageGroups, courses, athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId })), savedAt: new Date().toLocaleString() }
+            ? { ...r, ageGroups, courses, units, athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId })), savedAt: new Date().toLocaleString() }
             : r);
           setSavedRaces(updated);
           localStorage.setItem("tri-saved-races", JSON.stringify(updated));
         }
         function loadRace(race) {
           setLoadedRaceId(race.id);
+          if (race.units) setUnits(race.units);
           const loadedCourses = race.courses || [{ id: 1, name: "Sprint", swimYards: race.swimYards || 100, bikeMiles: race.bikeMiles || 6, runMiles: race.runMiles || 1.5 }];
           const loadedAgeGroups = race.ageGroups || DEFAULT_AGE_GROUPS;
           setCourses(loadedCourses);
@@ -344,6 +346,21 @@
         function updateGender(i, v)     { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, gender: v } : ath)); }
         function updateAgeGroup(i, v)   { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, ageGroup: v } : ath)); }
         function updateDob(i, v)        { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, dob: v } : ath)); }
+        function parseAgeRange(label) {
+          const s = (label || "").toLowerCase().replace(/\s+/g, " ").trim();
+          let m = s.match(/^(\d+)\s*[-–]\s*(\d+)$/); if (m) return { min: +m[1], max: +m[2] };
+          m = s.match(/^(\d+)\s*(?:\+|and\s+(?:over|up)|&\s+(?:over|up)|over|up)/); if (m) return { min: +m[1], max: 999 };
+          m = s.match(/^(\d+)\s*(?:and\s+under|&\s+under|and\s+below|below)/); if (m) return { min: 0, max: +m[1] };
+          m = s.match(/(?:under|below)\s*(\d+)/); if (m) return { min: 0, max: +m[1] - 1 };
+          return null;
+        }
+        function autoAssignByAge(groups) {
+          setAthletes(a => a.map(ath => {
+            const age = calcAge(ath.dob); if (age === null) return ath;
+            const match = groups.find(g => { const r = parseAgeRange(g); return r && age >= r.min && age <= r.max; });
+            return match ? { ...ath, ageGroup: match } : ath;
+          }));
+        }
         function addAgeGroupItem() { setAgeGroups(g => [...g, "New Group"]); }
         function removeAgeGroupItem(label) {
           if (ageGroups.length <= 1) return;
@@ -352,8 +369,14 @@
           setAgeGroups(remaining);
         }
         function renameAgeGroup(oldLabel, newLabel) {
-          setAgeGroups(g => g.map(item => item === oldLabel ? newLabel : item));
-          setAthletes(a => a.map(ath => ath.ageGroup === oldLabel ? { ...ath, ageGroup: newLabel } : ath));
+          const newGroups = ageGroups.map(item => item === oldLabel ? newLabel : item);
+          setAgeGroups(newGroups);
+          setAthletes(a => a.map(ath => {
+            const updated = ath.ageGroup === oldLabel ? { ...ath, ageGroup: newLabel } : ath;
+            const age = calcAge(updated.dob); if (age === null) return updated;
+            const match = newGroups.find(g => { const r = parseAgeRange(g); return r && age >= r.min && age <= r.max; });
+            return match ? { ...updated, ageGroup: match } : updated;
+          }));
         }
 
         function moveAthlete(i, dir) {
@@ -442,9 +465,9 @@
               ...SEGMENTS.map((_, si) => { const d = segmentDuration(ath, si); return d !== null ? formatElapsed(d) : ""; }),
               chip !== null ? formatElapsed(chip) : "",
               gt   !== null ? formatElapsed(gt)   : "",
-              calcSwimPace(swimMs, ac.swimYards) ?? "",
-              calcBikeMph(bikeMs, ac.bikeMiles)  ?? "",
-              calcRunPace(runMs,  ac.runMiles)   ?? "",
+              calcSwimPace(swimMs, ac.swimYards, units.swim) ?? "",
+              calcBikeMph(bikeMs, ac.bikeMiles, units.bike)  ?? "",
+              calcRunPace(runMs, ac.runMiles, units.run)   ?? "",
             ];
           });
           const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\r\n");
@@ -465,9 +488,9 @@
             const bikeMs = segmentDuration(ath, 2);
             const runMs  = segmentDuration(ath, 4);
             const ac = athleteCourse(ath);
-            const sp = calcSwimPace(swimMs, ac.swimYards);
-            const bp = calcBikeMph(bikeMs, ac.bikeMiles);
-            const rp = calcRunPace(runMs, ac.runMiles);
+            const sp = calcSwimPace(swimMs, ac.swimYards, units.swim);
+            const bp = calcBikeMph(bikeMs, ac.bikeMiles, units.bike);
+            const rp = calcRunPace(runMs, ac.runMiles, units.run);
             const pColor = place < 3 ? medalColors[place] : "#5a86a8";
             const medal  = place < 3 ? medalEmoji[place] : "🏅";
             const agp = ageGroupPlace(ath);
@@ -800,6 +823,59 @@
               {/* ── ATHLETES ROSTER ── */}
               {view === "athletes" && (
                 <div style={{ paddingTop: 8 }}>
+
+                  {/* ── All Athletes from Saved Races ── */}
+                  {(() => {
+                    const raceAthletes = [];
+                    savedRaces.forEach(race => {
+                      (race.athletes || []).forEach(a => {
+                        if (!a.name || !a.name.trim()) return;
+                        const key = a.name.trim().toLowerCase();
+                        const existing = raceAthletes.find(x => x.key === key);
+                        if (existing) {
+                          if (!existing.races.includes(race.name)) existing.races.push(race.name);
+                        } else {
+                          raceAthletes.push({ key, name: a.name.trim(), gender: a.gender, ageGroup: a.ageGroup, dob: a.dob, races: [race.name] });
+                        }
+                      });
+                    });
+                    raceAthletes.sort((a, b) => a.name.localeCompare(b.name));
+                    return (
+                      <div style={{ marginBottom: 20 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>
+                          All Athletes &nbsp;&mdash;&nbsp; <span style={{ color: "#00aeef", fontWeight: 400 }}>{raceAthletes.length} unique across {savedRaces.length} race{savedRaces.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        {raceAthletes.length === 0 ? (
+                          <div style={{ background: "#0a1e36", border: "1px solid rgba(0,174,239,0.15)", borderRadius: 8, padding: "16px", textAlign: "center", color: "#3a6080", fontSize: 13 }}>
+                            No saved races yet — save a race to see athletes here.
+                          </div>
+                        ) : (
+                          <div style={{ background: "#0a1e36", border: "1px solid rgba(0,174,239,0.12)", borderRadius: 8, overflow: "hidden" }}>
+                            {raceAthletes.map((ath, i) => (
+                              <div key={ath.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < raceAthletes.length - 1 ? "1px solid rgba(0,174,239,0.08)" : "none", background: i % 2 === 0 ? "transparent" : "rgba(0,174,239,0.03)" }}>
+                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 16, color: "#00aeef", width: 24, flexShrink: 0, textAlign: "right" }}>{i + 1}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, color: "#e8f4fb", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ath.name}</div>
+                                  <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 1 }}>
+                                    {ath.gender && <span style={{ marginRight: 8 }}>{ath.gender}</span>}
+                                    {ath.ageGroup && <span style={{ marginRight: 8 }}>{ath.ageGroup}</span>}
+                                    {ath.dob && <span style={{ marginRight: 8 }}>{ath.dob}</span>}
+                                  </div>
+                                </div>
+                                <div style={{ fontSize: 10, color: "#3a6080", textAlign: "right", flexShrink: 0, maxWidth: 120 }}>
+                                  {ath.races.length === 1
+                                    ? <span style={{ color: "#3a6080" }}>{ath.races[0]}</span>
+                                    : <span style={{ color: "#00aeef" }}>{ath.races.length} races</span>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Team Roster ── */}
                   <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 14 }}>
                     Team Roster &nbsp;&mdash;&nbsp; <span style={{ color: "#4ade80", fontWeight: 400 }}>saved across races</span>
                   </div>
@@ -901,8 +977,18 @@
                   {/* ── Courses (distances) ── */}
                   <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8" }}>
-                        Courses &nbsp;&mdash;&nbsp; <span style={{ color: "#48cae4", fontWeight: 400 }}>distances for pace calculations</span>
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8" }}>Courses &nbsp;&mdash;&nbsp; <span style={{ color: "#48cae4", fontWeight: 400 }}>distances for pace calculations</span></div>
+                        <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                          {[["swim","#00aeef",["yards","meters"]],["bike","#ffd166",["miles","km"]],["run","#f4742b",["miles","km"]]].map(([seg, col, opts]) => (
+                            <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontSize: 10, color: col, letterSpacing: 1, textTransform: "uppercase" }}>{seg}</span>
+                              {opts.map(u => (
+                                <button key={u} onClick={() => setUnits(un => ({...un, [seg]: u}))} style={{ padding: "2px 7px", fontSize: 10, background: units[seg] === u ? col : "transparent", color: units[seg] === u ? "#071829" : "#5a86a8", border: "1px solid " + (units[seg] === u ? col : "rgba(255,255,255,0.1)"), borderRadius: 3, cursor: "pointer", fontWeight: units[seg] === u ? 700 : 400 }}>{u}</button>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                       <button onClick={addCourse} style={{ ...btnStyle("#48cae4", true), padding: "4px 12px", fontSize: 11 }}>+ Add Course</button>
                     </div>
@@ -917,15 +1003,15 @@
                         </div>
                         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <label style={{ fontSize: 10, color: "#00aeef", letterSpacing: 1 }}>SWIM (yards)</label>
+                            <label style={{ fontSize: 10, color: "#00aeef", letterSpacing: 1 }}>{units.swim === "meters" ? "SWIM (meters)" : "SWIM (yards)"}</label>
                             <input type="number" min="1" value={course.swimYards} onChange={e => updateCourse(course.id, "swimYards", Number(e.target.value))} style={distInputStyle} />
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <label style={{ fontSize: 10, color: "#ffd166", letterSpacing: 1 }}>BIKE (miles)</label>
+                            <label style={{ fontSize: 10, color: "#ffd166", letterSpacing: 1 }}>{units.bike === "km" ? "BIKE (km)" : "BIKE (miles)"}</label>
                             <input type="number" min="0.1" step="0.1" value={course.bikeMiles} onChange={e => updateCourse(course.id, "bikeMiles", Number(e.target.value))} style={distInputStyle} />
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <label style={{ fontSize: 10, color: "#f4742b", letterSpacing: 1 }}>RUN (miles)</label>
+                            <label style={{ fontSize: 10, color: "#f4742b", letterSpacing: 1 }}>{units.run === "km" ? "RUN (km)" : "RUN (miles)"}</label>
                             <input type="number" min="0.1" step="0.1" value={course.runMiles} onChange={e => updateCourse(course.id, "runMiles", Number(e.target.value))} style={distInputStyle} />
                           </div>
                         </div>
@@ -944,8 +1030,8 @@
                       </div>
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {ageGroups.map(ag => (
-                        <div key={ag} style={{ display: "flex", alignItems: "center", background: "#071829", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 20, overflow: "hidden" }}>
+                      {ageGroups.map((ag, agIdx) => (
+                        <div key={agIdx} style={{ display: "flex", alignItems: "center", background: "#071829", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 20, overflow: "hidden" }}>
                           <input value={ag} onChange={e => renameAgeGroup(ag, e.target.value)}
                             style={{ background: "transparent", border: "none", color: "#e8f4fb", fontSize: 12, padding: "4px 10px", outline: "none", width: `${Math.max(ag.length, 4) * 8 + 16}px` }} />
                           {ageGroups.length > 1 && <button onClick={() => removeAgeGroupItem(ag)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 14, cursor: "pointer", padding: "0 6px 0 0", lineHeight: 1 }}>&times;</button>}
@@ -1238,9 +1324,9 @@
                             const bikeMs = segmentDuration(ath, 2);
                             const runMs  = segmentDuration(ath, 4);
                             const ac = athleteCourse(ath);
-                            const sp = calcSwimPace(swimMs, ac.swimYards);
-                            const bp = calcBikeMph(bikeMs, ac.bikeMiles);
-                            const rp = calcRunPace(runMs, ac.runMiles);
+                            const sp = calcSwimPace(swimMs, ac.swimYards, units.swim);
+                            const bp = calcBikeMph(bikeMs, ac.bikeMiles, units.bike);
+                            const rp = calcRunPace(runMs, ac.runMiles, units.run);
                             const agp = ageGroupPlace(ath);
                             const placeColor = place === 0 ? "#4ade80" : place === 1 ? "#ffd166" : place === 2 ? "#48cae4" : "#5a86a8";
                             return (
