@@ -999,92 +999,176 @@
 
         // Spectator view
         const isSpectator = userProfile?.role === "spectator";
-        if (isSpectator) return (
-          <div style={{ minHeight: "100vh", background: "#071829", fontFamily: "'DM Sans', Arial, sans-serif", color: "#e8f4fb" }}>
-            <div style={{ background: "linear-gradient(135deg,#071829,#0d3a6e)", borderBottom: "3px solid #00aeef", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
-              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff" }}><span style={{ color: "#00aeef" }}>Time</span>athon</div>
-              <div style={{ fontSize: 11, letterSpacing: 2, color: "#5a86a8", marginTop: 2 }}>SPECTATOR</div>
-              <button onClick={authSignOut} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "4px 8px" }}>
-                {userProfile?.firstName} &#8594;
-              </button>
-            </div>
-            <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 20px" }}>
-              {!liveRace ? (
-                <div>
-                  <div style={{ textAlign: "center", marginBottom: 24 }}>
-                    <div style={{ fontSize: 40, marginBottom: 8 }}>👀</div>
-                    <div style={{ fontFamily: "'Bebas Neue'", fontSize: 26, letterSpacing: 3, color: "#e8f4fb" }}>Watch a Race</div>
-                    <div style={{ fontSize: 13, color: "#5a86a8", marginTop: 4 }}>Enter the code from your race organizer</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        if (isSpectator) {
+          const liveSegs = liveRace ? (liveRace.segments || SEGMENTS) : SEGMENTS;
+          const liveSegColors = ["#00aeef", "#48cae4", "#ffd166", "#48cae4", "#f4742b"];
+
+          // Build ranked list: finished (by chip time asc) → in-progress (by elapsed desc) → not started
+          const rankedAthletes = liveRace ? (() => {
+            const clock = liveRace.clockMs || 0;
+            return (liveRace.athletes || []).map(ath => {
+              const chipMs = ath.started && ath.startOffset !== null ? clock - ath.startOffset : null;
+              const finishMs = ath.finished && ath.startOffset !== null && ath.splits
+                ? ath.splits[ath.splits.length - 1] - ath.startOffset : null;
+              let curSeg = null;
+              if (ath.started && !ath.finished && ath.splits) {
+                for (let i = 0; i < ath.splits.length; i++) {
+                  if (ath.splits[i] === null) { curSeg = i; break; }
+                }
+              }
+              return { ...ath, chipMs, finishMs, curSeg };
+            }).sort((a, b) => {
+              if (a.finished && b.finished) return a.finishMs - b.finishMs;
+              if (a.finished) return -1;
+              if (b.finished) return 1;
+              if (a.started && b.started) return b.chipMs - a.chipMs;
+              if (a.started) return -1;
+              if (b.started) return 1;
+              return 0;
+            });
+          })() : [];
+
+          const medals = ["🥇", "🥈", "🥉"];
+          const finishedCount = rankedAthletes.filter(a => a.finished).length;
+          const onCourseCount = rankedAthletes.filter(a => a.started && !a.finished).length;
+
+          return (
+            <div style={{ minHeight: "100vh", background: "#071829", fontFamily: "'DM Sans', Arial, sans-serif", color: "#e8f4fb" }}>
+              <div style={{ background: "linear-gradient(135deg,#071829,#0d3a6e)", borderBottom: "3px solid #00aeef", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff" }}><span style={{ color: "#00aeef" }}>Time</span>athon</div>
+                <div style={{ fontSize: 11, letterSpacing: 2, color: "#5a86a8", marginTop: 2 }}>SPECTATOR</div>
+                <button onClick={authSignOut} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "4px 8px" }}>
+                  {userProfile?.firstName} &#8594;
+                </button>
+              </div>
+
+              <div style={{ maxWidth: 520, margin: "0 auto", padding: "20px 16px 40px" }}>
+                {!liveRace ? (
+                  <div>
+                    <div style={{ textAlign: "center", marginBottom: 28 }}>
+                      <div style={{ fontSize: 44, marginBottom: 10 }}>👀</div>
+                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 28, letterSpacing: 3, color: "#e8f4fb" }}>Watch a Race</div>
+                      <div style={{ fontSize: 13, color: "#5a86a8", marginTop: 4 }}>Enter the code from your race organizer</div>
+                    </div>
                     <input value={spectatorCode} onChange={e => setSpectatorCode(e.target.value.toUpperCase())}
                       onKeyDown={e => e.key === "Enter" && watchRace(spectatorCode)}
                       placeholder="RACE CODE" maxLength={6}
-                      style={{ flex: 1, background: "#0c2240", border: "2px solid rgba(0,174,239,0.3)", borderRadius: 6, padding: "14px", color: "#00aeef", fontSize: 22, fontFamily: "'Bebas Neue'", letterSpacing: 6, outline: "none", textAlign: "center" }} />
+                      style={{ width: "100%", boxSizing: "border-box", background: "#0c2240", border: "2px solid rgba(0,174,239,0.3)", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#00aeef", fontSize: 28, fontFamily: "'Bebas Neue'", letterSpacing: 8, outline: "none", textAlign: "center", display: "block" }} />
+                    <button onClick={() => watchRace(spectatorCode)} disabled={liveRaceLoading}
+                      style={{ width: "100%", background: "#00aeef", border: "none", borderRadius: 8, padding: "15px", fontSize: 15, fontWeight: 700, color: "#071829", cursor: "pointer", letterSpacing: 1 }}>
+                      {liveRaceLoading ? "Connecting…" : "Watch Race"}
+                    </button>
+                    {liveRaceError && <div style={{ marginTop: 12, fontSize: 13, color: "#f87171", textAlign: "center" }}>{liveRaceError}</div>}
                   </div>
-                  <button onClick={() => watchRace(spectatorCode)} disabled={liveRaceLoading}
-                    style={{ width: "100%", background: "#00aeef", border: "none", borderRadius: 6, padding: "14px", fontSize: 14, fontWeight: 700, color: "#071829", cursor: "pointer", letterSpacing: 1 }}>
-                    {liveRaceLoading ? "Connecting…" : "Watch Race"}
-                  </button>
-                  {liveRaceError && <div style={{ marginTop: 10, fontSize: 12, color: "#f87171", textAlign: "center" }}>{liveRaceError}</div>}
-                </div>
-              ) : (
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                    <div>
-                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, letterSpacing: 3, color: "#e8f4fb" }}>{liveRace.publisherName}'s Race</div>
-                      <div style={{ fontSize: 11, color: "#5a86a8", letterSpacing: 1 }}>CODE: {liveRace.code}</div>
+                ) : (
+                  <div>
+                    {/* Race header row */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                      <div>
+                        <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", lineHeight: 1 }}>{liveRace.publisherName}'s Race</div>
+                        <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1, marginTop: 3 }}>
+                          CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{finishedCount} finished&nbsp;&nbsp;·&nbsp;&nbsp;{onCourseCount} on course
+                        </div>
+                      </div>
+                      <button onClick={() => { if (liveRaceUnsubRef.current) liveRaceUnsubRef.current(); setLiveRace(null); setSpectatorCode(""); }}
+                        style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px", flexShrink: 0 }}>Leave</button>
                     </div>
-                    <button onClick={() => { if (liveRaceUnsubRef.current) liveRaceUnsubRef.current(); setLiveRace(null); setSpectatorCode(""); }}
-                      style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
-                  </div>
-                  <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 16px", marginBottom: 14, textAlign: "center", border: "1px solid rgba(0,174,239,0.2)" }}>
-                    <div style={{ fontFamily: "'Bebas Neue'", fontSize: 52, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(liveRace.clockMs || 0)}</div>
-                  </div>
-                  {(liveRace.athletes || []).map((ath, i) => {
-                    const done = ath.finished;
-                    const started = ath.started;
-                    const chipMs = started && ath.startOffset !== null ? (liveRace.clockMs || 0) - ath.startOffset : null;
-                    const segs = (liveRace.segments || SEGMENTS);
-                    return (
-                      <div key={ath.id} style={{ background: "#0c2240", borderRadius: 8, marginBottom: 8, border: `1px solid ${done ? "#4ade80" : started ? "rgba(0,174,239,0.3)" : "rgba(255,255,255,0.06)"}`, padding: "10px 14px" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, color: done ? "#4ade80" : "#00aeef", minWidth: 20 }}>{i + 1}</div>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</div>
-                              <div style={{ fontSize: 11, color: "#5a86a8" }}>{ath.ageGroup} · {ath.gender}</div>
+
+                    {/* Live clock */}
+                    <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "12px 20px", marginBottom: 18, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
+                      <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", marginBottom: 2 }}>RACE CLOCK</div>
+                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 56, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(liveRace.clockMs || 0)}</div>
+                    </div>
+
+                    {/* Leaderboard label */}
+                    <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", textAlign: "center", marginBottom: 12 }}>LEADERBOARD</div>
+
+                    {rankedAthletes.length === 0 && (
+                      <div style={{ textAlign: "center", color: "#3a6080", padding: "40px 0" }}>Waiting for athletes…</div>
+                    )}
+
+                    {rankedAthletes.map((ath, idx) => {
+                      const place = idx + 1;
+                      const medal = medals[idx] || null;
+                      const curSeg = ath.curSeg;
+
+                      const splitDurs = (ath.splits || []).map((s, si) => {
+                        if (s === null || s === undefined) return null;
+                        const prev = si === 0 ? ath.startOffset : ath.splits[si - 1];
+                        return (prev !== null && prev !== undefined) ? s - prev : null;
+                      });
+
+                      const borderColor = ath.finished ? "rgba(74,222,128,0.4)" : ath.started ? "rgba(0,174,239,0.3)" : "rgba(255,255,255,0.07)";
+                      const topAccent = ath.finished ? "#4ade80" : ath.started ? "#00aeef" : "transparent";
+
+                      return (
+                        <div key={ath.id} style={{ background: "#0c2240", borderRadius: 10, marginBottom: 10, border: `1px solid ${borderColor}`, borderTop: `3px solid ${topAccent}`, overflow: "hidden" }}>
+                          <div style={{ padding: "12px 14px" }}>
+                            {/* Top row: place + name + status/time */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                              {/* Placement */}
+                              <div style={{ minWidth: 40, textAlign: "center", flexShrink: 0 }}>
+                                {medal && ath.finished ? (
+                                  <div style={{ fontSize: 28, lineHeight: 1 }}>{medal}</div>
+                                ) : (
+                                  <div style={{ fontFamily: "'Bebas Neue'", fontSize: 30, color: ath.finished ? "#4ade80" : ath.started ? "#00aeef" : "#2a4060", lineHeight: 1 }}>{place}</div>
+                                )}
+                              </div>
+
+                              {/* Name + meta */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ath.name}</div>
+                                <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 1 }}>{ath.ageGroup}{ath.ageGroup && ath.gender ? " · " : ""}{ath.gender}</div>
+                              </div>
+
+                              {/* Status + time */}
+                              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                                {ath.finished ? (
+                                  <div>
+                                    <div style={{ fontSize: 9, fontWeight: 700, color: "#4ade80", letterSpacing: 1 }}>FINISHED</div>
+                                    <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, color: "#4ade80", letterSpacing: 2, lineHeight: 1.2 }}>{formatElapsed(ath.finishMs)}</div>
+                                  </div>
+                                ) : ath.started ? (
+                                  <div>
+                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: curSeg !== null ? liveSegColors[curSeg % liveSegColors.length] : "#00aeef", background: curSeg !== null ? `${liveSegColors[curSeg % liveSegColors.length]}18` : "transparent", borderRadius: 3, padding: "1px 6px", display: "inline-block", marginBottom: 2 }}>
+                                      {curSeg !== null ? liveSegs[curSeg] : "RACING"}
+                                    </div>
+                                    <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, color: "#00aeef", letterSpacing: 2, lineHeight: 1 }}>{formatElapsed(ath.chipMs)}</div>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 11, color: "#3a6080" }}>Waiting…</div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            {done && <div style={{ fontSize: 12, fontWeight: 700, color: "#4ade80" }}>FINISHED</div>}
-                            {!done && started && chipMs !== null && <div style={{ fontSize: 13, color: "#00aeef", fontFamily: "'Bebas Neue'", letterSpacing: 2 }}>{formatElapsed(chipMs)}</div>}
-                            {!started && <div style={{ fontSize: 11, color: "#3a6080" }}>Waiting…</div>}
+
+                            {/* Splits row */}
+                            {ath.started && (
+                              <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+                                {liveSegs.map((seg, si) => {
+                                  const done = splitDurs[si] !== null;
+                                  const isCurrent = curSeg === si;
+                                  const col = liveSegColors[si % liveSegColors.length];
+                                  return (
+                                    <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? "rgba(0,174,239,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? "rgba(0,174,239,0.2)" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
+                                      <div style={{ fontSize: 8, color: done ? col : isCurrent ? "#4a9abf" : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                      <div style={{ fontSize: 11, color: done ? "#e8f4fb" : isCurrent ? "#4a7a9b" : "#1a3050", fontFamily: done ? "'Bebas Neue'" : "inherit", letterSpacing: done ? 1 : 0 }}>
+                                        {done ? formatElapsed(splitDurs[si]) : isCurrent ? "···" : "—"}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         </div>
-                        {started && (
-                          <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
-                            {segs.map((seg, si) => {
-                              const split = ath.splits && ath.splits[si];
-                              const prevSplit = si === 0 ? ath.startOffset : (ath.splits && ath.splits[si - 1]);
-                              const dur = split !== null && split !== undefined && prevSplit !== null && prevSplit !== undefined ? split - prevSplit : null;
-                              return (
-                                <div key={seg} style={{ background: split ? "rgba(0,174,239,0.1)" : "rgba(255,255,255,0.03)", border: `1px solid ${split ? "rgba(0,174,239,0.25)" : "rgba(255,255,255,0.06)"}`, borderRadius: 4, padding: "3px 7px", fontSize: 10 }}>
-                                  <span style={{ color: "#5a86a8" }}>{seg} </span>
-                                  <span style={{ color: split ? "#e8f4fb" : "#3a6080" }}>{dur !== null ? formatElapsed(dur) : "—"}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        );
+          );
+        }
 
         return (
           <div style={{ minHeight: "100vh", background: "#071829", fontFamily: "'DM Sans', Arial, sans-serif", color: "#e8f4fb" }}>
