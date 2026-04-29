@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TriFlow — Race Timer</title>
+    <title>Timeathon</title>
     <link rel="manifest" href="manifest.json" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%23071829'/><text x='50' y='72' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='44' fill='%2300aeef'>TF</text></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%23071829'/><text x='50' y='72' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='44' fill='%2300aeef'>T</text></svg>" />
     <meta name="theme-color" content="#071829" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="TriFlow" />
+    <meta name="apple-mobile-web-app-title" content="Timeathon" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet" />
@@ -25,7 +25,7 @@
   <body>
     <div id="root"></div>
     <script>
-      var LOGO_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMjAgNjQiPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjMwIiBmaWxsPSIjMDcxODI5Ii8+CiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwYWVlZiIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHRleHQgeD0iMzIiIHk9IjQyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNiIgZm9udC13ZWlnaHQ9IjkwMCIgZmlsbD0iIzAwYWVlZiI+VEY8L3RleHQ+CiAgPHRleHQgeD0iNzQiIHk9IjMwIiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyMiIgZm9udC13ZWlnaHQ9IjkwMCIgbGV0dGVyLXNwYWNpbmc9IjMiIGZpbGw9IiMxYTFhMmUiPlRSSTwvdGV4dD4KICA8dGV4dCB4PSI3NCIgeT0iNTQiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxzYW5zLXNlcmlmIiBmb250LXNpemU9IjIyIiBmb250LXdlaWdodD0iOTAwIiBsZXR0ZXItc3BhY2luZz0iMyIgZmlsbD0iIzAwYWVlZiI+RkxPVzwvdGV4dD4KICA8dGV4dCB4PSIxNjAiIHk9IjIwIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI4IiBsZXR0ZXItc3BhY2luZz0iMiIgZmlsbD0iIzVhODZhOCI+UkFDRTwvdGV4dD4KICA8dGV4dCB4PSIxNjAiIHk9IjMyIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI4IiBsZXR0ZXItc3BhY2luZz0iMiIgZmlsbD0iIzVhODZhOCI+VElNRVI8L3RleHQ+CiAgPGxpbmUgeDE9Ijc0IiB5MT0iMzYiIHgyPSIyMTUiIHkyPSIzNiIgc3Ryb2tlPSIjMDBhZWVmIiBzdHJva2Utd2lkdGg9IjEiIG9wYWNpdHk9IjAuMyIvPgo8L3N2Zz4=";
+      var LOGO_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNjAgNjQiPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjMwIiBmaWxsPSIjMDcxODI5Ii8+CiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwYWVlZiIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHRleHQgeD0iMzIiIHk9IjQyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyMiIgZm9udC13ZWlnaHQ9IjkwMCIgZmlsbD0iIzAwYWVlZiI+VDwvdGV4dD4KICA8dGV4dCB4PSI3NCIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxzYW5zLXNlcmlmIiBmb250LXNpemU9IjI4IiBmb250LXdlaWdodD0iOTAwIiBsZXR0ZXItc3BhY2luZz0iMiIgZmlsbD0iIzFhMWEyZSI+VElNRTwvdGV4dD4KICA8dGV4dCB4PSI3NCIgeT0iNjIiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxzYW5zLXNlcmlmIiBmb250LXNpemU9IjE4IiBmb250LXdlaWdodD0iOTAwIiBsZXR0ZXItc3BhY2luZz0iNCIgZmlsbD0iIzAwYWVlZiI+QVRIT048L3RleHQ+Cjwvc3ZnPg==";
     </script>
     <script type="text/babel">
       const { useState, useEffect, useRef } = React;
@@ -167,7 +167,7 @@
 
         // Age groups — fully customizable per race
         const [ageGroups, setAgeGroups] = useState(DEFAULT_AGE_GROUPS);
-        const [certConfig, setCertConfig] = useState({ eventName: "TriFlow Race Event", accentColor: "#00aeef", orgName: "", customLogoB64: null });
+        const [certConfig, setCertConfig] = useState({ eventName: "Timeathon Race Event", accentColor: "#00aeef", orgName: "", customLogoB64: null });
         const [units, setUnits] = useState({ swim: "yards", bike: "miles", run: "miles" });
         const [loadedRaceId, setLoadedRaceId] = useState(null);
 
@@ -542,7 +542,7 @@
           const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\r\n");
           const a = Object.assign(document.createElement("a"), {
             href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" })),
-            download: "triathlon-results.csv",
+            download: "timeathon-results.csv",
           });
           document.body.appendChild(a); a.click(); document.body.removeChild(a);
         }
@@ -595,7 +595,7 @@
           const win = window.open("", "_blank");
           win.document.write(`<!DOCTYPE html><html><head>
             <meta charset="UTF-8">
-            <title>Certificates — TriFlow</title>
+            <title>Certificates — Timeathon</title>
             <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet">
             <style>
               *{box-sizing:border-box;margin:0;padding:0;}
@@ -679,7 +679,7 @@
           const win = window.open("", "_blank");
           win.document.write(`<!DOCTYPE html><html><head>
             <meta charset="UTF-8">
-            <title>Results — ${certConfig.eventName || "TriFlow"}</title>
+            <title>Results — ${certConfig.eventName || "Timeathon"}</title>
             <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet">
             <style>
               *{box-sizing:border-box;margin:0;padding:0;}
@@ -704,7 +704,7 @@
             <div class="header">
               <img src="${certConfig.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" />
               <div>
-                <div class="title">${certConfig.eventName || "TriFlow Results"}</div>
+                <div class="title">${certConfig.eventName || "Timeathon Results"}</div>
                 <div class="subtitle">Swim &middot; Bike &middot; Run</div>
               </div>
             </div>
@@ -770,7 +770,7 @@
                 <button onClick={() => setView("home")} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
               )}
               <div onClick={() => setView("home")} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff", cursor: "pointer" }}>
-                <span style={{ color: "#00aeef" }}>Tri</span>Flow
+                <span style={{ color: "#00aeef" }}>Time</span>athon
               </div>
               <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4 }}>
                 Swim &nbsp;&middot;&nbsp; Bike &nbsp;&middot;&nbsp; Run
@@ -827,7 +827,7 @@
                 <div style={{ padding: "10px 0 20px" }}>
                   {/* Logo */}
                   <div style={{ textAlign: "center", marginBottom: 28 }}>
-                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 64, letterSpacing: 8, color: "#f0f6ff", lineHeight: 1 }}><span style={{ color: "#00aeef" }}>Tri</span>Flow</div>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 64, letterSpacing: 8, color: "#f0f6ff", lineHeight: 1 }}><span style={{ color: "#00aeef" }}>Time</span>athon</div>
                     <div style={{ fontSize: 11, letterSpacing: 4, textTransform: "uppercase", color: "#5a86a8", marginTop: 6 }}>Swim &nbsp;&middot;&nbsp; Bike &nbsp;&middot;&nbsp; Run</div>
                   </div>
 
@@ -1502,7 +1502,7 @@
                   <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, padding: "12px 14px", background: "#0c2240", borderRadius: 8, border: "1px solid rgba(0,174,239,0.15)" }}>
                     <img src={certConfig.customLogoB64 || LOGO_B64} alt="Logo" style={{ height: 44, objectFit: "contain", flexShrink: 0 }} />
                     <div>
-                      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", lineHeight: 1 }}>{certConfig.eventName || "TriFlow Results"}</div>
+                      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", lineHeight: 1 }}>{certConfig.eventName || "Timeathon Results"}</div>
                       <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Swim &middot; Bike &middot; Run</div>
                     </div>
                   </div>

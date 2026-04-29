@@ -1,14 +1,14 @@
 {
-  "name": "TriFlow — Race Timer",
-  "short_name": "TriFlow",
-  "description": "Triathlon race timing and results — swim, bike, run",
+  "name": "Timeathon",
+  "short_name": "Timeathon",
+  "description": "Race timing and results — swim, bike, run",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#071829",
   "theme_color": "#071829",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><circle cx='256' cy='256' r='256' fill='%23071829'/><text x='256' y='330' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='220' fill='%2300aeef'>TF</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><circle cx='256' cy='256' r='256' fill='%23071829'/><text x='256' y='330' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='220' fill='%2300aeef'>T</text></svg>",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
