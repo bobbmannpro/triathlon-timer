@@ -16,6 +16,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
@@ -54,6 +55,7 @@
       firebase.initializeApp(firebaseConfig);
       var auth = firebase.auth();
       var db = firebase.firestore();
+      var rtdb = firebase.database();
       db.enablePersistence({ synchronizeTabs: true }).catch(function(e) {
         console.log("Persistence unavailable:", e.code);
       });
@@ -324,7 +326,7 @@
           setAuthWorking(false);
         }
         function authSignOut() {
-          if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current(); liveRaceUnsubRef.current = null; }
+          if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; }
           auth.signOut();
           setSavedRaces([]); setSavedAthletes([]); setUserProfile(null); setLiveRace(null); setSpectatorCode("");
         }
@@ -334,41 +336,46 @@
         }
 
         async function publishLiveRace(code) {
-          if (!currentUser) return false;
+          if (!currentUser) return "Not logged in.";
           const payload = {
             code, publishedBy: currentUser.uid,
-            publisherName: userProfile?.displayName || currentUser.email,
+            publisherName: userProfile?.displayName || userProfile?.firstName || currentUser.email,
             startedAt: Date.now(), clockMs,
             athletes: athletes.map(a => ({ id: a.id, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
-            courses, segments: SEGMENTS, updatedAt: Date.now()
+            segments: SEGMENTS, updatedAt: Date.now()
           };
           try {
             const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
-            await Promise.race([db.collection("liveRaces").doc(code).set(payload), timeout]);
+            await Promise.race([rtdb.ref("liveRaces/" + code).set(payload), timeout]);
             return true;
           } catch(e) {
-            console.error("publishLiveRace failed:", e.code || "", e.message);
-            if (e.message === "timeout") return "Connection timed out — check your internet and try again.";
-            return `${e.code}: ${e.message}`;
+            console.error("publishLiveRace failed:", e.message);
+            if (e.message === "timeout") return "Connection timed out — check your internet.";
+            return e.message || "Failed to go live.";
           }
         }
 
         function updateLiveRace(code) {
           if (!code || !currentUser) return;
-          db.collection("liveRaces").doc(code).update({
-            clockMs, athletes: athletes.map(a => ({ id: a.id, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })), updatedAt: Date.now()
+          rtdb.ref("liveRaces/" + code).update({
+            clockMs,
+            athletes: athletes.map(a => ({ id: a.id, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
+            updatedAt: Date.now()
           }).catch(console.error);
         }
 
         function watchRace(code) {
           if (!code.trim()) { setLiveRaceError("Enter a race code."); return; }
           setLiveRaceLoading(true); setLiveRaceError("");
-          if (liveRaceUnsubRef.current) liveRaceUnsubRef.current();
-          liveRaceUnsubRef.current = db.collection("liveRaces").doc(code.trim().toUpperCase()).onSnapshot(snap => {
+          if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); }
+          const ref = rtdb.ref("liveRaces/" + code.trim().toUpperCase());
+          const fn = snap => {
             setLiveRaceLoading(false);
-            if (!snap.exists) { setLiveRaceError("No active race found with that code."); setLiveRace(null); }
-            else { setLiveRace({ ...snap.data(), code: snap.id }); setLiveRaceError(""); }
-          }, () => { setLiveRaceLoading(false); setLiveRaceError("Could not connect. Check the code and try again."); });
+            if (!snap.exists()) { setLiveRaceError("No active race found with that code."); setLiveRace(null); }
+            else { setLiveRace({ ...snap.val(), code: snap.key }); setLiveRaceError(""); }
+          };
+          ref.on("value", fn, () => { setLiveRaceLoading(false); setLiveRaceError("Could not connect. Check the code and try again."); });
+          liveRaceUnsubRef.current = { ref, fn };
         }
         function friendlyAuthError(code) {
           const map = { "auth/invalid-email": "Invalid email address.", "auth/user-not-found": "No account with that email.", "auth/wrong-password": "Incorrect password.", "auth/email-already-in-use": "An account with that email already exists.", "auth/weak-password": "Password must be at least 6 characters.", "auth/invalid-credential": "Incorrect email or password." };
@@ -1095,7 +1102,7 @@
                           CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{finishedCount} finished&nbsp;&nbsp;·&nbsp;&nbsp;{onCourseCount} on course
                         </div>
                       </div>
-                      <button onClick={() => { if (liveRaceUnsubRef.current) liveRaceUnsubRef.current(); setLiveRace(null); setSpectatorCode(""); }}
+                      <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); }}
                         style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px", flexShrink: 0 }}>Leave</button>
                     </div>
 
@@ -1651,7 +1658,7 @@
                               CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{wFinished} finished&nbsp;&nbsp;·&nbsp;&nbsp;{wOnCourse} on course
                             </div>
                           </div>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) liveRaceUnsubRef.current(); setLiveRace(null); setSpectatorCode(""); }}
+                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); }}
                             style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
                         </div>
                         <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
@@ -2071,7 +2078,7 @@
                           <span style={{ fontSize: 11, color: "#5a86a8" }}>LIVE CODE</span>
                           <span style={{ fontFamily: "'Bebas Neue'", fontSize: 20, color: "#ffd166", letterSpacing: 4 }}>{liveRaceCode}</span>
                           <span style={{ fontSize: 10, color: "#5a86a8" }}>share with spectators</span>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) liveRaceUnsubRef.current(); setLiveRaceCode(null); db.collection("liveRaces").doc(liveRaceCode).delete().catch(console.error); }}
+                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
                             style={{ background: "none", border: "none", color: "#3a6080", cursor: "pointer", fontSize: 14, padding: "0 2px" }}>&times;</button>
                         </div>
                       )}
