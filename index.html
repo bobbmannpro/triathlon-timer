@@ -231,6 +231,19 @@
         const [liveRaceError, setLiveRaceError] = useState("");
         const [liveRaceLoading, setLiveRaceLoading] = useState(false);
         const liveRaceUnsubRef = useRef(null);
+        const [spectatorClockMs, setSpectatorClockMs] = useState(0);
+
+        // Local ticker for spectator — interpolates clock forward between RTDB updates
+        useEffect(() => {
+          if (!liveRace) return;
+          const tick = () => {
+            const elapsed = Date.now() - (liveRace.updatedAt || Date.now());
+            setSpectatorClockMs((liveRace.clockMs || 0) + elapsed);
+          };
+          tick();
+          const id = setInterval(tick, 100);
+          return () => clearInterval(id);
+        }, [liveRace]);
 
         // Saved race presets (persisted to localStorage + Firestore)
         const [savedRaces, setSavedRaces] = useState(() => {
@@ -1038,7 +1051,7 @@
 
           // Build ranked list: finished (by chip time asc) → in-progress (by elapsed desc) → not started
           const rankedAthletes = liveRace ? (() => {
-            const clock = liveRace.clockMs || 0;
+            const clock = spectatorClockMs || liveRace.clockMs || 0;
             return (liveRace.athletes || []).map(ath => {
               const chipMs = ath.started && ath.startOffset !== null ? clock - ath.startOffset : null;
               const finishMs = ath.finished && ath.startOffset !== null && ath.splits
@@ -1110,7 +1123,7 @@
                     {/* Live clock */}
                     <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "12px 20px", marginBottom: 18, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
                       <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", marginBottom: 2 }}>RACE CLOCK</div>
-                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 56, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(liveRace.clockMs || 0)}</div>
+                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 56, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(spectatorClockMs || liveRace.clockMs || 0)}</div>
                     </div>
 
                     {/* Leaderboard label */}
@@ -1182,7 +1195,7 @@
                                   const isCurrent = curSeg === si;
                                   const col = liveSegColors[si % liveSegColors.length];
                                   const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
-                                  const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (liveRace.clockMs || 0) - prevMs : null;
+                                  const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (spectatorClockMs || liveRace.clockMs || 0) - prevMs : null;
                                   return (
                                     <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? `${col}10` : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? col + "40" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
                                       <div style={{ fontSize: 8, color: done ? col : isCurrent ? col : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
@@ -1610,7 +1623,7 @@
                 const watchSegs = liveRace ? (liveRace.segments || SEGMENTS) : SEGMENTS;
                 const watchSegColors = ["#00aeef", "#48cae4", "#ffd166", "#48cae4", "#f4742b"];
                 const rankedWatchAthletes = liveRace ? (() => {
-                  const clock = liveRace.clockMs || 0;
+                  const clock = spectatorClockMs || liveRace.clockMs || 0;
                   return (liveRace.athletes || []).map(ath => {
                     const chipMs = ath.started && ath.startOffset !== null ? clock - ath.startOffset : null;
                     const finishMs = ath.finished && ath.startOffset !== null && ath.splits
@@ -1666,7 +1679,7 @@
                         </div>
                         <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
                           <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", marginBottom: 2 }}>RACE CLOCK</div>
-                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 52, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(liveRace.clockMs || 0)}</div>
+                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 52, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(spectatorClockMs || liveRace.clockMs || 0)}</div>
                         </div>
                         <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", textAlign: "center", marginBottom: 12 }}>LEADERBOARD</div>
                         {rankedWatchAthletes.length === 0 && <div style={{ textAlign: "center", color: "#3a6080", padding: "30px 0" }}>Waiting for athletes…</div>}
@@ -1719,7 +1732,7 @@
                                       const isCurrent = curSeg === si;
                                       const col = watchSegColors[si % watchSegColors.length];
                                       const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
-                                      const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (liveRace.clockMs || 0) - prevMs : null;
+                                      const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (spectatorClockMs || liveRace.clockMs || 0) - prevMs : null;
                                       return (
                                         <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? `${col}10` : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? col + "40" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
                                           <div style={{ fontSize: 8, color: done ? col : isCurrent ? col : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
