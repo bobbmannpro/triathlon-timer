@@ -235,6 +235,7 @@
         const [raceMode, setRaceMode] = useState("separate");
         const [liveRaceCode, setLiveRaceCode] = useState(null);
         const [livePublishError, setLivePublishError] = useState("");
+        const [livePublishing, setLivePublishing] = useState(false);
         const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", birthday: "", gender: "", role: "participant" });
         const [profileSaving, setProfileSaving] = useState(false);
         const [profileSaved, setProfileSaved] = useState(false);
@@ -340,10 +341,13 @@
           };
           try {
             await db.collection("liveRaces").doc(code).set(payload);
+            // Verify the document actually landed
+            const snap = await db.collection("liveRaces").doc(code).get();
+            if (!snap.exists) return "Write appeared to succeed but document not found — check Firestore rules.";
             return true;
           } catch(e) {
             console.error("publishLiveRace failed:", e.code, e.message);
-            return e.message || "Unknown error";
+            return `${e.code}: ${e.message}`;
           }
         }
 
@@ -2047,16 +2051,18 @@
                     <div style={{ marginTop: 10 }}>
                       {!liveRaceCode ? (
                         <div>
-                          <button onClick={async () => {
+                          <button disabled={livePublishing} onClick={async () => {
                             setLivePublishError("");
+                            setLivePublishing(true);
                             const code = generateRaceCode();
                             const ok = await publishLiveRace(code);
+                            setLivePublishing(false);
                             if (ok === true) { setLiveRaceCode(code); }
-                            else { setLivePublishError(ok || "Could not go live — check Firestore rules."); }
-                          }} style={{ ...btnStyle("#ffd166", true), padding: "5px 14px", fontSize: 11, letterSpacing: 1 }}>
-                            📡 Go Live
+                            else { setLivePublishError(String(ok || "Could not go live.")); }
+                          }} style={{ ...btnStyle("#ffd166", true), padding: "5px 14px", fontSize: 11, letterSpacing: 1, opacity: livePublishing ? 0.6 : 1 }}>
+                            {livePublishing ? "Publishing…" : "📡 Go Live"}
                           </button>
-                          {livePublishError && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6 }}>{livePublishError}</div>}
+                          {livePublishError && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6, maxWidth: 280, lineHeight: 1.4 }}>{livePublishError}</div>}
                         </div>
                       ) : (
                         <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 6, padding: "6px 12px", display: "inline-flex" }}>
