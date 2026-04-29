@@ -3,7 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Youth Tri Race Timer</title>
+    <title>TriFlow — Race Timer</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%23071829'/><text x='50' y='72' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='44' fill='%2300aeef'>TF</text></svg>" />
+    <meta name="theme-color" content="#071829" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TriFlow" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet" />
@@ -27,7 +33,7 @@
       // Run is the final segment — logging it ends the race for that athlete
       const SEGMENTS   = ["Swim", "T1", "Bike", "T2", "Run"];
       const segColors  = ["#00aeef", "#48cae4", "#ffd166", "#48cae4", "#f4742b"];
-      const AGE_GROUPS = ["8 & Under", "9-10", "11-12", "13-14", "15+"];
+      const DEFAULT_AGE_GROUPS = ["8 & Under", "9-10", "11-12", "13-14", "15+"];
       // LOGO_B64 is defined in the preceding plain <script> tag (keeps Babel fast)
 
       // ── Formatting helpers ───────────────────────────────────────────────────
@@ -78,6 +84,14 @@
         const mins = Math.floor(minsPerMile);
         const secs = Math.floor((minsPerMile - mins) * 60);
         return `${mins}:${String(secs).padStart(2, "0")} /mi`;
+      }
+
+      function calcAge(dob) {
+        if (!dob) return null;
+        const d = new Date(dob), today = new Date();
+        let age = today.getFullYear() - d.getFullYear();
+        if (today.getMonth() - d.getMonth() < 0 || (today.getMonth() === d.getMonth() && today.getDate() < d.getDate())) age--;
+        return age;
       }
 
       function placeSuffix(n) {
@@ -151,6 +165,11 @@
           { id: 1, name: "Sprint", swimYards: 100, bikeMiles: 6, runMiles: 1.5 }
         ]);
 
+        // Age groups — fully customizable per race
+        const [ageGroups, setAgeGroups] = useState(DEFAULT_AGE_GROUPS);
+        const [certConfig, setCertConfig] = useState({ eventName: "TriFlow Race Event", accentColor: "#00aeef", orgName: "", customLogoB64: null });
+        const [loadedRaceId, setLoadedRaceId] = useState(null);
+
         const [clockMs, setClockMs]         = useState(0);
         const [clockRunning, setClockRunning] = useState(false);
         const [clockStarted, setClockStarted] = useState(false);
@@ -193,7 +212,7 @@
         function resetClock()  { setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0); }
 
         function resetTimers() {
-          setAthletes(a => a.map(ath => ({ ...freshAthlete(ath.name, ath.id), gender: ath.gender || "Male", ageGroup: ath.ageGroup || "9-10", courseId: ath.courseId || courses[0]?.id || null })));
+          setAthletes(a => a.map(ath => ({ ...freshAthlete(ath.name, ath.id), gender: ath.gender || "Male", ageGroup: ath.ageGroup || ageGroups[0] || "9-10", dob: ath.dob || "", courseId: ath.courseId || courses[0]?.id || null })));
           resetClock();
           setResetConfirm(false);
           setEditTarget(null);
@@ -211,17 +230,29 @@
             id: Date.now(),
             name,
             savedAt: new Date().toLocaleDateString(),
+            ageGroups,
             courses,
-            athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null })),
+            athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null })),
           };
           persistRaces([...savedRaces, entry]);
           setSaveRaceName("");
         }
 
+        function updateSavedRace() {
+          if (!loadedRaceId) return;
+          const updated = savedRaces.map(r => r.id === loadedRaceId
+            ? { ...r, ageGroups, courses, athletes: athletes.map(a => ({ name: a.name, gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId })), savedAt: new Date().toLocaleString() }
+            : r);
+          setSavedRaces(updated);
+          localStorage.setItem("tri-saved-races", JSON.stringify(updated));
+        }
         function loadRace(race) {
+          setLoadedRaceId(race.id);
           const loadedCourses = race.courses || [{ id: 1, name: "Sprint", swimYards: race.swimYards || 100, bikeMiles: race.bikeMiles || 6, runMiles: race.runMiles || 1.5 }];
+          const loadedAgeGroups = race.ageGroups || DEFAULT_AGE_GROUPS;
           setCourses(loadedCourses);
-          setAthletes(race.athletes.map((a, i) => ({ ...freshAthlete(a.name, i + 1), gender: a.gender || "Male", ageGroup: a.ageGroup || "9-10", courseId: a.courseId || loadedCourses[0].id })));
+          setAgeGroups(loadedAgeGroups);
+          setAthletes(race.athletes.map((a, i) => ({ ...freshAthlete(a.name, i + 1), gender: a.gender || "Male", ageGroup: a.ageGroup || loadedAgeGroups[0] || "9-10", dob: a.dob || "", courseId: a.courseId || loadedCourses[0].id })));
           resetClock();
           setEditTarget(null);
         }
@@ -237,7 +268,7 @@
           localStorage.setItem("tri-saved-athletes", JSON.stringify(list));
         }
         function addSavedAthlete() {
-          persistSavedAthletes([...savedAthletes, { id: Date.now(), name: "", gender: "Male", ageGroup: "9-10" }]);
+          persistSavedAthletes([...savedAthletes, { id: Date.now(), name: "", gender: "Male", ageGroup: ageGroups[0] || "9-10", dob: "" }]);
         }
         function removeSavedAthlete(id) {
           persistSavedAthletes(savedAthletes.filter(a => a.id !== id));
@@ -247,9 +278,38 @@
         }
         function loadRosterToRace() {
           if (savedAthletes.length === 0) return;
-          setAthletes(savedAthletes.map((a, i) => ({ ...freshAthlete(a.name, i + 1), gender: a.gender, ageGroup: a.ageGroup, courseId: courses[0]?.id || null })));
+          setAthletes(savedAthletes.map((a, i) => ({ ...freshAthlete(a.name, i + 1), gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: courses[0]?.id || null })));
           resetClock();
           setView("setup");
+        }
+        const csvInputRef = useRef(null);
+        const logoInputRef = useRef(null);
+        function handleCSVImport(e) {
+          const file = e.target.files[0]; if (!file) return;
+          const reader = new FileReader();
+          reader.onload = ev => {
+            const lines = ev.target.result.split(/\r?\n/).filter(l => l.trim());
+            if (lines.length < 2) return;
+            const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+            const col = n => headers.indexOf(n);
+            const mmss = s => { if (!s || !s.trim()) return null; const [m,sec] = s.trim().split(":").map(Number); return ((m||0)*60+(sec||0))*1000; };
+            const newAthletes = lines.slice(1).map((line, idx) => {
+              const cells = line.split(",").map(c => c.trim());
+              const sw=mmss(cells[col("swim")]), t1=mmss(cells[col("t1")]), bk=mmss(cells[col("bike")]), t2=mmss(cells[col("t2")]), rn=mmss(cells[col("run")]);
+              const s0=sw, s1=(s0!=null&&t1!=null?s0+t1:null), s2=(s1!=null&&bk!=null?s1+bk:null), s3=(s2!=null&&t2!=null?s2+t2:null), s4=(s3!=null&&rn!=null?s3+rn:null);
+              return { id: Date.now()+idx, name: col("name")>=0?cells[col("name")]:`Athlete ${idx+1}`, gender: col("gender")>=0?cells[col("gender")]:"Male", ageGroup: col("agegroup")>=0?cells[col("agegroup")]:(ageGroups[0]||""), dob: col("dob")>=0?cells[col("dob")]:"", courseId: courses[0].id, startOffset:0, splits:[s0,s1,s2,s3,s4], started:true, finished:s4!==null };
+            }).filter(a => a.name);
+            if (newAthletes.length > 0) { setAthletes(newAthletes); setClockStarted(true); setClockRunning(false); setView("results"); }
+          };
+          reader.readAsText(file);
+          e.target.value = "";
+        }
+        function handleLogoImport(e) {
+          const file = e.target.files[0]; if (!file) return;
+          const reader = new FileReader();
+          reader.onload = ev => setCertConfig(cfg => ({ ...cfg, customLogoB64: ev.target.result }));
+          reader.readAsDataURL(file);
+          e.target.value = "";
         }
         function startNewRace() {
           setAthletes([freshAthlete()]);
@@ -301,7 +361,14 @@
         }
 
         function sendOffAll() {
-          setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: clockMs, started: true }));
+          const offset = clockStarted ? clockMs : 0;
+          if (!clockStarted) {
+            offsetRef.current = 0;
+            setClockMs(0);
+            setClockRunning(true);
+            setClockStarted(true);
+          }
+          setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: offset, started: true }));
         }
 
         function logSplit(athleteIdx, segIndex) {
@@ -398,10 +465,10 @@
             }).join("");
             return `
               <div class="cert">
-                <div class="watermark">🏊 🚴 🏃</div>
-                <img src="${LOGO_B64}" class="logo" alt="Cooper Fitness Center" />
+                
+                <img src="${certConfig.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" />
                 <div class="top-rule"></div>
-                <div class="event">Youth Tri · Cooper Fitness Center · Spring 2026</div>
+                <div class="event">${certConfig.eventName}</div>
                 <div class="medal-emoji">${medal}</div>
                 <div class="place" style="color:${pColor}">${placeSuffix(place+1)} Place Overall</div>
                 <div class="name">${ath.name}</div>
@@ -424,7 +491,7 @@
           const win = window.open("", "_blank");
           win.document.write(`<!DOCTYPE html><html><head>
             <meta charset="UTF-8">
-            <title>Certificates — Youth Tri Spring 2026</title>
+            <title>Certificates — TriFlow</title>
             <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet">
             <style>
               *{box-sizing:border-box;margin:0;padding:0;}
@@ -439,7 +506,7 @@
                 padding:28px 50px;position:relative;overflow:hidden;
               }
               .cert::after{content:'';position:absolute;inset:10px;border:1.5px solid rgba(0,174,239,.25);border-radius:10px;pointer-events:none;}
-              .watermark{position:absolute;font-size:120px;opacity:.04;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;pointer-events:none;}
+              .cert::before{content:'';position:absolute;inset:0;background:url(${certConfig.customLogoB64 || LOGO_B64}) center/42% no-repeat;opacity:.09;pointer-events:none;border-radius:9px;}
               .logo{height:52px;object-fit:contain;margin-bottom:2px;}
               .top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00aeef,transparent);}
               .event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;text-align:center;}
@@ -508,7 +575,7 @@
           const win = window.open("", "_blank");
           win.document.write(`<!DOCTYPE html><html><head>
             <meta charset="UTF-8">
-            <title>Results — Youth Tri Spring 2026</title>
+            <title>Results — TriFlow</title>
             <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet">
             <style>
               *{box-sizing:border-box;margin:0;padding:0;}
@@ -533,8 +600,8 @@
             <div class="header">
               <img src="${LOGO_B64}" class="logo" alt="CFC" />
               <div>
-                <div class="title">Youth Tri Results</div>
-                <div class="subtitle">Cooper Fitness Center &middot; Spring 2026</div>
+                <div class="title">TriFlow Results</div>
+                <div class="subtitle">Swim &middot; Bike &middot; Run</div>
               </div>
             </div>
             <div class="dist">${courses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div>
@@ -599,10 +666,10 @@
                 <button onClick={() => setView("home")} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
               )}
               <div onClick={() => setView("home")} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff", cursor: "pointer" }}>
-                Youth <span style={{ color: "#00aeef" }}>Tri</span> Race Timer
+                <span style={{ color: "#00aeef" }}>Tri</span>Flow
               </div>
               <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4 }}>
-                Cooper Fitness Center &nbsp;&middot;&nbsp; Spring 2026
+                Swim &nbsp;&middot;&nbsp; Bike &nbsp;&middot;&nbsp; Run
               </div>
             </div>
 
@@ -656,7 +723,8 @@
                 <div style={{ padding: "10px 0 20px" }}>
                   {/* Logo */}
                   <div style={{ textAlign: "center", marginBottom: 28 }}>
-                    <img src={LOGO_B64} style={{ height: 80, objectFit: "contain" }} alt="Cooper Fitness Center" />
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 64, letterSpacing: 8, color: "#f0f6ff", lineHeight: 1 }}><span style={{ color: "#00aeef" }}>Tri</span>Flow</div>
+                    <div style={{ fontSize: 11, letterSpacing: 4, textTransform: "uppercase", color: "#5a86a8", marginTop: 6 }}>Swim &nbsp;&middot;&nbsp; Bike &nbsp;&middot;&nbsp; Run</div>
                   </div>
 
                   {/* Cards */}
@@ -746,8 +814,10 @@
                         </select>
                         <select value={ath.ageGroup} onChange={e => updateSavedAthlete(ath.id, "ageGroup", e.target.value)}
                           style={{ background: "#0c2240", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 4, padding: "5px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
-                          {AGE_GROUPS.map(ag => <option key={ag} value={ag}>{ag}</option>)}
+                          {ageGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
                         </select>
+                        <input type="date" value={ath.dob || ""} onChange={e => updateSavedAthlete(ath.id, "dob", e.target.value)} title="Date of Birth"
+                          style={{ background: "#0c2240", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 12, outline: "none", colorScheme: "dark" }} />
                       </div>
                     </div>
                   ))}
@@ -795,8 +865,10 @@
                         </select>
                         <select value={ath.ageGroup} onChange={e => updateAgeGroup(i, e.target.value)}
                           style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "5px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
-                          {AGE_GROUPS.map(ag => <option key={ag} value={ag}>{ag}</option>)}
+                          {ageGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
                         </select>
+                        <input type="date" value={ath.dob || ""} onChange={e => updateDob(i, e.target.value)} title="Date of Birth"
+                          style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 12, outline: "none", colorScheme: "dark" }} />
                         {courses.length > 1 && (
                           <select value={ath.courseId || courses[0].id} onChange={e => updateAthleteCourse(i, Number(e.target.value))}
                             style={{ background: "#0c2240", border: "1px solid rgba(255,209,102,0.35)", borderRadius: 4, padding: "5px 10px", color: "#ffd166", fontSize: 12, outline: "none", cursor: "pointer" }}>
@@ -810,6 +882,8 @@
                   <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                     <button onClick={addAthlete} style={btnStyle("#48cae4", true)}>+ Add Athlete</button>
                     <button onClick={goToRace} style={btnStyle("#00aeef")}>Go to Race &#8594;</button>
+                    <button onClick={() => csvInputRef.current.click()} style={btnStyle("#48cae4", true)}>&#8679; Import CSV</button>
+                    <input ref={csvInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSVImport} />
                   </div>
 
                   {/* ── Courses (distances) ── */}
@@ -825,7 +899,7 @@
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                           <input value={course.name} onChange={e => updateCourse(course.id, "name", e.target.value)}
                             style={{ flex: 1, background: "#0c2240", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "6px 10px", color: "#e8f4fb", fontSize: 13, outline: "none", fontWeight: 700 }} />
-                          {courses.length > 1 && (
+                        {courses.length > 1 && (
                             <button onClick={() => removeCourse(course.id)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 16, cursor: "pointer", padding: "0 6px" }}>&times;</button>
                           )}
                         </div>
@@ -847,6 +921,44 @@
                     ))}
                   </div>
 
+                  {/* ── Age Groups ── */}
+                  <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8" }}>Age Groups</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={() => setAgeGroups(["8 & Under","9-10","11-12","13-14","15+"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Youth</button>
+                        <button onClick={() => setAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60+"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Adult 5yr</button>
+                        <button onClick={addAgeGroupItem} style={{ ...btnStyle("#48cae4", true), padding: "3px 8px", fontSize: 10 }}>+ Group</button>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {ageGroups.map(ag => (
+                        <div key={ag} style={{ display: "flex", alignItems: "center", background: "#071829", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 20, overflow: "hidden" }}>
+                          <input value={ag} onChange={e => renameAgeGroup(ag, e.target.value)}
+                            style={{ background: "transparent", border: "none", color: "#e8f4fb", fontSize: 12, padding: "4px 10px", outline: "none", width: `${Math.max(ag.length, 4) * 8 + 16}px` }} />
+                          {ageGroups.length > 1 && <button onClick={() => removeAgeGroupItem(ag)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 14, cursor: "pointer", padding: "0 6px 0 0", lineHeight: 1 }}>&times;</button>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ── Certificate & Event Config ── */}
+                  <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>Certificate &amp; Event</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <input value={certConfig.eventName} onChange={e => setCertConfig(cfg => ({ ...cfg, eventName: e.target.value }))} placeholder="Event name for certificates"
+                        style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "8px 12px", color: "#e8f4fb", fontSize: 13, outline: "none" }} />
+                      <input value={certConfig.orgName} onChange={e => setCertConfig(cfg => ({ ...cfg, orgName: e.target.value }))} placeholder="Organization name (optional)"
+                        style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "8px 12px", color: "#e8f4fb", fontSize: 13, outline: "none" }} />
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <button onClick={() => logoInputRef.current.click()} style={{ ...btnStyle("#5a86a8", true), padding: "7px 14px", fontSize: 12 }}>&#8679; Custom Logo</button>
+                        {certConfig.customLogoB64 && <span style={{ fontSize: 11, color: "#4ade80" }}>&#10003; Logo uploaded</span>}
+                        {certConfig.customLogoB64 && <button onClick={() => setCertConfig(cfg => ({ ...cfg, customLogoB64: null }))} style={{ background: "none", border: "none", color: "#5a86a8", cursor: "pointer", fontSize: 12 }}>Remove</button>}
+                        <input ref={logoInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleLogoImport} />
+                      </div>
+                    </div>
+                  </div>
+
                   {/* ── Saved Races ── */}
                   <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>
@@ -865,6 +977,11 @@
                       <button onClick={saveRace} style={{ ...btnStyle("#4ade80"), padding: "8px 16px", fontSize: 12, whiteSpace: "nowrap" }}>
                         Save Setup
                       </button>
+                      {loadedRaceId && (
+                        <button onClick={updateSavedRace} style={{ ...btnStyle("#ffd166"), padding: "8px 16px", fontSize: 12, whiteSpace: "nowrap" }}>
+                          Update Race
+                        </button>
+                      )}
                     </div>
 
                     {/* Saved race list */}
