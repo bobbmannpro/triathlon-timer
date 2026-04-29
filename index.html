@@ -343,6 +343,18 @@
         function updateName(i, v)       { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, name: v } : ath)); }
         function updateGender(i, v)     { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, gender: v } : ath)); }
         function updateAgeGroup(i, v)   { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, ageGroup: v } : ath)); }
+        function updateDob(i, v)        { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, dob: v } : ath)); }
+        function addAgeGroupItem() { setAgeGroups(g => [...g, "New Group"]); }
+        function removeAgeGroupItem(label) {
+          if (ageGroups.length <= 1) return;
+          const remaining = ageGroups.filter(g => g !== label);
+          setAthletes(a => a.map(ath => ath.ageGroup === label ? { ...ath, ageGroup: remaining[0] } : ath));
+          setAgeGroups(remaining);
+        }
+        function renameAgeGroup(oldLabel, newLabel) {
+          setAgeGroups(g => g.map(item => item === oldLabel ? newLabel : item));
+          setAthletes(a => a.map(ath => ath.ageGroup === oldLabel ? { ...ath, ageGroup: newLabel } : ath));
+        }
 
         function moveAthlete(i, dir) {
           const arr = [...athletes], t = i + dir;
