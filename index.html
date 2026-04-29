@@ -222,6 +222,7 @@
         const [deleteConfirm, setDeleteConfirm] = useState(null);
         const [raceMode, setRaceMode] = useState("separate");
         const [liveRaceCode, setLiveRaceCode] = useState(null);
+        const [livePublishError, setLivePublishError] = useState("");
         const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", birthday: "", gender: "", role: "participant" });
         const [profileSaving, setProfileSaving] = useState(false);
         const [profileSaved, setProfileSaved] = useState(false);
@@ -317,7 +318,7 @@
         }
 
         async function publishLiveRace(code) {
-          if (!currentUser) return;
+          if (!currentUser) return false;
           const payload = {
             code, publishedBy: currentUser.uid,
             publisherName: userProfile?.displayName || currentUser.email,
@@ -325,7 +326,13 @@
             athletes: athletes.map(a => ({ id: a.id, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             courses, segments: SEGMENTS, updatedAt: Date.now()
           };
-          await db.collection("liveRaces").doc(code).set(payload);
+          try {
+            await db.collection("liveRaces").doc(code).set(payload);
+            return true;
+          } catch(e) {
+            console.error("publishLiveRace failed:", e);
+            return false;
+          }
         }
 
         function updateLiveRace(code) {
@@ -2027,10 +2034,18 @@
                     {athletes.length} Athletes &nbsp;&mdash;&nbsp; Tap to log splits
                     <div style={{ marginTop: 10 }}>
                       {!liveRaceCode ? (
-                        <button onClick={async () => { const code = generateRaceCode(); setLiveRaceCode(code); await publishLiveRace(code); }}
-                          style={{ ...btnStyle("#ffd166", true), padding: "5px 14px", fontSize: 11, letterSpacing: 1 }}>
-                          📡 Go Live
-                        </button>
+                        <div>
+                          <button onClick={async () => {
+                            setLivePublishError("");
+                            const code = generateRaceCode();
+                            const ok = await publishLiveRace(code);
+                            if (ok) { setLiveRaceCode(code); }
+                            else { setLivePublishError("Could not go live — check Firestore rules."); }
+                          }} style={{ ...btnStyle("#ffd166", true), padding: "5px 14px", fontSize: 11, letterSpacing: 1 }}>
+                            📡 Go Live
+                          </button>
+                          {livePublishError && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6 }}>{livePublishError}</div>}
+                        </div>
                       ) : (
                         <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 6, padding: "6px 12px", display: "inline-flex" }}>
                           <span style={{ fontSize: 11, color: "#5a86a8" }}>LIVE CODE</span>
