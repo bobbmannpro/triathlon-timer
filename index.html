@@ -152,7 +152,14 @@
       }
 
       function freshAthlete(name = "", id = Date.now(), gender = "Male", ageGroup = "9-10") {
-        return { id, name, gender, ageGroup, startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
+        const parts = name.trim().split(" ");
+        const firstName = parts[0] || "";
+        const lastName = parts.slice(1).join(" ") || "";
+        return { id, name: name.trim(), firstName, lastName, gender, ageGroup, startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
+      }
+      function athleteName(ath) {
+        if (ath.firstName || ath.lastName) return `${ath.firstName || ""} ${ath.lastName || ""}`.trim();
+        return ath.name || "";
       }
 
       // ── Style helpers ────────────────────────────────────────────────────────
@@ -503,7 +510,20 @@
           persistSavedAthletes(savedAthletes.filter(a => a.id !== id));
         }
         function updateSavedAthlete(id, field, value) {
-          persistSavedAthletes(savedAthletes.map(a => a.id === id ? { ...a, [field]: value } : a));
+          persistSavedAthletes(savedAthletes.map(a => {
+            if (a.id !== id) return a;
+            const updated = { ...a, [field]: value };
+            if (field === "firstName") updated.name = `${value} ${a.lastName || ""}`.trim();
+            if (field === "lastName") updated.name = `${a.firstName || ""} ${value}`.trim();
+            if (field === "dob" && value) {
+              const age = calcAge(value);
+              if (age !== null) {
+                const match = ageGroups.find(g => { const r = parseAgeRange(g); return r && age >= r.min && age <= r.max; });
+                if (match) updated.ageGroup = match;
+              }
+            }
+            return updated;
+          }));
         }
         function saveAthleteEdit(oldName, newData) {
           const oldKey = oldName.trim().toLowerCase();
@@ -613,9 +633,24 @@
           return courses.find(c => c.id === ath.courseId) || courses[0];
         }
         function updateName(i, v)       { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, name: v } : ath)); }
+        function updateFirstName(i, v)  { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, firstName: v, name: `${v} ${ath.lastName || ""}`.trim() } : ath)); }
+        function updateLastName(i, v)   { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, lastName: v, name: `${ath.firstName || ""} ${v}`.trim() } : ath)); }
         function updateGender(i, v)     { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, gender: v } : ath)); }
         function updateAgeGroup(i, v)   { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, ageGroup: v } : ath)); }
-        function updateDob(i, v)        { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, dob: v } : ath)); }
+        function updateDob(i, v) {
+          setAthletes(a => a.map((ath, idx) => {
+            if (idx !== i) return ath;
+            const updated = { ...ath, dob: v };
+            if (v) {
+              const age = calcAge(v);
+              if (age !== null) {
+                const match = ageGroups.find(g => { const r = parseAgeRange(g); return r && age >= r.min && age <= r.max; });
+                if (match) updated.ageGroup = match;
+              }
+            }
+            return updated;
+          }));
+        }
         function parseAgeRange(label) {
           const s = (label || "").toLowerCase().replace(/\s+/g, " ").trim();
           let m = s.match(/^(\d+)\s*[-–]\s*(\d+)$/); if (m) return { min: +m[1], max: +m[2] };
@@ -1509,8 +1544,10 @@
                     <div key={ath.id} style={{ marginBottom: 10 }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
                         <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#4ade80", flexShrink: 0 }}>{i + 1}</div>
-                        <input value={ath.name} onChange={e => updateSavedAthlete(ath.id, "name", e.target.value)} placeholder={`Athlete ${i + 1} name`}
-                          style={{ flex: 1, background: "#0c2240", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 4, padding: "10px 14px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                        <input value={ath.firstName || ath.name || ""} onChange={e => updateSavedAthlete(ath.id, "firstName", e.target.value)} placeholder="First"
+                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                        <input value={ath.lastName || ""} onChange={e => updateSavedAthlete(ath.id, "lastName", e.target.value)} placeholder="Last"
+                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
                         <button onClick={() => removeSavedAthlete(ath.id)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
                       </div>
                       <div style={{ display: "flex", gap: 8, marginLeft: 38 }}>
@@ -1525,6 +1562,11 @@
                         </select>
                         <input type="date" value={ath.dob || ""} onChange={e => updateSavedAthlete(ath.id, "dob", e.target.value)} title="Date of Birth"
                           style={{ background: "#0c2240", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 12, outline: "none", colorScheme: "dark" }} />
+                        {ath.dob && calcAge(ath.dob) !== null && (
+                          <div style={{ background: "#071829", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 4, padding: "5px 8px", fontSize: 12, color: "#4ade80", fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
+                            Age {calcAge(ath.dob)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1808,8 +1850,10 @@
                           <button onClick={() => moveAthlete(i, 1)} disabled={i === athletes.length - 1} style={{ background: "none", border: "none", color: i === athletes.length - 1 ? "#1a3a5c" : "#5a86a8", cursor: i === athletes.length - 1 ? "default" : "pointer", fontSize: 12, padding: "1px 4px", lineHeight: 1 }}>▼</button>
                         </div>
                         <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#00aeef", flexShrink: 0 }}>{i + 1}</div>
-                        <input value={ath.name} onChange={e => updateName(i, e.target.value)} placeholder={`Athlete ${i + 1} name`}
-                          style={{ flex: 1, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "10px 14px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                        <input value={ath.firstName || ""} onChange={e => updateFirstName(i, e.target.value)} placeholder="First"
+                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                        <input value={ath.lastName || ""} onChange={e => updateLastName(i, e.target.value)} placeholder="Last"
+                          style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "10px 10px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
                         {athletes.length > 1 && (
                           <button onClick={() => removeAthlete(i)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
                         )}
