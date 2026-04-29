@@ -341,9 +341,6 @@
           };
           try {
             await db.collection("liveRaces").doc(code).set(payload);
-            // Verify the document actually landed
-            const snap = await db.collection("liveRaces").doc(code).get();
-            if (!snap.exists) return "Write appeared to succeed but document not found — check Firestore rules.";
             return true;
           } catch(e) {
             console.error("publishLiveRace failed:", e.code, e.message);
