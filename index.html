@@ -187,6 +187,8 @@
         const [raceMode, setRaceMode] = useState("separate");
         const [showAthletePicker, setShowAthletePicker] = useState(false);
         const [athletePickerSearch, setAthletePickerSearch] = useState("");
+        const [editingAthleteKey, setEditingAthleteKey] = useState(null);
+        const [editingAthleteData, setEditingAthleteData] = useState(null);
 
         // Saved athlete roster (persisted to localStorage — separate from race-specific athletes)
         const [savedAthletes, setSavedAthletes] = useState(() => {
@@ -288,6 +290,26 @@
         }
         function updateSavedAthlete(id, field, value) {
           persistSavedAthletes(savedAthletes.map(a => a.id === id ? { ...a, [field]: value } : a));
+        }
+        function saveAthleteEdit(oldName, newData) {
+          const oldKey = oldName.trim().toLowerCase();
+          const updatedRaces = savedRaces.map(race => ({
+            ...race,
+            athletes: (race.athletes || []).map(a =>
+              a.name.trim().toLowerCase() === oldKey
+                ? { ...a, name: newData.name, gender: newData.gender, ageGroup: newData.ageGroup, dob: newData.dob }
+                : a
+            )
+          }));
+          setSavedRaces(updatedRaces);
+          localStorage.setItem("tri-saved-races", JSON.stringify(updatedRaces));
+          persistSavedAthletes(savedAthletes.map(a =>
+            a.name.trim().toLowerCase() === oldKey
+              ? { ...a, name: newData.name, gender: newData.gender, ageGroup: newData.ageGroup, dob: newData.dob }
+              : a
+          ));
+          setEditingAthleteKey(null);
+          setEditingAthleteData(null);
         }
         function loadRosterToRace() {
           if (savedAthletes.length === 0) return;
@@ -898,24 +920,75 @@
                           </div>
                         ) : (
                           <div style={{ background: "#0a1e36", border: "1px solid rgba(0,174,239,0.12)", borderRadius: 8, overflow: "hidden" }}>
-                            {raceAthletes.map((ath, i) => (
-                              <div key={ath.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < raceAthletes.length - 1 ? "1px solid rgba(0,174,239,0.08)" : "none", background: i % 2 === 0 ? "transparent" : "rgba(0,174,239,0.03)" }}>
-                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 16, color: "#00aeef", width: 24, flexShrink: 0, textAlign: "right" }}>{i + 1}</div>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 13, color: "#e8f4fb", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ath.name}</div>
-                                  <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 1 }}>
-                                    {ath.gender && <span style={{ marginRight: 8 }}>{ath.gender}</span>}
-                                    {ath.ageGroup && <span style={{ marginRight: 8 }}>{ath.ageGroup}</span>}
-                                    {ath.dob && <span style={{ marginRight: 8 }}>{ath.dob}</span>}
+                            {raceAthletes.map((ath, i) => {
+                              const isEditing = editingAthleteKey === ath.key;
+                              const age = ath.dob ? calcAge(ath.dob) : null;
+                              return (
+                                <div key={ath.key} style={{ borderBottom: i < raceAthletes.length - 1 ? "1px solid rgba(0,174,239,0.08)" : "none" }}>
+                                  {/* Summary row */}
+                                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", background: isEditing ? "rgba(0,174,239,0.06)" : i % 2 === 0 ? "transparent" : "rgba(0,174,239,0.03)" }}>
+                                    <div style={{ fontFamily: "'Bebas Neue'", fontSize: 16, color: "#00aeef", width: 24, flexShrink: 0, textAlign: "right" }}>{i + 1}</div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontSize: 13, color: "#e8f4fb", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ath.name}</div>
+                                      <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 1 }}>
+                                        {ath.gender && <span style={{ marginRight: 8 }}>{ath.gender}</span>}
+                                        {ath.ageGroup && <span style={{ marginRight: 8 }}>{ath.ageGroup}</span>}
+                                        {age !== null && <span style={{ marginRight: 8 }}>Age {age}</span>}
+                                        {ath.dob && <span style={{ marginRight: 8, color: "#3a6080" }}>{ath.dob}</span>}
+                                      </div>
+                                    </div>
+                                    <div style={{ fontSize: 10, color: "#3a6080", flexShrink: 0 }}>
+                                      {ath.races.length === 1
+                                        ? <span>{ath.races[0]}</span>
+                                        : <span style={{ color: "#00aeef" }}>{ath.races.length} races</span>}
+                                    </div>
+                                    <button onClick={() => {
+                                      if (isEditing) { setEditingAthleteKey(null); setEditingAthleteData(null); }
+                                      else { setEditingAthleteKey(ath.key); setEditingAthleteData({ name: ath.name, gender: ath.gender || "Male", ageGroup: ath.ageGroup || ageGroups[0], dob: ath.dob || "" }); }
+                                    }} style={{ background: isEditing ? "rgba(0,174,239,0.15)" : "none", border: isEditing ? "1px solid rgba(0,174,239,0.3)" : "none", color: isEditing ? "#00aeef" : "#3a6080", fontSize: 13, cursor: "pointer", padding: "4px 8px", borderRadius: 4, flexShrink: 0, lineHeight: 1 }}>
+                                      {isEditing ? "✕" : "✎"}
+                                    </button>
                                   </div>
+
+                                  {/* Inline edit panel */}
+                                  {isEditing && editingAthleteData && (
+                                    <div style={{ padding: "12px 14px 14px", background: "rgba(0,174,239,0.04)", borderTop: "1px solid rgba(0,174,239,0.1)" }}>
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                        <input value={editingAthleteData.name} onChange={e => setEditingAthleteData(d => ({ ...d, name: e.target.value }))}
+                                          placeholder="Name" style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "8px 12px", color: "#e8f4fb", fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box" }} />
+                                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                          <select value={editingAthleteData.gender} onChange={e => setEditingAthleteData(d => ({ ...d, gender: e.target.value }))}
+                                            style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "7px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
+                                            <option value="Male">Male</option>
+                                            <option value="Female">Female</option>
+                                          </select>
+                                          <select value={editingAthleteData.ageGroup} onChange={e => setEditingAthleteData(d => ({ ...d, ageGroup: e.target.value }))}
+                                            style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "7px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer", flex: 1 }}>
+                                            {ageGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
+                                          </select>
+                                          <input type="date" value={editingAthleteData.dob} onChange={e => setEditingAthleteData(d => ({ ...d, dob: e.target.value }))}
+                                            style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "7px 8px", color: "#e8f4fb", fontSize: 12, outline: "none", colorScheme: "dark" }} />
+                                          {editingAthleteData.dob && calcAge(editingAthleteData.dob) !== null && (
+                                            <div style={{ background: "#071829", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "7px 8px", fontSize: 12, color: "#00aeef", fontWeight: 700, flexShrink: 0 }}>
+                                              Age {calcAge(editingAthleteData.dob)}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div style={{ display: "flex", gap: 8 }}>
+                                          <button onClick={() => saveAthleteEdit(ath.name, editingAthleteData)}
+                                            style={{ ...btnStyle("#00aeef"), padding: "7px 18px", fontSize: 12 }}>Save</button>
+                                          <button onClick={() => { setEditingAthleteKey(null); setEditingAthleteData(null); }}
+                                            style={{ ...btnStyle("#5a86a8", true), padding: "7px 14px", fontSize: 12 }}>Cancel</button>
+                                          <div style={{ fontSize: 11, color: "#3a6080", alignSelf: "center", marginLeft: 4 }}>
+                                            Updates across {ath.races.length} race{ath.races.length !== 1 ? "s" : ""}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                                <div style={{ fontSize: 10, color: "#3a6080", textAlign: "right", flexShrink: 0, maxWidth: 120 }}>
-                                  {ath.races.length === 1
-                                    ? <span style={{ color: "#3a6080" }}>{ath.races[0]}</span>
-                                    : <span style={{ color: "#00aeef" }}>{ath.races.length} races</span>}
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
