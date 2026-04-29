@@ -2023,22 +2023,24 @@
                     </div>
 
                     {/* Save current setup */}
-                    <div style={{ display: "flex", gap: 8, marginBottom: savedRaces.length > 0 ? 14 : 0 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: savedRaces.length > 0 ? 14 : 0 }}>
                       <input
                         value={saveRaceName}
                         onChange={e => setSaveRaceName(e.target.value)}
                         onKeyDown={e => e.key === "Enter" && saveRace()}
                         placeholder="Race name (e.g. Spring 2026)"
-                        style={{ flex: 1, background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "8px 12px", color: "#e8f4fb", fontSize: 13, outline: "none" }}
+                        style={{ width: "100%", background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "10px 12px", color: "#e8f4fb", fontSize: 13, outline: "none" }}
                       />
-                      <button onClick={saveRace} style={{ ...btnStyle("#4ade80"), padding: "8px 16px", fontSize: 12, whiteSpace: "nowrap" }}>
-                        Save Setup
-                      </button>
-                      {loadedRaceId && (
-                        <button onClick={updateSavedRace} style={{ ...btnStyle("#ffd166"), padding: "8px 16px", fontSize: 12, whiteSpace: "nowrap" }}>
-                          Update Race
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={saveRace} style={{ ...btnStyle("#4ade80"), flex: 1, padding: "10px", fontSize: 13 }}>
+                          Save Setup
                         </button>
-                      )}
+                        {loadedRaceId && (
+                          <button onClick={updateSavedRace} style={{ ...btnStyle("#ffd166"), flex: 1, padding: "10px", fontSize: 13 }}>
+                            Update Race
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Saved race list */}
