@@ -386,7 +386,21 @@
           const fn = snap => {
             setLiveRaceLoading(false);
             if (!snap.exists()) { setLiveRaceError("No active race found with that code."); setLiveRace(null); }
-            else { setLiveRace({ ...snap.val(), code: snap.key }); setLiveRaceError(""); }
+            else {
+              const data = snap.val();
+              const segCount = (data.segments || SEGMENTS).length;
+              // RTDB strips null from arrays — restore them so split logic works
+              if (data.athletes) {
+                data.athletes = data.athletes.map(ath => ({
+                  ...ath,
+                  splits: Array.from({ length: segCount }, (_, i) =>
+                    (ath.splits && ath.splits[i] !== undefined && ath.splits[i] !== null) ? ath.splits[i] : null
+                  )
+                }));
+              }
+              setLiveRace({ ...data, code: snap.key });
+              setLiveRaceError("");
+            }
           };
           ref.on("value", fn, () => { setLiveRaceLoading(false); setLiveRaceError("Could not connect. Check the code and try again."); });
           liveRaceUnsubRef.current = { ref, fn };
@@ -1191,7 +1205,7 @@
                             {ath.started && (
                               <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
                                 {liveSegs.map((seg, si) => {
-                                  const done = splitDurs[si] !== null;
+                                  const done = splitDurs[si] !== null && splitDurs[si] !== undefined;
                                   const isCurrent = curSeg === si;
                                   const col = liveSegColors[si % liveSegColors.length];
                                   const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
@@ -1728,7 +1742,7 @@
                                 {ath.started && (
                                   <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
                                     {watchSegs.map((seg, si) => {
-                                      const done = splitDurs[si] !== null;
+                                      const done = splitDurs[si] !== null && splitDurs[si] !== undefined;
                                       const isCurrent = curSeg === si;
                                       const col = watchSegColors[si % watchSegColors.length];
                                       const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
