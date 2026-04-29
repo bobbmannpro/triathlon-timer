@@ -396,7 +396,19 @@
             return match ? { ...ath, ageGroup: match } : ath;
           }));
         }
-        function addAgeGroupItem() { setAgeGroups(g => [...g, "New Group"]); }
+        function parseAgeGroupStruct(label) {
+          const r = parseAgeRange(label);
+          if (!r) return { type: "range", a: 0, b: 10 };
+          if (r.min === 0) return { type: "under", a: r.max, b: 0 };
+          if (r.max === 999) return { type: "over", a: r.min, b: 0 };
+          return { type: "range", a: r.min, b: r.max };
+        }
+        function ageGroupLabel(type, a, b) {
+          if (type === "under") return `${a} and under`;
+          if (type === "over") return `${a} and over`;
+          return `${a}-${b}`;
+        }
+        function addAgeGroupItem() { setAgeGroups(g => [...g, "0-10"]); }
         function removeAgeGroupItem(label) {
           if (ageGroups.length <= 1) return;
           const remaining = ageGroups.filter(g => g !== label);
@@ -1125,19 +1137,51 @@
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8" }}>Age Groups</div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => setAgeGroups(["8 & Under","9-10","11-12","13-14","15+"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Youth</button>
-                        <button onClick={() => setAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60+"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Adult 5yr</button>
+                        <button onClick={() => setAgeGroups(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Youth</button>
+                        <button onClick={() => setAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Adult 5yr</button>
                         <button onClick={addAgeGroupItem} style={{ ...btnStyle("#48cae4", true), padding: "3px 8px", fontSize: 10 }}>+ Group</button>
                       </div>
                     </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {ageGroups.map((ag, agIdx) => (
-                        <div key={agIdx} style={{ display: "flex", alignItems: "center", background: "#071829", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 20, overflow: "hidden" }}>
-                          <input value={ag} onChange={e => renameAgeGroup(ag, e.target.value)}
-                            style={{ background: "transparent", border: "none", color: "#e8f4fb", fontSize: 12, padding: "4px 10px", outline: "none", width: `${Math.max(ag.length, 4) * 8 + 16}px` }} />
-                          {ageGroups.length > 1 && <button onClick={() => removeAgeGroupItem(ag)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 14, cursor: "pointer", padding: "0 6px 0 0", lineHeight: 1 }}>&times;</button>}
-                        </div>
-                      ))}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {ageGroups.map((ag, agIdx) => {
+                        const s = parseAgeGroupStruct(ag);
+                        function update(type, a, b) {
+                          const newLabel = ageGroupLabel(type, a, b);
+                          renameAgeGroup(ag, newLabel);
+                        }
+                        return (
+                          <div key={agIdx} style={{ display: "flex", alignItems: "center", gap: 6, background: "#071829", border: "1px solid rgba(0,174,239,0.18)", borderRadius: 6, padding: "6px 10px" }}>
+                            <select value={s.type} onChange={e => update(e.target.value, s.a, s.b)}
+                              style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "4px 8px", color: "#00aeef", fontSize: 12, outline: "none", cursor: "pointer" }}>
+                              <option value="range">Age Range</option>
+                              <option value="under">And Under</option>
+                              <option value="over">And Over</option>
+                            </select>
+                            {s.type === "range" ? (
+                              <>
+                                <input type="number" value={s.a} min={0} max={s.b - 1}
+                                  onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
+                                  style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "4px 6px", color: "#e8f4fb", fontSize: 13, width: 52, outline: "none", textAlign: "center" }} />
+                                <span style={{ color: "#5a86a8", fontSize: 12 }}>–</span>
+                                <input type="number" value={s.b} min={s.a + 1} max={199}
+                                  onChange={e => update(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
+                                  style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "4px 6px", color: "#e8f4fb", fontSize: 13, width: 52, outline: "none", textAlign: "center" }} />
+                              </>
+                            ) : (
+                              <>
+                                <input type="number" value={s.a} min={0} max={199}
+                                  onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
+                                  style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "4px 6px", color: "#e8f4fb", fontSize: 13, width: 52, outline: "none", textAlign: "center" }} />
+                                <span style={{ fontSize: 12, color: "#5a86a8" }}>{s.type === "under" ? "and under" : "and over"}</span>
+                              </>
+                            )}
+                            <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: "#3a6080", fontStyle: "italic" }}>{ag}</div>
+                            {ageGroups.length > 1 && (
+                              <button onClick={() => removeAgeGroupItem(ag)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 16, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>&times;</button>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
