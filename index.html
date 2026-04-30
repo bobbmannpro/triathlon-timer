@@ -268,6 +268,9 @@
         const [athletePickerSearch, setAthletePickerSearch] = useState("");
         const [editingAthleteKey, setEditingAthleteKey] = useState(null);
         const [editingAthleteData, setEditingAthleteData] = useState(null);
+        const [dragIdx, setDragIdx] = useState(null);
+        const [dragOverIdx, setDragOverIdx] = useState(null);
+        const touchDragRef = useRef(null);
 
         // Saved athlete roster (persisted to localStorage — separate from race-specific athletes)
         const [savedAthletes, setSavedAthletes] = useState(() => {
@@ -703,6 +706,53 @@
           if (t < 0 || t >= arr.length) return;
           [arr[i], arr[t]] = [arr[t], arr[i]];
           setAthletes(arr);
+        }
+        function applyDragDrop(from, to) {
+          if (from === to) return;
+          const arr = [...athletes];
+          const [item] = arr.splice(from, 1);
+          arr.splice(to, 0, item);
+          setAthletes(arr);
+        }
+        function onDragStart(e, i) {
+          setDragIdx(i);
+          e.dataTransfer.effectAllowed = "move";
+        }
+        function onDragOver(e, i) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          if (i !== dragOverIdx) setDragOverIdx(i);
+        }
+        function onDrop(e, i) {
+          e.preventDefault();
+          if (dragIdx !== null) applyDragDrop(dragIdx, i);
+          setDragIdx(null); setDragOverIdx(null);
+        }
+        function onDragEnd() { setDragIdx(null); setDragOverIdx(null); }
+        function onTouchStartDrag(e, i) {
+          touchDragRef.current = { startIdx: i, overIdx: i };
+          setDragIdx(i);
+        }
+        function onTouchMoveDrag(e) {
+          if (!touchDragRef.current) return;
+          e.preventDefault();
+          const touch = e.touches[0];
+          const el = document.elementFromPoint(touch.clientX, touch.clientY);
+          if (!el) return;
+          const row = el.closest('[data-drag-idx]');
+          if (row) {
+            const idx = parseInt(row.dataset.dragIdx, 10);
+            if (!isNaN(idx) && idx !== touchDragRef.current.overIdx) {
+              touchDragRef.current.overIdx = idx;
+              setDragOverIdx(idx);
+            }
+          }
+        }
+        function onTouchEndDrag() {
+          if (!touchDragRef.current) return;
+          applyDragDrop(touchDragRef.current.startIdx, touchDragRef.current.overIdx);
+          touchDragRef.current = null;
+          setDragIdx(null); setDragOverIdx(null);
         }
 
         function goToRace() {
@@ -1788,12 +1838,16 @@
                     Athletes
                   </div>
                   {athletes.map((ath, i) => (
-                    <div key={ath.id} style={{ marginBottom: 10 }}>
+                    <div key={ath.id} data-drag-idx={i}
+                      onDragOver={e => onDragOver(e, i)} onDrop={e => onDrop(e, i)}
+                      style={{ marginBottom: 10, borderRadius: 6, outline: dragOverIdx === i && dragIdx !== i ? "2px solid rgba(0,174,239,0.5)" : "none", opacity: dragIdx === i ? 0.4 : 1, transition: "opacity 0.15s" }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-                          <button onClick={() => moveAthlete(i, -1)} disabled={i === 0} style={{ background: "none", border: "none", color: i === 0 ? "#1a3a5c" : "#5a86a8", cursor: i === 0 ? "default" : "pointer", fontSize: 12, padding: "1px 4px", lineHeight: 1 }}>▲</button>
-                          <button onClick={() => moveAthlete(i, 1)} disabled={i === athletes.length - 1} style={{ background: "none", border: "none", color: i === athletes.length - 1 ? "#1a3a5c" : "#5a86a8", cursor: i === athletes.length - 1 ? "default" : "pointer", fontSize: 12, padding: "1px 4px", lineHeight: 1 }}>▼</button>
-                        </div>
+                        <div
+                          draggable
+                          onDragStart={e => onDragStart(e, i)} onDragEnd={onDragEnd}
+                          onTouchStart={e => onTouchStartDrag(e, i)} onTouchMove={onTouchMoveDrag} onTouchEnd={onTouchEndDrag}
+                          style={{ display: "flex", alignItems: "center", justifyContent: "center", cursor: "grab", color: "#3a6080", fontSize: 20, flexShrink: 0, padding: "0 3px", userSelect: "none", touchAction: "none" }}
+                          title="Drag to reorder">⠿</div>
                         <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#00aeef", flexShrink: 0 }}>{i + 1}</div>
                         <input value={ath.firstName || ""} onChange={e => updateFirstName(i, e.target.value)} placeholder="First"
                           style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "8px 8px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
