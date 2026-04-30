@@ -247,7 +247,7 @@
           return () => clearInterval(id);
         }, [liveRace]);
 
-        // Saved race presets (persisted to localStorage + Firestore)
+        // Saved race presets (persisted to localStorage + RTDB)
         const [savedRaces, setSavedRaces] = useState(() => {
           try { return JSON.parse(localStorage.getItem("tri-saved-races") || "[]"); } catch { return []; }
         });
@@ -295,7 +295,7 @@
           if (liveRaceCode && athletes.some(a => a.started)) updateLiveRace(liveRaceCode);
         }, [athletes, clockMs]);
 
-        // Firebase auth listener — loads Firestore data on login
+        // Firebase auth listener — loads RTDB data on login
         useEffect(() => {
           const unsub = auth.onAuthStateChanged(async user => {
             setCurrentUser(user);
@@ -528,33 +528,10 @@
           setDeleteConfirm(null);
         }
 
-        // ── Saved athlete roster (team manager) ──────────────────────────────────
         function persistSavedAthletes(list) {
           setSavedAthletes(list);
           localStorage.setItem("tri-saved-athletes", JSON.stringify(list));
           if (currentUser) rtdb.ref("users/" + currentUser.uid + "/athletes").set(list).catch(console.error);
-        }
-        function addSavedAthlete() {
-          persistSavedAthletes([...savedAthletes, { id: Date.now(), name: "", gender: "Male", ageGroup: ageGroups[0] || "9-10", dob: "" }]);
-        }
-        function removeSavedAthlete(id) {
-          persistSavedAthletes(savedAthletes.filter(a => a.id !== id));
-        }
-        function updateSavedAthlete(id, field, value) {
-          persistSavedAthletes(savedAthletes.map(a => {
-            if (a.id !== id) return a;
-            const updated = { ...a, [field]: value };
-            if (field === "firstName") updated.name = `${value} ${a.lastName || ""}`.trim();
-            if (field === "lastName") updated.name = `${a.firstName || ""} ${value}`.trim();
-            if (field === "dob" && value) {
-              const age = calcAge(value);
-              if (age !== null) {
-                const match = ageGroups.find(g => { const r = parseAgeRange(g); return r && age >= r.min && age <= r.max; });
-                if (match) updated.ageGroup = match;
-              }
-            }
-            return updated;
-          }));
         }
         function saveAthleteEdit(oldName, newData) {
           const oldKey = oldName.trim().toLowerCase();
@@ -574,12 +551,6 @@
           ));
           setEditingAthleteKey(null);
           setEditingAthleteData(null);
-        }
-        function loadRosterToRace() {
-          if (savedAthletes.length === 0) return;
-          setAthletes(savedAthletes.map((a, i) => ({ ...freshAthlete(a.name, i + 1), gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: courses[0]?.id || null })));
-          resetClock();
-          setView("setup");
         }
         const csvInputRef = useRef(null);
         const logoInputRef = useRef(null);
@@ -1144,7 +1115,6 @@
         const isSpectator = userProfile?.role === "spectator";
         if (isSpectator) {
           const liveSegs = liveRace ? (liveRace.segments || SEGMENTS) : SEGMENTS;
-          const liveSegColors = ["#00aeef", "#48cae4", "#ffd166", "#48cae4", "#f4742b"];
 
           // Build ranked list: finished (by chip time asc) → in-progress (by elapsed desc) → not started
           const rankedAthletes = liveRace ? (() => {
@@ -1273,7 +1243,7 @@
                                   </div>
                                 ) : ath.started ? (
                                   <div>
-                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: curSeg !== null ? liveSegColors[curSeg % liveSegColors.length] : "#00aeef", background: curSeg !== null ? `${liveSegColors[curSeg % liveSegColors.length]}18` : "transparent", borderRadius: 3, padding: "1px 6px", display: "inline-block", marginBottom: 2 }}>
+                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: curSeg !== null ? segColors[curSeg % segColors.length] : "#00aeef", background: curSeg !== null ? `${segColors[curSeg % segColors.length]}18` : "transparent", borderRadius: 3, padding: "1px 6px", display: "inline-block", marginBottom: 2 }}>
                                       {curSeg !== null ? liveSegs[curSeg] : "RACING"}
                                     </div>
                                     <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, color: "#00aeef", letterSpacing: 2, lineHeight: 1 }}>{formatElapsed(ath.chipMs)}</div>
@@ -1290,7 +1260,7 @@
                                 {liveSegs.map((seg, si) => {
                                   const done = splitDurs[si] !== null && splitDurs[si] !== undefined;
                                   const isCurrent = curSeg === si;
-                                  const col = liveSegColors[si % liveSegColors.length];
+                                  const col = segColors[si % segColors.length];
                                   const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
                                   const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (spectatorClockMs || liveRace.clockMs || 0) - prevMs : null;
                                   return (
@@ -1627,7 +1597,6 @@
                         localStorage.setItem("tri-user-profile", JSON.stringify(updated));
                         setProfileSaved(true);
                         setTimeout(() => setProfileSaved(false), 2500);
-                        // Attempt Firestore in background
                         rtdb.ref("users/" + currentUser.uid + "/profile").set(updated)
                           .catch(e => { console.error("RTDB profile save:", e); setProfileError("Saved locally — cloud sync failed."); });
                         setProfileSaving(false);
@@ -1672,7 +1641,6 @@
               {/* ── WATCH A RACE ── */}
               {view === "watch" && (() => {
                 const watchSegs = liveRace ? (liveRace.segments || SEGMENTS) : SEGMENTS;
-                const watchSegColors = ["#00aeef", "#48cae4", "#ffd166", "#48cae4", "#f4742b"];
                 const rankedWatchAthletes = liveRace ? (() => {
                   const clock = spectatorClockMs || liveRace.clockMs || 0;
                   return (liveRace.athletes || []).map(ath => {
@@ -1766,7 +1734,7 @@
                                       </div>
                                     ) : ath.started ? (
                                       <div>
-                                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: curSeg !== null ? watchSegColors[curSeg % watchSegColors.length] : "#00aeef", background: curSeg !== null ? `${watchSegColors[curSeg % watchSegColors.length]}18` : "transparent", borderRadius: 3, padding: "1px 6px", display: "inline-block", marginBottom: 2 }}>
+                                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: curSeg !== null ? segColors[curSeg % segColors.length] : "#00aeef", background: curSeg !== null ? `${segColors[curSeg % segColors.length]}18` : "transparent", borderRadius: 3, padding: "1px 6px", display: "inline-block", marginBottom: 2 }}>
                                           {curSeg !== null ? watchSegs[curSeg] : "RACING"}
                                         </div>
                                         <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, color: "#00aeef", letterSpacing: 2, lineHeight: 1 }}>{formatElapsed(ath.chipMs)}</div>
@@ -1781,7 +1749,7 @@
                                     {watchSegs.map((seg, si) => {
                                       const done = splitDurs[si] !== null && splitDurs[si] !== undefined;
                                       const isCurrent = curSeg === si;
-                                      const col = watchSegColors[si % watchSegColors.length];
+                                      const col = segColors[si % segColors.length];
                                       const prevMs = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
                                       const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (spectatorClockMs || liveRace.clockMs || 0) - prevMs : null;
                                       return (
