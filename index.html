@@ -1334,22 +1334,20 @@
               </button>
             </div>
 
-            {/* NAV — only during race flow */}
-            {["setup", "race", "results"].includes(view) && (
-              <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240" }}>
-                {["setup", "race", "results"].map(v => (
-                  <button key={v} onClick={() => setView(v)} style={{
-                    flex: 1, padding: "12px 0", background: "none", border: "none",
-                    borderBottom: view === v ? "3px solid #00aeef" : "3px solid transparent",
-                    color: view === v ? "#00aeef" : "#5a86a8",
-                    fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: 3,
-                    textTransform: "uppercase", cursor: "pointer",
-                  }}>
-                    {v === "setup" ? "Setup" : v === "race" ? "Race" : "Results"}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* NAV — always visible */}
+            <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240" }}>
+              {[["home","Home"],["setup","Setup"],["race","Race"],["results","Results"]].map(([v, label]) => (
+                <button key={v} onClick={() => setView(v)} style={{
+                  flex: 1, padding: "11px 0", background: "none", border: "none",
+                  borderBottom: view === v ? "3px solid #00aeef" : "3px solid transparent",
+                  color: view === v ? "#00aeef" : "#5a86a8",
+                  fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: 2,
+                  textTransform: "uppercase", cursor: "pointer",
+                }}>
+                  {label}
+                </button>
+              ))}
+            </div>
 
             <div style={{ maxWidth: 640, margin: "0 auto", padding: "16px 16px 60px" }}>
 
