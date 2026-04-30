@@ -852,6 +852,7 @@
                 <img src="${certConfig.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" />
                 <div class="top-rule"></div>
                 <div class="event">${certConfig.eventName}</div>
+                ${certConfig.orgName ? `<div class="org">${certConfig.orgName}</div>` : ""}
                 <div class="medal-emoji">${medal}</div>
                 <div class="place" style="color:${pColor}">${placeSuffix(place+1)} Place Overall</div>
                 <div class="name">${ath.name}</div>
@@ -878,13 +879,13 @@
             <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet">
             <style>
               *{box-sizing:border-box;margin:0;padding:0;}
-              @page{size:landscape;margin:.35in;}
+              @page{size:landscape;margin:0;}
               body{background:#fff;font-family:'DM Sans',Arial,sans-serif;}
               .cert{
-                width:100%;height:calc(100vh - .7in);
+                width:100vw;height:100vh;
                 page-break-after:always;break-after:page;
                 display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
-                border:5px solid #00aeef;border-radius:14px;
+                border:5px solid #00aeef;border-radius:0;
                 background:linear-gradient(150deg,#f0f8ff 0%,#ffffff 55%,#e8f4fb 100%);
                 padding:28px 50px;position:relative;overflow:hidden;
               }
@@ -893,6 +894,7 @@
               .logo{height:52px;object-fit:contain;margin-bottom:2px;}
               .top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00aeef,transparent);}
               .event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;text-align:center;}
+              .org{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#00aeef;text-align:center;margin-top:-4px;}
               .medal-emoji{font-size:48px;line-height:1;}
               .place{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:4px;}
               .ag-place{font-size:12px;letter-spacing:2px;color:#0d3a6e;font-weight:700;text-align:center;}
