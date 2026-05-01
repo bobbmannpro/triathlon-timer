@@ -258,6 +258,11 @@
         const [liveRaceCode, setLiveRaceCode] = useState(null);
         const [livePublishError, setLivePublishError] = useState("");
         const [livePublishing, setLivePublishing] = useState(false);
+        const [syncMode, setSyncMode] = useState(false);
+        const [joinCode, setJoinCode] = useState("");
+        const [joinError, setJoinError] = useState("");
+        const [joinLoading, setJoinLoading] = useState(false);
+        const syncModeRef = useRef(false);
         const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", birthday: "", gender: "", role: "participant" });
         const [profileSaving, setProfileSaving] = useState(false);
         const [profileSaved, setProfileSaved] = useState(false);
@@ -304,7 +309,7 @@
         }, [clockRunning]);
 
         useEffect(() => {
-          if (liveRaceCode && athletes.some(a => a.started)) updateLiveRace(liveRaceCode);
+          if (liveRaceCode && athletes.some(a => a.started) && !syncModeRef.current) updateLiveRace(liveRaceCode);
         }, [athletes, clockMs]);
 
         // Auto-archive whenever an athlete finishes
@@ -451,6 +456,60 @@
           ref.on("value", fn, () => { setLiveRaceLoading(false); setLiveRaceError("Could not connect. Check the code and try again."); });
           liveRaceUnsubRef.current = { ref, fn };
         }
+        function rebuildAthletesFromRTDB(data) {
+          const segCount = (data.segments || SEGMENTS).length;
+          return (data.athletes || []).map((ath, i) => ({
+            id: ath.id || i + 1,
+            name: ath.name || `Athlete ${i + 1}`,
+            firstName: ath.firstName || "",
+            lastName: ath.lastName || "",
+            gender: ath.gender || "Male",
+            ageGroup: ath.ageGroup || "",
+            dob: ath.dob || "",
+            courseId: ath.courseId || null,
+            startOffset: ath.startOffset ?? null,
+            splits: Array.from({ length: segCount }, (_, si) =>
+              (ath.splits && ath.splits[si] !== undefined && ath.splits[si] !== null) ? ath.splits[si] : null
+            ),
+            started: ath.started || false,
+            finished: ath.finished || false,
+          }));
+        }
+
+        async function joinRaceAsCoTimer() {
+          const code = joinCode.trim().toUpperCase();
+          if (!code) return;
+          setJoinError(""); setJoinLoading(true);
+          try {
+            const snap = await rtdb.ref("liveRaces/" + code).once("value");
+            if (!snap.exists()) { setJoinError("No active race found with that code."); setJoinLoading(false); return; }
+            const data = snap.val();
+            setAthletes(rebuildAthletesFromRTDB(data));
+            const elapsed = Math.min(Date.now() - (data.updatedAt || Date.now()), 10000);
+            const restoredMs = (data.clockMs || 0) + Math.max(0, elapsed);
+            offsetRef.current = restoredMs;
+            setClockMs(restoredMs);
+            setClockStarted(true);
+            setClockRunning(true);
+            setLiveRaceCode(code);
+            syncModeRef.current = true;
+            setSyncMode(true);
+            archiveSessionRef.current = `session_${code}`;
+            // Set up live RTDB listener to drive local state
+            if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); }
+            const ref = rtdb.ref("liveRaces/" + code);
+            const fn = snap => {
+              if (!snap.exists() || !syncModeRef.current) return;
+              const d = snap.val();
+              setAthletes(rebuildAthletesFromRTDB(d));
+            };
+            ref.on("value", fn);
+            liveRaceUnsubRef.current = { ref, fn };
+            setView("race");
+          } catch(e) { setJoinError("Could not connect. Check the code and try again."); }
+          setJoinLoading(false);
+        }
+
         function friendlyAuthError(code) {
           const map = { "auth/invalid-email": "Invalid email address.", "auth/user-not-found": "No account with that email.", "auth/wrong-password": "Incorrect password.", "auth/email-already-in-use": "An account with that email already exists.", "auth/weak-password": "Password must be at least 6 characters.", "auth/invalid-credential": "Incorrect email or password." };
           return map[code] || "Something went wrong. Please try again.";
@@ -509,6 +568,8 @@
 
         function resetTimers() {
           archiveSessionRef.current = null;
+          syncModeRef.current = false;
+          setSyncMode(false);
           setAthletes(a => a.map(ath => ({ ...freshAthlete(ath.name, ath.id), gender: ath.gender || "Male", ageGroup: ath.ageGroup || ageGroups[0] || "9-10", dob: ath.dob || "", courseId: ath.courseId || courses[0]?.id || null })));
           resetClock();
           setResetConfirm(false);
@@ -821,6 +882,9 @@
         }
 
         function sendOff(athleteIdx) {
+          if (syncModeRef.current && liveRaceCode) {
+            rtdb.ref(`liveRaces/${liveRaceCode}/athletes/${athleteIdx}`).update({ startOffset: clockMs, started: true }).catch(console.error);
+          }
           setAthletes(a => a.map((ath, i) => i === athleteIdx ? { ...ath, startOffset: clockMs, started: true } : ath));
         }
 
@@ -832,10 +896,21 @@
             setClockRunning(true);
             setClockStarted(true);
           }
+          if (syncModeRef.current && liveRaceCode) {
+            const updates = {};
+            athletes.forEach((ath, i) => { if (!ath.started) { updates[`athletes/${i}/startOffset`] = offset; updates[`athletes/${i}/started`] = true; } });
+            rtdb.ref(`liveRaces/${liveRaceCode}`).update(updates).catch(console.error);
+          }
           setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: offset, started: true }));
         }
 
         function logSplit(athleteIdx, segIndex) {
+          if (syncModeRef.current && liveRaceCode) {
+            const updates = {};
+            updates[`athletes/${athleteIdx}/splits/${segIndex}`] = clockMs;
+            if (segIndex === SEGMENTS.length - 1) updates[`athletes/${athleteIdx}/finished`] = true;
+            rtdb.ref(`liveRaces/${liveRaceCode}`).update(updates).catch(console.error);
+          }
           setAthletes(a => a.map((ath, i) => {
             if (i !== athleteIdx) return ath;
             const newSplits = [...ath.splits];
@@ -2407,7 +2482,7 @@
               {/* ── RACE ── */}
               {view === "race" && (
                 <div>
-                  {!clockStarted && (
+                  {!clockStarted && !syncMode && (
                     <div style={{ background: "linear-gradient(135deg,#0a3358,#0d3a6e)", border: `2px solid ${raceMode === "simultaneous" ? "#ffd166" : "#00aeef"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
                       <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#e8f4fb", marginBottom: 4 }}>Ready to Race?</div>
                       {raceMode === "simultaneous" && (
@@ -2416,6 +2491,19 @@
                       <button onClick={startClock} style={{ ...btnStyle(raceMode === "simultaneous" ? "#ffd166" : "#00aeef"), fontSize: 18, padding: "14px 40px", letterSpacing: 3, fontFamily: "'Bebas Neue'" }}>
                         &#9654; START RACE
                       </button>
+                      <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                        <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 8, letterSpacing: 1 }}>OR — load a race already in progress on another device</div>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                          <input value={joinCode} onChange={e => { setJoinCode(e.target.value.toUpperCase()); setJoinError(""); }}
+                            onKeyDown={e => e.key === "Enter" && joinRaceAsCoTimer()}
+                            placeholder="Race code" maxLength={8}
+                            style={{ width: 120, background: "#071829", border: "1px solid rgba(0,174,239,0.4)", borderRadius: 4, padding: "8px 12px", color: "#e8f4fb", fontSize: 14, fontFamily: "'Bebas Neue'", letterSpacing: 3, outline: "none", textAlign: "center" }} />
+                          <button onClick={joinRaceAsCoTimer} disabled={joinLoading || !joinCode.trim()} style={{ ...btnStyle("#4ade80"), padding: "8px 18px", fontSize: 13, opacity: joinLoading || !joinCode.trim() ? 0.5 : 1 }}>
+                            {joinLoading ? "Joining…" : "Join Race"}
+                          </button>
+                        </div>
+                        {joinError && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6 }}>{joinError}</div>}
+                      </div>
                     </div>
                   )}
 
@@ -2444,11 +2532,15 @@
                           {livePublishError && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6, maxWidth: 280, lineHeight: 1.4 }}>{livePublishError}</div>}
                         </div>
                       ) : (
-                        <div style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 6, padding: "6px 12px" }}>
-                          <span style={{ fontSize: 11, color: "#5a86a8", letterSpacing: 1 }}>LIVE</span>
-                          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#ffd166", letterSpacing: 4 }}>{liveRaceCode}</span>
-                          <span style={{ fontSize: 10, color: "#5a86a8" }}>share with spectators</span>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
+                        <div style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: syncMode ? "rgba(74,222,128,0.08)" : "rgba(255,209,102,0.08)", border: `1px solid ${syncMode ? "rgba(74,222,128,0.4)" : "rgba(255,209,102,0.3)"}`, borderRadius: 6, padding: "6px 12px" }}>
+                          {syncMode ? (
+                            <span style={{ fontSize: 10, color: "#4ade80", letterSpacing: 2, fontWeight: 700 }}>⚡ SYNCED</span>
+                          ) : (
+                            <span style={{ fontSize: 11, color: "#5a86a8", letterSpacing: 1 }}>LIVE</span>
+                          )}
+                          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: syncMode ? "#4ade80" : "#ffd166", letterSpacing: 4 }}>{liveRaceCode}</span>
+                          <span style={{ fontSize: 10, color: "#5a86a8" }}>{syncMode ? "multi-device active" : "share with spectators"}</span>
+                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); syncModeRef.current = false; setSyncMode(false); if (!syncMode) rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
                             style={{ background: "none", border: "none", color: "#3a6080", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>&times;</button>
                         </div>
                       )}
