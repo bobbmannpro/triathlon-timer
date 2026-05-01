@@ -277,6 +277,14 @@
           try { return JSON.parse(localStorage.getItem("tri-saved-athletes") || "[]"); } catch { return []; }
         });
 
+        // Archive — auto-saved results, persisted to localStorage + RTDB
+        const [savedArchive, setSavedArchive] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("tri-archive") || "[]"); } catch { return []; }
+        });
+        const [archiveOpenId, setArchiveOpenId] = useState(null);
+        const [archiveOpenAthId, setArchiveOpenAthId] = useState(null);
+        const archiveSessionRef = useRef(null);
+
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
         const offsetRef    = useRef(0);
@@ -297,6 +305,11 @@
         useEffect(() => {
           if (liveRaceCode && athletes.some(a => a.started)) updateLiveRace(liveRaceCode);
         }, [athletes, clockMs]);
+
+        // Auto-archive whenever an athlete finishes
+        useEffect(() => {
+          if (athletes.some(a => a.finished)) autoArchiveRace();
+        }, [athletes]);
 
         // Firebase auth listener — loads RTDB data on login
         useEffect(() => {
@@ -328,6 +341,13 @@
                   setSavedAthletes(data.athletes); localStorage.setItem("tri-saved-athletes", JSON.stringify(data.athletes));
                 } else {
                   try { const c = localStorage.getItem("tri-saved-athletes"); if (c) { const a = JSON.parse(c); if (a.length > 0) { setSavedAthletes(a); rtdb.ref("users/" + user.uid + "/athletes").set(a).catch(console.error); } } } catch(_) {}
+                }
+
+                // Archive: RTDB → localStorage fallback
+                if (data.archive && data.archive.length > 0) {
+                  setSavedArchive(data.archive); localStorage.setItem("tri-archive", JSON.stringify(data.archive));
+                } else {
+                  try { const c = localStorage.getItem("tri-archive"); if (c) { const a = JSON.parse(c); if (a.length > 0) { setSavedArchive(a); rtdb.ref("users/" + user.uid + "/archive").set(a).catch(console.error); } } } catch(_) {}
                 }
               } catch(e) { console.error("RTDB load:", e); }
             }
@@ -435,7 +455,44 @@
           return map[code] || "Something went wrong. Please try again.";
         }
 
+        function autoArchiveRace() {
+          if (!athletes.some(a => a.finished)) return;
+          if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
+          const sessionId = archiveSessionRef.current;
+          const entry = {
+            id: sessionId,
+            name: certConfig.eventName || "Race",
+            date: new Date().toLocaleDateString(),
+            savedAt: Date.now(),
+            segments: SEGMENTS,
+            courses,
+            units,
+            athletes: athletes.map(a => ({
+              id: a.id,
+              name: athleteName(a) || a.name,
+              firstName: a.firstName || "",
+              lastName: a.lastName || "",
+              gender: a.gender,
+              ageGroup: a.ageGroup,
+              splits: [...a.splits],
+              startOffset: a.startOffset,
+              finished: a.finished,
+              finishMs: totalChipTime(a),
+            })),
+            finishedCount: athletes.filter(a => a.finished).length,
+            totalCount: athletes.length,
+          };
+          setSavedArchive(prev => {
+            const idx = prev.findIndex(r => r.id === sessionId);
+            const updated = idx >= 0 ? prev.map((r, i) => i === idx ? entry : r) : [...prev, entry];
+            localStorage.setItem("tri-archive", JSON.stringify(updated));
+            if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
+            return updated;
+          });
+        }
+
         function startClock() {
+          if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
           offsetRef.current = 0;
           setClockMs(0);
           setClockRunning(true);
@@ -449,6 +506,7 @@
         function resetClock()  { setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0); }
 
         function resetTimers() {
+          archiveSessionRef.current = null;
           setAthletes(a => a.map(ath => ({ ...freshAthlete(ath.name, ath.id), gender: ath.gender || "Male", ageGroup: ath.ageGroup || ageGroups[0] || "9-10", dob: ath.dob || "", courseId: ath.courseId || courses[0]?.id || null })));
           resetClock();
           setResetConfirm(false);
@@ -1460,6 +1518,18 @@
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#4ade80" }}>&#8594;</div>
                     </button>
 
+                    {/* Archive */}
+                    <button onClick={() => setView("archive")} style={{ background: "linear-gradient(135deg,#0c2240,#1a0a2e)", border: "2px solid #f4742b", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                      <div style={{ fontSize: 40, lineHeight: 1 }}>📁</div>
+                      <div>
+                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#f4742b" }}>Archive</div>
+                        <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>
+                          {savedArchive.length === 0 ? "No races archived yet" : `${savedArchive.length} race${savedArchive.length !== 1 ? "s" : ""} saved`}
+                        </div>
+                      </div>
+                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#f4742b" }}>&#8594;</div>
+                    </button>
+
                     {/* Watch a Race */}
                     <button onClick={() => setView("watch")} style={{ background: "linear-gradient(135deg,#0c2240,#1a1a3a)", border: "2px solid #a78bfa", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>👀</div>
@@ -1471,6 +1541,96 @@
                     </button>
 
                   </div>
+                </div>
+              )}
+
+              {/* ── ARCHIVE ── */}
+              {view === "archive" && (
+                <div style={{ paddingTop: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#f4742b", marginBottom: 16 }}>
+                    📁 Archive &nbsp;—&nbsp; <span style={{ color: "#5a86a8", fontWeight: 400, fontSize: 10 }}>Auto-saved as athletes finish</span>
+                  </div>
+
+                  {savedArchive.length === 0 ? (
+                    <div style={{ background: "#0a1e36", border: "1px solid rgba(244,116,43,0.2)", borderRadius: 8, padding: "28px 20px", textAlign: "center", color: "#3a6080", fontSize: 13 }}>
+                      No races archived yet. Results save automatically as each athlete finishes.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {[...savedArchive].reverse().map(race => {
+                        const isOpen = archiveOpenId === race.id;
+                        const finishers = (race.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
+                        const dnf = (race.athletes || []).filter(a => !a.finished);
+                        return (
+                          <div key={race.id} style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,116,43,0.25)", overflow: "hidden" }}>
+                            <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)}
+                              style={{ width: "100%", background: "none", border: "none", padding: "14px 16px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb" }}>{race.name}</div>
+                                <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 2 }}>
+                                  {race.date} &nbsp;·&nbsp; {race.finishedCount}/{race.totalCount} finished
+                                </div>
+                              </div>
+                              <div style={{ color: "#f4742b", fontSize: 18 }}>{isOpen ? "▲" : "▼"}</div>
+                            </button>
+
+                            {isOpen && (
+                              <div style={{ borderTop: "1px solid rgba(244,116,43,0.15)", padding: "10px 12px" }}>
+                                {finishers.length === 0 && <div style={{ color: "#3a6080", fontSize: 12, textAlign: "center", padding: "8px 0" }}>No finishers recorded.</div>}
+                                {finishers.map((ath, rank) => {
+                                  const athKey = `${race.id}_${ath.id}`;
+                                  const isAthOpen = archiveOpenAthId === athKey;
+                                  const segs = race.segments || SEGMENTS;
+                                  return (
+                                    <div key={ath.id} style={{ marginBottom: 6 }}>
+                                      <button onClick={() => setArchiveOpenAthId(isAthOpen ? null : athKey)}
+                                        style={{ width: "100%", background: isAthOpen ? "rgba(244,116,43,0.06)" : "#071829", border: `1px solid ${isAthOpen ? "rgba(244,116,43,0.35)" : "rgba(255,255,255,0.06)"}`, borderRadius: 7, padding: "10px 12px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 22, color: rank === 0 ? "#ffd166" : rank === 1 ? "#a0aec0" : rank === 2 ? "#c47e2f" : "#3a6080", minWidth: 28, textAlign: "center" }}>{rank + 1}</div>
+                                        <div style={{ flex: 1 }}>
+                                          <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</div>
+                                          <div style={{ fontSize: 11, color: "#5a86a8" }}>{ath.ageGroup}{ath.ageGroup && ath.gender ? " · " : ""}{ath.gender}</div>
+                                        </div>
+                                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 22, color: "#4ade80", letterSpacing: 1 }}>{formatElapsed(ath.finishMs)}</div>
+                                      </button>
+
+                                      {isAthOpen && (
+                                        <div style={{ background: "#071829", borderRadius: "0 0 7px 7px", padding: "10px 14px", marginTop: -1, border: "1px solid rgba(244,116,43,0.15)", borderTop: "none" }}>
+                                          {segs.map((seg, si) => {
+                                            const prev = si === 0 ? ath.startOffset : (ath.splits || [])[si - 1];
+                                            const cur = (ath.splits || [])[si];
+                                            const dur = (cur !== null && cur !== undefined && prev !== null && prev !== undefined) ? cur - prev : null;
+                                            return (
+                                              <div key={si} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: si < segs.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                                                <div style={{ fontSize: 12, color: "#5a86a8", letterSpacing: 1 }}>{seg}</div>
+                                                <div style={{ fontSize: 13, fontWeight: 700, color: dur !== null ? "#e8f4fb" : "#3a6080", fontFamily: "'Bebas Neue',sans-serif", letterSpacing: 1 }}>{dur !== null ? formatTime(dur) : "—"}</div>
+                                              </div>
+                                            );
+                                          })}
+                                          <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 2px 0", marginTop: 4, borderTop: "1px solid rgba(244,116,43,0.2)" }}>
+                                            <div style={{ fontSize: 12, fontWeight: 700, color: "#f4742b", letterSpacing: 1 }}>TOTAL</div>
+                                            <div style={{ fontSize: 14, fontWeight: 700, color: "#4ade80", fontFamily: "'Bebas Neue',sans-serif", letterSpacing: 1 }}>{formatElapsed(ath.finishMs)}</div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+
+                                {dnf.length > 0 && (
+                                  <div style={{ marginTop: 8, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6 }}>
+                                    <div style={{ fontSize: 10, color: "#3a6080", letterSpacing: 2, marginBottom: 4 }}>DID NOT FINISH</div>
+                                    {dnf.map(ath => (
+                                      <div key={ath.id} style={{ fontSize: 12, color: "#3a6080", padding: "3px 0" }}>{ath.name}</div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
