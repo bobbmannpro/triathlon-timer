@@ -2008,6 +2008,70 @@
                     </div>
                   </div>
 
+                  {(() => {
+                    const myName = `${editProfile.firstName} ${editProfile.lastName}`.trim().toLowerCase();
+                    const myRaces = myName ? savedArchive.filter(race =>
+                      (race.athletes || []).some(a => (athleteName(a) || a.name || "").trim().toLowerCase() === myName)
+                    ).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)) : [];
+                    if (myRaces.length === 0) return null;
+                    return (
+                      <div style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 10, padding: "18px 16px", marginBottom: 14 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>Race History</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {myRaces.map(race => {
+                            const segs = race.segments || SEGMENTS;
+                            const myAth = (race.athletes || []).find(a => (athleteName(a) || a.name || "").trim().toLowerCase() === myName);
+                            if (!myAth) return null;
+                            const place = (race.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity)).findIndex(a => (athleteName(a) || a.name || "").trim().toLowerCase() === myName);
+                            const agp = archiveAgPlace(race.athletes, myAth);
+                            const medals = ["🥇","🥈","🥉"];
+                            return (
+                              <div key={race.id} style={{ background: "#071829", borderRadius: 8, padding: "12px 14px", border: "1px solid rgba(0,174,239,0.12)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                                  <div>
+                                    <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{race.name || "Race"}</div>
+                                    <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 2 }}>{race.date}</div>
+                                  </div>
+                                  <div style={{ textAlign: "right" }}>
+                                    {myAth.finished ? (
+                                      <>
+                                        <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, color: "#4ade80", letterSpacing: 2 }}>{myAth.finishMs != null ? formatElapsed(myAth.finishMs) : "--"}</div>
+                                        {place >= 0 && (
+                                          <div style={{ fontSize: 11, color: place < 3 ? ["#d4a017","#8a9ba8","#b87333"][place] : "#5a86a8" }}>
+                                            {place < 3 ? medals[place] + " " : ""}{placeSuffix(place + 1)} Overall
+                                          </div>
+                                        )}
+                                        {agp !== null && <div style={{ fontSize: 10, color: "#5a86a8" }}>{placeSuffix(agp)} {myAth.gender} {myAth.ageGroup}</div>}
+                                      </>
+                                    ) : (
+                                      <div style={{ fontSize: 11, color: "#f87171" }}>DNF</div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                  {segs.map((seg, si) => {
+                                    const dur = archiveSegDur(myAth, si);
+                                    return dur !== null ? (
+                                      <div key={si} style={{ background: "rgba(0,174,239,0.08)", border: "1px solid rgba(0,174,239,0.18)", borderRadius: 4, padding: "3px 8px", textAlign: "center" }}>
+                                        <div style={{ fontSize: 9, color: "#5a86a8", letterSpacing: 1, textTransform: "uppercase" }}>{seg}</div>
+                                        <div style={{ fontSize: 12, color: "#e8f4fb", fontWeight: 700 }}>{formatElapsed(dur)}</div>
+                                      </div>
+                                    ) : null;
+                                  })}
+                                </div>
+                                {myAth.finished && (
+                                  <button onClick={() => printArchivedCert(race, myAth)} style={{ marginTop: 10, background: "none", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "5px 12px", fontSize: 11, color: "#00aeef", cursor: "pointer" }}>
+                                    🏆 Certificate
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   <div style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 10, padding: "18px 16px", marginBottom: 14 }}>
                     <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>Change Password</div>
                     <div style={{ display: "flex", gap: 8 }}>
