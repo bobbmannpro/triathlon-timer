@@ -263,6 +263,7 @@
         const [joinError, setJoinError] = useState("");
         const [joinLoading, setJoinLoading] = useState(false);
         const syncModeRef = useRef(false);
+        const hostListenerRef = useRef(null);
         const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", birthday: "", gender: "", role: "participant" });
         const [profileSaving, setProfileSaving] = useState(false);
         const [profileSaved, setProfileSaved] = useState(false);
@@ -311,6 +312,42 @@
         useEffect(() => {
           if (liveRaceCode && athletes.some(a => a.started) && !syncModeRef.current) updateLiveRace(liveRaceCode);
         }, [athletes, clockMs]);
+
+        // Primary device: listen for splits logged by secondary devices and merge them in
+        useEffect(() => {
+          if (!liveRaceCode || syncModeRef.current) {
+            if (hostListenerRef.current) { hostListenerRef.current.ref.off("value", hostListenerRef.current.fn); hostListenerRef.current = null; }
+            return;
+          }
+          const ref = rtdb.ref(`liveRaces/${liveRaceCode}/athletes`);
+          const fn = snap => {
+            if (!snap.exists()) return;
+            const incoming = snap.val();
+            setAthletes(prev => {
+              let changed = false;
+              const merged = prev.map((local, i) => {
+                const inc = incoming[i];
+                if (!inc) return local;
+                const incSplits = Array.from({ length: local.splits.length }, (_, si) =>
+                  inc.splits && inc.splits[si] != null ? inc.splits[si] : null
+                );
+                const mergedSplits = local.splits.map((s, si) => s !== null ? s : incSplits[si]);
+                const startOffset = local.startOffset !== null ? local.startOffset : (inc.startOffset ?? null);
+                const started = local.started || !!inc.started;
+                const finished = local.finished || !!inc.finished;
+                if (mergedSplits.every((s, si) => s === local.splits[si]) &&
+                    startOffset === local.startOffset && started === local.started && finished === local.finished)
+                  return local;
+                changed = true;
+                return { ...local, splits: mergedSplits, startOffset, started, finished };
+              });
+              return changed ? merged : prev;
+            });
+          };
+          ref.on("value", fn);
+          hostListenerRef.current = { ref, fn };
+          return () => { ref.off("value", fn); hostListenerRef.current = null; };
+        }, [liveRaceCode]);
 
         // Auto-archive whenever an athlete finishes
         useEffect(() => {
@@ -500,8 +537,27 @@
             const ref = rtdb.ref("liveRaces/" + code);
             const fn = snap => {
               if (!snap.exists() || !syncModeRef.current) return;
-              const d = snap.val();
-              setAthletes(rebuildAthletesFromRTDB(d));
+              const incoming = snap.val().athletes || [];
+              setAthletes(prev => {
+                let changed = false;
+                const merged = prev.map((local, i) => {
+                  const inc = incoming[i];
+                  if (!inc) return local;
+                  const incSplits = Array.from({ length: local.splits.length }, (_, si) =>
+                    inc.splits && inc.splits[si] != null ? inc.splits[si] : null
+                  );
+                  const mergedSplits = local.splits.map((s, si) => s !== null ? s : incSplits[si]);
+                  const startOffset = local.startOffset !== null ? local.startOffset : (inc.startOffset ?? null);
+                  const started = local.started || !!inc.started;
+                  const finished = local.finished || !!inc.finished;
+                  if (mergedSplits.every((s, si) => s === local.splits[si]) &&
+                      startOffset === local.startOffset && started === local.started && finished === local.finished)
+                    return local;
+                  changed = true;
+                  return { ...local, splits: mergedSplits, startOffset, started, finished };
+                });
+                return changed ? merged : prev;
+              });
             };
             ref.on("value", fn);
             liveRaceUnsubRef.current = { ref, fn };
@@ -570,6 +626,7 @@
           archiveSessionRef.current = null;
           syncModeRef.current = false;
           setSyncMode(false);
+          if (hostListenerRef.current) { hostListenerRef.current.ref.off("value", hostListenerRef.current.fn); hostListenerRef.current = null; }
           setAthletes(a => a.map(ath => ({ ...freshAthlete(ath.name, ath.id), gender: ath.gender || "Male", ageGroup: ath.ageGroup || ageGroups[0] || "9-10", dob: ath.dob || "", courseId: ath.courseId || courses[0]?.id || null })));
           resetClock();
           setResetConfirm(false);
@@ -1672,12 +1729,12 @@
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#f4742b" }}>&#8594;</div>
                     </button>
 
-                    {/* Watch a Race */}
+                    {/* Join Live */}
                     <button onClick={() => setView("watch")} style={{ background: "linear-gradient(135deg,#0c2240,#1a1a3a)", border: "2px solid #a78bfa", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                      <div style={{ fontSize: 40, lineHeight: 1 }}>👀</div>
+                      <div style={{ fontSize: 40, lineHeight: 1 }}>📡</div>
                       <div>
-                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#a78bfa" }}>Watch a Race</div>
-                        <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>Follow live with a race code</div>
+                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#a78bfa" }}>Join Live</div>
+                        <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>Watch or co-time a race in progress</div>
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#a78bfa" }}>&#8594;</div>
                     </button>
