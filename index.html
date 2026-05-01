@@ -253,6 +253,7 @@
         });
         const [saveRaceName, setSaveRaceName] = useState("");
         const [deleteConfirm, setDeleteConfirm] = useState(null);
+        const [archiveDeleteConfirm, setArchiveDeleteConfirm] = useState(null);
         const [raceMode, setRaceMode] = useState("separate");
         const [liveRaceCode, setLiveRaceCode] = useState(null);
         const [livePublishError, setLivePublishError] = useState("");
@@ -1561,7 +1562,7 @@
                     </button>
 
                     {/* Existing Race */}
-                    <button onClick={() => setHomeSection(homeSection === "races" ? null : "races")} style={{ background: "linear-gradient(135deg,#0c2240,#1a3a1a)", border: "2px solid #ffd166", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("races")} style={{ background: "linear-gradient(135deg,#0c2240,#1a3a1a)", border: "2px solid #ffd166", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📋</div>
                       <div>
                         <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#ffd166" }}>Existing Race</div>
@@ -1569,25 +1570,8 @@
                           {savedRaces.length === 0 ? "No saved races yet" : `${savedRaces.length} saved race${savedRaces.length > 1 ? "s" : ""}`}
                         </div>
                       </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#ffd166" }}>{homeSection === "races" ? "▲" : "▼"}</div>
+                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#ffd166" }}>&#8594;</div>
                     </button>
-
-                    {/* Saved races expanded */}
-                    {homeSection === "races" && (
-                      <div style={{ marginTop: -6, background: "#0a1e36", border: "1px solid rgba(255,209,102,0.25)", borderRadius: 8, padding: "12px", display: "flex", flexDirection: "column", gap: 8 }}>
-                        {savedRaces.length === 0 ? (
-                          <div style={{ fontSize: 12, color: "#3a6080", textAlign: "center", padding: "12px 0" }}>No saved races — go to Setup to save one.</div>
-                        ) : savedRaces.map(race => (
-                          <div key={race.id} style={{ background: "#0c2240", borderRadius: 6, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: 13, color: "#e8f4fb" }}>{race.name}</div>
-                              <div style={{ fontSize: 11, color: "#3a6080" }}>{race.athletes.length} athletes · {(race.courses || []).map(c => c.name).join("/") || ""} · {race.savedAt}</div>
-                            </div>
-                            <button onClick={() => { loadRace(race); setView("setup"); setHomeSection(null); }} style={{ ...btnStyle("#ffd166"), padding: "5px 14px", fontSize: 11 }}>Load</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
 
                     {/* Athletes */}
                     <button onClick={() => setView("athletes")} style={{ background: "linear-gradient(135deg,#0c2240,#0a2a1a)", border: "2px solid #4ade80", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
@@ -1601,13 +1585,13 @@
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#4ade80" }}>&#8594;</div>
                     </button>
 
-                    {/* Archive */}
+                    {/* Past Races */}
                     <button onClick={() => setView("archive")} style={{ background: "linear-gradient(135deg,#0c2240,#1a0a2e)", border: "2px solid #f4742b", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📁</div>
                       <div>
-                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#f4742b" }}>Archive</div>
+                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#f4742b" }}>Past Races</div>
                         <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>
-                          {savedArchive.length === 0 ? "No races archived yet" : `${savedArchive.length} race${savedArchive.length !== 1 ? "s" : ""} saved`}
+                          {savedArchive.length === 0 ? "No past races yet" : `${savedArchive.length} race${savedArchive.length !== 1 ? "s" : ""} saved`}
                         </div>
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#f4742b" }}>&#8594;</div>
@@ -1627,16 +1611,51 @@
                 </div>
               )}
 
-              {/* ── ARCHIVE ── */}
+              {/* ── EXISTING RACES ── */}
+              {view === "races" && (
+                <div style={{ paddingTop: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#ffd166", marginBottom: 16 }}>
+                    📋 Existing Races
+                  </div>
+                  {savedRaces.length === 0 ? (
+                    <div style={{ background: "#0a1e36", border: "1px solid rgba(255,209,102,0.2)", borderRadius: 8, padding: "28px 20px", textAlign: "center", color: "#3a6080", fontSize: 13 }}>
+                      No saved races yet — go to Setup to save one.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {savedRaces.map(race => (
+                        <div key={race.id} style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(255,209,102,0.2)", padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{race.name}</div>
+                            <div style={{ fontSize: 11, color: "#3a6080", marginTop: 2 }}>{race.athletes.length} athletes · {(race.courses || []).map(c => c.name).join("/") || ""} · {race.savedAt}</div>
+                          </div>
+                          <button onClick={() => { loadRace(race); setView("setup"); }} style={{ ...btnStyle("#ffd166"), padding: "5px 14px", fontSize: 11, flexShrink: 0 }}>Load</button>
+                          {deleteConfirm === race.id ? (
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                              <span style={{ fontSize: 11, color: "#f4742b" }}>Delete?</span>
+                              <button onClick={() => deleteRace(race.id)} style={{ ...btnStyle("#f4742b"), padding: "4px 10px", fontSize: 11 }}>Yes</button>
+                              <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle("#5a86a8", true), padding: "4px 10px", fontSize: 11 }}>No</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 18, cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>&times;</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── PAST RACES (archive) ── */}
               {view === "archive" && (
                 <div style={{ paddingTop: 8 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#f4742b", marginBottom: 16 }}>
-                    📁 Archive &nbsp;—&nbsp; <span style={{ color: "#5a86a8", fontWeight: 400, fontSize: 10 }}>Auto-saved as athletes finish</span>
+                    📁 Past Races &nbsp;—&nbsp; <span style={{ color: "#5a86a8", fontWeight: 400, fontSize: 10 }}>Auto-saved as athletes finish</span>
                   </div>
 
                   {savedArchive.length === 0 ? (
                     <div style={{ background: "#0a1e36", border: "1px solid rgba(244,116,43,0.2)", borderRadius: 8, padding: "28px 20px", textAlign: "center", color: "#3a6080", fontSize: 13 }}>
-                      No races archived yet. Results save automatically as each athlete finishes.
+                      No past races yet. Results save automatically as each athlete finishes.
                     </div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1646,9 +1665,9 @@
                         const dnf = (race.athletes || []).filter(a => !a.finished);
                         return (
                           <div key={race.id} style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,116,43,0.25)", overflow: "hidden" }}>
-                            <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", gap: 12 }}>
+                            <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", gap: 10, flexWrap: "wrap" }}>
                               <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)}
-                                style={{ flex: 1, background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer" }}>
+                                style={{ flex: 1, background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", minWidth: 0 }}>
                                 <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb" }}>{race.name}</div>
                                 <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 2 }}>
                                   {race.date} &nbsp;·&nbsp; {race.finishedCount}/{race.totalCount} finished
@@ -1656,7 +1675,16 @@
                               </button>
                               <button onClick={() => printArchivedResults(race)} style={{ ...btnStyle("#00aeef", true), padding: "5px 10px", fontSize: 11, flexShrink: 0 }}>📊 Results</button>
                               <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#ffd166", true), padding: "5px 10px", fontSize: 11, flexShrink: 0 }}>🏆 All Certs</button>
-                              <div style={{ color: "#f4742b", fontSize: 16, cursor: "pointer" }} onClick={() => setArchiveOpenId(isOpen ? null : race.id)}>{isOpen ? "▲" : "▼"}</div>
+                              <div style={{ color: "#f4742b", fontSize: 16, cursor: "pointer", flexShrink: 0 }} onClick={() => setArchiveOpenId(isOpen ? null : race.id)}>{isOpen ? "▲" : "▼"}</div>
+                              {archiveDeleteConfirm === race.id ? (
+                                <div style={{ display: "flex", gap: 6, alignItems: "center", width: "100%", paddingTop: 6, borderTop: "1px solid rgba(244,116,43,0.2)", marginTop: 4 }}>
+                                  <span style={{ fontSize: 12, color: "#f4742b", flex: 1 }}>Delete this race from Past Races?</span>
+                                  <button onClick={() => { setSavedArchive(prev => { const updated = prev.filter(r => r.id !== race.id); localStorage.setItem("tri-archive", JSON.stringify(updated)); if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error); return updated; }); setArchiveDeleteConfirm(null); if (archiveOpenId === race.id) setArchiveOpenId(null); }} style={{ ...btnStyle("#f4742b"), padding: "4px 12px", fontSize: 11 }}>Delete</button>
+                                  <button onClick={() => setArchiveDeleteConfirm(null)} style={{ ...btnStyle("#5a86a8", true), padding: "4px 12px", fontSize: 11 }}>Cancel</button>
+                                </div>
+                              ) : (
+                                <button onClick={() => setArchiveDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 18, cursor: "pointer", padding: "0 2px", flexShrink: 0 }}>&times;</button>
+                              )}
                             </div>
 
                             {isOpen && (
