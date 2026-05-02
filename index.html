@@ -162,6 +162,23 @@
         return ath.name || "";
       }
 
+      function parseSegTime(str) {
+        if (!str || !str.trim()) return null;
+        const clean = str.trim().replace(/[^0-9:.]/g, "");
+        const parts = clean.split(":");
+        if (parts.length === 2) {
+          const m = parseInt(parts[0], 10);
+          const s = parseFloat(parts[1]);
+          if (isNaN(m) || isNaN(s)) return null;
+          return (m * 60 + s) * 1000;
+        }
+        if (parts.length === 1) {
+          const s = parseFloat(parts[0]);
+          return isNaN(s) ? null : s * 1000;
+        }
+        return null;
+      }
+
       // ── Style helpers ────────────────────────────────────────────────────────
       function btnStyle(color, outline = false) {
         return {
@@ -291,6 +308,17 @@
         const [archiveOpenId, setArchiveOpenId] = useState(null);
         const [archiveOpenAthId, setArchiveOpenAthId] = useState(null);
         const archiveSessionRef = useRef(null);
+
+        // Manual Race Entry
+        const [manualRaceName, setManualRaceName] = useState("My Race");
+        const [manualRaceDate, setManualRaceDate] = useState(() => new Date().toISOString().slice(0, 10));
+        const [manualCertConfig, setManualCertConfig] = useState({ eventName: "Timeathon Race Event", orgName: "", accentColor: "#00aeef", customLogoB64: null });
+        const [manualCourse, setManualCourse] = useState({ id: 1, name: "Race", swimYards: 100, bikeMiles: 6, runMiles: 1.5 });
+        const [manualUnits, setManualUnits] = useState({ swim: "yards", bike: "miles", run: "miles" });
+        const [manualAthletes, setManualAthletes] = useState([]);
+        const [manualResults, setManualResults] = useState(null);
+        const [manualSearch, setManualSearch] = useState("");
+        const [manualSavedMsg, setManualSavedMsg] = useState("");
 
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
@@ -1297,6 +1325,32 @@
           win.document.close();
         }
 
+        function computeManualRace() {
+          const processedAthletes = manualAthletes.map(ma => {
+            const durMs = ma.segs.map(s => parseSegTime(s));
+            const allFilled = durMs.every(d => d !== null && d > 0);
+            let cum = 0;
+            const splits = durMs.map(d => { if (d == null || d <= 0) return null; cum += d; return cum; });
+            if (!allFilled) return { ...ma, startOffset: 0, splits, finishMs: null, finished: false };
+            const finishMs = splits[4];
+            return { ...ma, startOffset: 0, splits, finishMs, finished: true };
+          });
+          const finished = processedAthletes.filter(a => a.finished);
+          finished.sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
+          return {
+            id: "manual_" + Date.now(),
+            name: manualRaceName,
+            date: manualRaceDate,
+            certConfig: { ...manualCertConfig },
+            courses: [{ ...manualCourse }],
+            units: { ...manualUnits },
+            segments: SEGMENTS,
+            athletes: processedAthletes,
+            finishedCount: finished.length,
+            totalCount: processedAthletes.length,
+          };
+        }
+
         const allFinished  = athletes.length > 0 && athletes.every(a => a.finished);
         const anyStarted   = athletes.some(a => a.started);
         const anyUnstarted = athletes.some(a => !a.started);
@@ -1729,6 +1783,16 @@
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#f4742b" }}>&#8594;</div>
                     </button>
 
+                    {/* Manual Entry */}
+                    <button onClick={() => setView("manual")} style={{ background: "linear-gradient(135deg,#0c2240,#2a0a1a)", border: "2px solid #f472b6", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                      <div style={{ fontSize: 40, lineHeight: 1 }}>✏️</div>
+                      <div>
+                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#f472b6" }}>Manual Entry</div>
+                        <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>Enter times from a race that already happened</div>
+                      </div>
+                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#f472b6" }}>&#8594;</div>
+                    </button>
+
                     {/* Join Live */}
                     <button onClick={() => setView("watch")} style={{ background: "linear-gradient(135deg,#0c2240,#1a1a3a)", border: "2px solid #a78bfa", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📡</div>
@@ -1880,6 +1944,306 @@
                   )}
                 </div>
               )}
+
+              {/* ── MANUAL RACE ENTRY ── */}
+              {view === "manual" && (() => {
+                const inputStyle = { background: "#071829", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 6, padding: "8px 10px", color: "#e8f4fb", fontSize: 13, outline: "none", width: "100%" };
+                const segInputStyle = { background: "#071829", border: "1px solid rgba(244,114,182,0.2)", borderRadius: 4, padding: "5px 6px", color: "#e8f4fb", fontSize: 12, width: 70, textAlign: "center", outline: "none", fontFamily: "monospace" };
+                const labelStyle = { fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 4, display: "block" };
+
+                const searchLower = manualSearch.toLowerCase();
+                const allLibAthletes = (() => {
+                  const seen = new Set();
+                  const all = [];
+                  savedAthletes.forEach(a => { const n = athleteName(a).toLowerCase(); if (!seen.has(n)) { seen.add(n); all.push(a); } });
+                  return all;
+                })();
+                const searchResults = manualSearch.trim().length > 0
+                  ? allLibAthletes.filter(a => athleteName(a).toLowerCase().includes(searchLower))
+                  : allLibAthletes;
+                const addedIds = new Set(manualAthletes.filter(a => a.libId).map(a => a.libId));
+
+                function addFromLib(a) {
+                  setManualAthletes(prev => [...prev, {
+                    id: Date.now() + Math.random(),
+                    libId: a.id,
+                    name: athleteName(a),
+                    firstName: a.firstName || "",
+                    lastName: a.lastName || "",
+                    gender: a.gender || "Male",
+                    ageGroup: a.ageGroup || "9-10",
+                    courseId: 1,
+                    segs: ["", "", "", "", ""],
+                  }]);
+                  setManualResults(null);
+                }
+
+                function addBlank() {
+                  setManualAthletes(prev => [...prev, {
+                    id: Date.now() + Math.random(),
+                    libId: null,
+                    name: "",
+                    firstName: "",
+                    lastName: "",
+                    gender: "Male",
+                    ageGroup: "9-10",
+                    courseId: 1,
+                    segs: ["", "", "", "", ""],
+                  }]);
+                  setManualResults(null);
+                }
+
+                function updateAthlete(id, field, value) {
+                  setManualAthletes(prev => prev.map(a => a.id === id ? { ...a, [field]: value } : a));
+                  setManualResults(null);
+                }
+
+                function updateSeg(id, si, value) {
+                  setManualAthletes(prev => prev.map(a => a.id === id ? { ...a, segs: a.segs.map((s, i) => i === si ? value : s) } : a));
+                  setManualResults(null);
+                }
+
+                function removeAthlete(id) {
+                  setManualAthletes(prev => prev.filter(a => a.id !== id));
+                  setManualResults(null);
+                }
+
+                function handleCalculate() {
+                  const race = computeManualRace();
+                  setManualResults(race);
+                }
+
+                function handleSaveToArchive() {
+                  const race = manualResults || computeManualRace();
+                  const entry = { ...race, id: "manual_" + Date.now() };
+                  const updated = [...savedArchive, entry];
+                  setSavedArchive(updated);
+                  localStorage.setItem("tri-archive", JSON.stringify(updated));
+                  if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
+                  setManualSavedMsg("Saved to Past Races!");
+                  setTimeout(() => setManualSavedMsg(""), 3000);
+                }
+
+                const resultsRace = manualResults;
+                const finishers = resultsRace ? (resultsRace.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity)) : [];
+
+                return (
+                  <div style={{ paddingTop: 8, paddingBottom: 40 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#f472b6", marginBottom: 16 }}>
+                      ✏️ Manual Race Entry
+                    </div>
+
+                    {/* Race Info */}
+                    <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 12 }}>Race Info</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                        <div>
+                          <label style={labelStyle}>Race Name</label>
+                          <input style={inputStyle} value={manualRaceName} onChange={e => setManualRaceName(e.target.value)} placeholder="My Race" />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Date</label>
+                          <input style={inputStyle} type="date" value={manualRaceDate} onChange={e => setManualRaceDate(e.target.value)} />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Event Name (for cert)</label>
+                          <input style={inputStyle} value={manualCertConfig.eventName} onChange={e => setManualCertConfig(c => ({ ...c, eventName: e.target.value }))} placeholder="Timeathon Race Event" />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Org Name (for cert)</label>
+                          <input style={inputStyle} value={manualCertConfig.orgName} onChange={e => setManualCertConfig(c => ({ ...c, orgName: e.target.value }))} placeholder="Optional" />
+                        </div>
+                      </div>
+
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 10, marginTop: 4 }}>Course Distances</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                        <div>
+                          <label style={labelStyle}>Swim</label>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <input style={{ ...inputStyle, width: 70 }} type="number" min="0" value={manualCourse.swimYards} onChange={e => setManualCourse(c => ({ ...c, swimYards: +e.target.value }))} />
+                            <select style={{ ...inputStyle, width: "auto", padding: "8px 6px" }} value={manualUnits.swim} onChange={e => setManualUnits(u => ({ ...u, swim: e.target.value }))}>
+                              <option value="yards">yds</option>
+                              <option value="meters">m</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Bike</label>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <input style={{ ...inputStyle, width: 70 }} type="number" min="0" step="0.1" value={manualCourse.bikeMiles} onChange={e => setManualCourse(c => ({ ...c, bikeMiles: +e.target.value }))} />
+                            <select style={{ ...inputStyle, width: "auto", padding: "8px 6px" }} value={manualUnits.bike} onChange={e => setManualUnits(u => ({ ...u, bike: e.target.value }))}>
+                              <option value="miles">mi</option>
+                              <option value="km">km</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Run</label>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <input style={{ ...inputStyle, width: 70 }} type="number" min="0" step="0.1" value={manualCourse.runMiles} onChange={e => setManualCourse(c => ({ ...c, runMiles: +e.target.value }))} />
+                            <select style={{ ...inputStyle, width: "auto", padding: "8px 6px" }} value={manualUnits.run} onChange={e => setManualUnits(u => ({ ...u, run: e.target.value }))}>
+                              <option value="miles">mi</option>
+                              <option value="km">km</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Athlete Picker */}
+                    <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6" }}>Add Athletes</div>
+                        <button onClick={addBlank} style={{ ...btnStyle("#f472b6", true), padding: "5px 12px", fontSize: 11 }}>+ Add Blank</button>
+                      </div>
+                      {allLibAthletes.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                          <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Search athlete library..." value={manualSearch} onChange={e => setManualSearch(e.target.value)} />
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 120, overflowY: "auto" }}>
+                            {searchResults.slice(0, 30).map(a => (
+                              <button key={a.id} onClick={() => !addedIds.has(a.id) && addFromLib(a)}
+                                style={{ background: addedIds.has(a.id) ? "rgba(244,114,182,0.08)" : "rgba(244,114,182,0.15)", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 20, padding: "4px 12px", fontSize: 12, color: addedIds.has(a.id) ? "#5a86a8" : "#f472b6", cursor: addedIds.has(a.id) ? "default" : "pointer", fontWeight: 600 }}>
+                                {athleteName(a)}{addedIds.has(a.id) ? " ✓" : ""}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Athlete Rows */}
+                    {manualAthletes.length > 0 && (
+                      <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 12 }}>
+                          Enter Times &nbsp;<span style={{ color: "#3a6080", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>— format: MM:SS or MM:SS.s</span>
+                        </div>
+                        {/* Header row */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 90px 70px 70px 70px 70px 70px 28px", gap: 6, marginBottom: 6, padding: "0 4px" }}>
+                          {["Athlete","Gender","Age Grp",...SEGMENTS,""].map((h, i) => (
+                            <div key={i} style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: "#3a6080", textAlign: "center" }}>{h}</div>
+                          ))}
+                        </div>
+                        {manualAthletes.map(ma => (
+                          <div key={ma.id} style={{ display: "grid", gridTemplateColumns: "1fr 80px 90px 70px 70px 70px 70px 70px 28px", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                            <input style={{ ...segInputStyle, width: "100%", textAlign: "left", fontSize: 13, padding: "5px 8px" }} value={ma.name} onChange={e => updateAthlete(ma.id, "name", e.target.value)} placeholder="Name" />
+                            <select style={{ ...segInputStyle, width: "100%" }} value={ma.gender} onChange={e => updateAthlete(ma.id, "gender", e.target.value)}>
+                              <option>Male</option>
+                              <option>Female</option>
+                            </select>
+                            <select style={{ ...segInputStyle, width: "100%" }} value={ma.ageGroup} onChange={e => updateAthlete(ma.id, "ageGroup", e.target.value)}>
+                              {DEFAULT_AGE_GROUPS.map(ag => <option key={ag}>{ag}</option>)}
+                            </select>
+                            {SEGMENTS.map((seg, si) => (
+                              <input key={si} style={{ ...segInputStyle, borderColor: ma.segs[si] && !parseSegTime(ma.segs[si]) ? "rgba(255,80,80,0.6)" : "rgba(244,114,182,0.2)" }}
+                                value={ma.segs[si]}
+                                onChange={e => updateSeg(ma.id, si, e.target.value)}
+                                placeholder="0:00" />
+                            ))}
+                            <button onClick={() => removeAthlete(ma.id)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>&times;</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    {manualAthletes.length > 0 && (
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+                        <button onClick={handleCalculate} style={{ ...btnStyle("#f472b6"), flex: 1, minWidth: 140 }}>Calculate Results</button>
+                        {resultsRace && (
+                          <>
+                            <button onClick={() => printArchivedResults(resultsRace)} style={{ ...btnStyle("#00aeef", true) }}>📊 Print Results</button>
+                            <button onClick={() => printArchivedCert(resultsRace, null)} style={{ ...btnStyle("#ffd166", true) }}>🏆 Print All Certs</button>
+                            <button onClick={handleSaveToArchive} style={{ ...btnStyle("#4ade80", true) }}>💾 Save to Past Races</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {manualSavedMsg && <div style={{ color: "#4ade80", fontSize: 13, fontWeight: 700, marginBottom: 12, textAlign: "center" }}>{manualSavedMsg}</div>}
+
+                    {/* Results Preview */}
+                    {resultsRace && finishers.length > 0 && (
+                      <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 12 }}>
+                          Results — {finishers.length} Finisher{finishers.length !== 1 ? "s" : ""}
+                        </div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <thead>
+                              <tr>
+                                {["#","Athlete","Gender","Age Grp",...SEGMENTS,"Chip Time"].map((h, i) => (
+                                  <th key={i} style={{ padding: "6px 8px", background: "#071829", color: "#5a86a8", fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", textAlign: i < 2 ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {finishers.map((ath, rank) => (
+                                <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                                  <td style={{ padding: "7px 8px", color: rank === 0 ? "#ffd166" : rank === 1 ? "#a0aec0" : rank === 2 ? "#c47e2f" : "#e8f4fb", fontFamily: "'Bebas Neue',sans-serif", fontSize: 16 }}>{rank + 1}</td>
+                                  <td style={{ padding: "7px 8px", color: "#e8f4fb", fontWeight: 700 }}>{ath.name}</td>
+                                  <td style={{ padding: "7px 8px", color: "#5a86a8", textAlign: "center" }}>{ath.gender}</td>
+                                  <td style={{ padding: "7px 8px", color: "#5a86a8", textAlign: "center" }}>{ath.ageGroup}</td>
+                                  {SEGMENTS.map((_, si) => {
+                                    const dur = archiveSegDur(ath, si);
+                                    return <td key={si} style={{ padding: "7px 8px", color: "#aac4d8", textAlign: "center", fontFamily: "monospace" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>;
+                                  })}
+                                  <td style={{ padding: "7px 8px", color: "#f472b6", fontWeight: 700, textAlign: "center", fontFamily: "monospace" }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Age Group Breakdown */}
+                        {(() => {
+                          const agMap = {};
+                          finishers.forEach(a => {
+                            const key = `${a.gender} · ${a.ageGroup}`;
+                            if (!agMap[key]) agMap[key] = [];
+                            agMap[key].push(a);
+                          });
+                          const keys = Object.keys(agMap);
+                          if (keys.length <= 1) return null;
+                          return (
+                            <div style={{ marginTop: 16 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>Age Group Breakdown</div>
+                              {keys.map(key => (
+                                <div key={key} style={{ marginBottom: 12 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: "#00aeef", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6, borderLeft: "3px solid #00aeef", paddingLeft: 8 }}>{key}</div>
+                                  {agMap[key].map((ath, i) => (
+                                    <div key={ath.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent", borderRadius: 4 }}>
+                                      <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 18, color: i === 0 ? "#ffd166" : i === 1 ? "#a0aec0" : i === 2 ? "#c47e2f" : "#3a6080", minWidth: 22 }}>{i + 1}</div>
+                                      <div style={{ flex: 1, color: "#e8f4fb", fontWeight: 600, fontSize: 13 }}>{ath.name}</div>
+                                      <div style={{ fontFamily: "monospace", color: "#f472b6", fontSize: 12, fontWeight: 700 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Individual Cert buttons */}
+                        <div style={{ marginTop: 14, borderTop: "1px solid rgba(244,114,182,0.15)", paddingTop: 12 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 8 }}>Individual Certificates</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {finishers.map(ath => (
+                              <button key={ath.id} onClick={() => printArchivedCert(resultsRace, ath)} style={{ ...btnStyle("#ffd166", true), padding: "4px 12px", fontSize: 11 }}>
+                                🏅 {ath.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {resultsRace && finishers.length === 0 && (
+                      <div style={{ background: "#0c2240", border: "1px solid rgba(244,114,182,0.2)", borderRadius: 8, padding: "20px", textAlign: "center", color: "#3a6080", fontSize: 13 }}>
+                        No athletes with all 5 segments filled in. Make sure all times are in MM:SS format.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* ── ATHLETES ROSTER ── */}
               {view === "athletes" && (
