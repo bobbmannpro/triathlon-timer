@@ -1952,26 +1952,21 @@
                 const labelStyle = { fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 4, display: "block" };
 
                 const searchLower = manualSearch.toLowerCase();
-                const allLibAthletes = (() => {
-                  const seen = new Set();
-                  const all = [];
-                  savedAthletes.forEach(a => { const n = athleteName(a).toLowerCase(); if (!seen.has(n)) { seen.add(n); all.push(a); } });
-                  return all;
-                })();
+                const allLibAthletes = allRaceAthletes();
                 const searchResults = manualSearch.trim().length > 0
-                  ? allLibAthletes.filter(a => athleteName(a).toLowerCase().includes(searchLower))
+                  ? allLibAthletes.filter(a => a.name.toLowerCase().includes(searchLower))
                   : allLibAthletes;
-                const addedIds = new Set(manualAthletes.filter(a => a.libId).map(a => a.libId));
+                const addedNames = new Set(manualAthletes.map(a => (a.name || "").toLowerCase().trim()));
 
                 function addFromLib(a) {
                   setManualAthletes(prev => [...prev, {
                     id: Date.now() + Math.random(),
-                    libId: a.id,
-                    name: athleteName(a),
-                    firstName: a.firstName || "",
-                    lastName: a.lastName || "",
+                    libId: null,
+                    name: a.name,
+                    firstName: "",
+                    lastName: "",
                     gender: a.gender || "Male",
-                    ageGroup: a.ageGroup || "9-10",
+                    ageGroup: a.ageGroup || DEFAULT_AGE_GROUPS[0],
                     courseId: 1,
                     segs: ["", "", "", "", ""],
                   }]);
@@ -2100,12 +2095,15 @@
                         <div style={{ marginBottom: 12 }}>
                           <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Search athlete library..." value={manualSearch} onChange={e => setManualSearch(e.target.value)} />
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 120, overflowY: "auto" }}>
-                            {searchResults.slice(0, 30).map(a => (
-                              <button key={a.id} onClick={() => !addedIds.has(a.id) && addFromLib(a)}
-                                style={{ background: addedIds.has(a.id) ? "rgba(244,114,182,0.08)" : "rgba(244,114,182,0.15)", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 20, padding: "4px 12px", fontSize: 12, color: addedIds.has(a.id) ? "#5a86a8" : "#f472b6", cursor: addedIds.has(a.id) ? "default" : "pointer", fontWeight: 600 }}>
-                                {athleteName(a)}{addedIds.has(a.id) ? " ✓" : ""}
-                              </button>
-                            ))}
+                            {searchResults.slice(0, 30).map(a => {
+                              const already = addedNames.has(a.name.toLowerCase().trim());
+                              return (
+                                <button key={a.name} onClick={() => !already && addFromLib(a)}
+                                  style={{ background: already ? "rgba(244,114,182,0.08)" : "rgba(244,114,182,0.15)", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 20, padding: "4px 12px", fontSize: 12, color: already ? "#5a86a8" : "#f472b6", cursor: already ? "default" : "pointer", fontWeight: 600 }}>
+                                  {a.name}{already ? " ✓" : ""}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -2130,9 +2128,8 @@
                               <option>Male</option>
                               <option>Female</option>
                             </select>
-                            <select style={{ ...segInputStyle, width: "100%" }} value={ma.ageGroup} onChange={e => updateAthlete(ma.id, "ageGroup", e.target.value)}>
-                              {DEFAULT_AGE_GROUPS.map(ag => <option key={ag}>{ag}</option>)}
-                            </select>
+                            <input list={`ag-${ma.id}`} style={{ ...segInputStyle, width: "100%" }} value={ma.ageGroup} onChange={e => updateAthlete(ma.id, "ageGroup", e.target.value)} placeholder="Age Grp" />
+                            <datalist id={`ag-${ma.id}`}>{DEFAULT_AGE_GROUPS.map(ag => <option key={ag} value={ag} />)}</datalist>
                             {SEGMENTS.map((seg, si) => (
                               <input key={si} style={{ ...segInputStyle, borderColor: ma.segs[si] && !parseSegTime(ma.segs[si]) ? "rgba(255,80,80,0.6)" : "rgba(244,114,182,0.2)" }}
                                 value={ma.segs[si]}
