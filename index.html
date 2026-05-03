@@ -1336,9 +1336,29 @@
           win.document.close();
         }
 
+        function resolveSegsMs(ma) {
+          // Left-to-right pass: use seg duration if set, else derive from running total field
+          const result = Array(5).fill(null);
+          let cumMs = 0;
+          for (let i = 0; i < 5; i++) {
+            const segMs = parseSegTime((ma.segs || [])[i]);
+            if (segMs !== null && segMs > 0) {
+              result[i] = segMs;
+              cumMs += segMs;
+            } else {
+              const totalMs = parseSegTime((ma.totals || [])[i]);
+              if (totalMs !== null && totalMs > cumMs) {
+                result[i] = totalMs - cumMs;
+                cumMs = totalMs;
+              }
+            }
+          }
+          return result;
+        }
+
         function computeManualRace() {
           const processedAthletes = manualAthletes.map(ma => {
-            const durMs = ma.segs.map(s => parseSegTime(s));
+            const durMs = resolveSegsMs(ma);
             const allFilled = durMs.every(d => d !== null && d > 0);
             let cum = 0;
             const splits = durMs.map(d => { if (d == null || d <= 0) return null; cum += d; return cum; });
@@ -1973,6 +1993,7 @@
                     ageGroup: a.ageGroup || (manualAgeGroups[0] || "9-10"),
                     courseId: 1,
                     segs: ["", "", "", "", ""],
+                    totals: ["", "", "", "", ""],
                   }]);
                   setManualResults(null);
                 }
@@ -1986,6 +2007,7 @@
                     ageGroup: manualAgeGroups[0] || "9-10",
                     courseId: 1,
                     segs: ["", "", "", "", ""],
+                    totals: ["", "", "", "", ""],
                   }]);
                   setManualResults(null);
                 }
@@ -2160,15 +2182,47 @@
                             {manualAgeGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
                           </select>
                         </div>
-                        <div style={{ display: "flex", gap: 8, marginLeft: 38, flexWrap: "wrap" }}>
-                          {SEGMENTS.map((seg, si) => (
-                            <div key={si} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                              <label style={{ fontSize: 9, color: ["#00aeef","#4ade80","#ffd166","#4ade80","#f4742b"][si], letterSpacing: 1, fontWeight: 700, textTransform: "uppercase" }}>{seg}</label>
-                              <input value={ma.segs[si]} onChange={e => updateManualSeg(ma.id, si, e.target.value)} placeholder="0:00"
-                                style={{ background: "#0c2240", border: `1px solid ${ma.segs[si] && !parseSegTime(ma.segs[si]) ? "rgba(255,80,80,0.6)" : "rgba(0,174,239,0.2)"}`, borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 13, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
+                        {(() => {
+                          const segColors = ["#00aeef","#4ade80","#ffd166","#4ade80","#f4742b"];
+                          const resolvedMs = resolveSegsMs(ma);
+                          // Compute cumulative at each checkpoint from segs only (for placeholder in total field)
+                          const cumFromSegs = [];
+                          let c = 0;
+                          for (let j = 0; j < 5; j++) {
+                            const d = parseSegTime(ma.segs[j]);
+                            if (d !== null) { c += d; cumFromSegs[j] = c; } else { cumFromSegs[j] = null; break; }
+                          }
+                          return (
+                            <div style={{ display: "flex", gap: 8, marginLeft: 38, flexWrap: "wrap" }}>
+                              {SEGMENTS.map((seg, si) => {
+                                const col = segColors[si];
+                                const segInvalid = ma.segs[si] && !parseSegTime(ma.segs[si]);
+                                const totalInvalid = (ma.totals||[])[si] && !parseSegTime((ma.totals||[])[si]);
+                                // Placeholder for split: back-calculated value if total is entered
+                                const backMs = ma.segs[si] === "" && resolvedMs[si] ? resolvedMs[si] : null;
+                                const splitPlaceholder = backMs ? formatElapsed(backMs) : "0:00";
+                                // Placeholder for total: computed cumulative from segs
+                                const totalPlaceholder = cumFromSegs[si] != null ? formatElapsed(cumFromSegs[si]) : "total";
+                                return (
+                                  <div key={si} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                    <label style={{ fontSize: 9, color: col, letterSpacing: 1, fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>{seg}</label>
+                                    <input value={ma.segs[si]} onChange={e => updateManualSeg(ma.id, si, e.target.value)} placeholder={splitPlaceholder}
+                                      title="Segment split time (MM:SS)"
+                                      style={{ background: "#0c2240", border: `1px solid ${segInvalid ? "rgba(255,80,80,0.6)" : col + "44"}`, borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 13, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
+                                    <input value={(ma.totals||[])[si] || ""} onChange={e => {
+                                      const val = e.target.value;
+                                      setManualAthletes(prev => prev.map(a => a.id === ma.id ? { ...a, totals: (a.totals || ["","","","",""]).map((t, i) => i === si ? val : t) } : a));
+                                      setManualResults(null);
+                                    }} placeholder={totalPlaceholder}
+                                      title="Total elapsed time at this checkpoint (MM:SS) — auto-calculates missing split"
+                                      style={{ background: "#071829", border: `1px solid ${totalInvalid ? "rgba(255,80,80,0.6)" : "rgba(244,114,182,0.2)"}`, borderRadius: 4, padding: "4px 8px", color: "#c084fc", fontSize: 11, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
+                                    <div style={{ fontSize: 8, color: "#3a6080", textAlign: "center", letterSpacing: 0.5 }}>Σ total</div>
+                                  </div>
+                                );
+                              })}
                             </div>
-                          ))}
-                        </div>
+                          );
+                        })()}
                       </div>
                     ))}
                     <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
