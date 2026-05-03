@@ -319,6 +319,10 @@
         const [manualResults, setManualResults] = useState(null);
         const [manualSearch, setManualSearch] = useState("");
         const [manualSavedMsg, setManualSavedMsg] = useState("");
+        const [manualAgeGroups, setManualAgeGroups] = useState(DEFAULT_AGE_GROUPS.slice());
+        const [showManualAthletePicker, setShowManualAthletePicker] = useState(false);
+        const [manualAthletePickerSearch, setManualAthletePickerSearch] = useState("");
+        const manualLogoInputRef = useRef(null);
 
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
@@ -787,6 +791,13 @@
           const file = e.target.files[0]; if (!file) return;
           const reader = new FileReader();
           reader.onload = ev => setCertConfig(cfg => ({ ...cfg, customLogoB64: ev.target.result }));
+          reader.readAsDataURL(file);
+          e.target.value = "";
+        }
+        function handleManualLogoImport(e) {
+          const file = e.target.files[0]; if (!file) return;
+          const reader = new FileReader();
+          reader.onload = ev => setManualCertConfig(cfg => ({ ...cfg, customLogoB64: ev.target.result }));
           reader.readAsDataURL(file);
           e.target.value = "";
         }
@@ -1947,295 +1958,344 @@
 
               {/* ── MANUAL RACE ENTRY ── */}
               {view === "manual" && (() => {
-                const inputStyle = { background: "#071829", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 6, padding: "8px 10px", color: "#e8f4fb", fontSize: 13, outline: "none", width: "100%" };
-                const segInputStyle = { background: "#071829", border: "1px solid rgba(244,114,182,0.2)", borderRadius: 4, padding: "5px 6px", color: "#e8f4fb", fontSize: 12, width: 70, textAlign: "center", outline: "none", fontFamily: "monospace" };
-                const labelStyle = { fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 4, display: "block" };
+                const inputSt = { background: "#071829", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "8px 12px", color: "#e8f4fb", fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box" };
 
-                const searchLower = manualSearch.toLowerCase();
-                const allLibAthletes = allRaceAthletes();
-                const searchResults = manualSearch.trim().length > 0
-                  ? allLibAthletes.filter(a => a.name.toLowerCase().includes(searchLower))
-                  : allLibAthletes;
                 const addedNames = new Set(manualAthletes.map(a => (a.name || "").toLowerCase().trim()));
 
                 function addFromLib(a) {
+                  const parts = (a.name || "").trim().split(" ");
                   setManualAthletes(prev => [...prev, {
                     id: Date.now() + Math.random(),
-                    libId: null,
                     name: a.name,
-                    firstName: "",
-                    lastName: "",
+                    firstName: a.firstName || parts[0] || "",
+                    lastName: a.lastName || parts.slice(1).join(" ") || "",
                     gender: a.gender || "Male",
-                    ageGroup: a.ageGroup || DEFAULT_AGE_GROUPS[0],
+                    ageGroup: a.ageGroup || (manualAgeGroups[0] || "9-10"),
                     courseId: 1,
                     segs: ["", "", "", "", ""],
                   }]);
                   setManualResults(null);
                 }
-
-                function addBlank() {
+                function addBlankManual() {
                   setManualAthletes(prev => [...prev, {
                     id: Date.now() + Math.random(),
-                    libId: null,
                     name: "",
                     firstName: "",
                     lastName: "",
                     gender: "Male",
-                    ageGroup: "9-10",
+                    ageGroup: manualAgeGroups[0] || "9-10",
                     courseId: 1,
                     segs: ["", "", "", "", ""],
                   }]);
                   setManualResults(null);
                 }
-
-                function updateAthlete(id, field, value) {
+                function updateManualAth(id, field, value) {
                   setManualAthletes(prev => prev.map(a => a.id === id ? { ...a, [field]: value } : a));
                   setManualResults(null);
                 }
-
-                function updateSeg(id, si, value) {
+                function updateManualSeg(id, si, value) {
                   setManualAthletes(prev => prev.map(a => a.id === id ? { ...a, segs: a.segs.map((s, i) => i === si ? value : s) } : a));
                   setManualResults(null);
                 }
-
-                function removeAthlete(id) {
+                function removeManualAth(id) {
                   setManualAthletes(prev => prev.filter(a => a.id !== id));
                   setManualResults(null);
                 }
 
-                function handleCalculate() {
-                  const race = computeManualRace();
-                  setManualResults(race);
-                }
-
-                function handleSaveToArchive() {
-                  const race = manualResults || computeManualRace();
-                  const entry = { ...race, id: "manual_" + Date.now() };
-                  const updated = [...savedArchive, entry];
-                  setSavedArchive(updated);
-                  localStorage.setItem("tri-archive", JSON.stringify(updated));
-                  if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
-                  setManualSavedMsg("Saved to Past Races!");
-                  setTimeout(() => setManualSavedMsg(""), 3000);
-                }
-
                 const resultsRace = manualResults;
                 const finishers = resultsRace ? (resultsRace.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity)) : [];
+                const filteredRoster = manualAthletePickerSearch.trim()
+                  ? allRaceAthletes().filter(a => a.name.toLowerCase().includes(manualAthletePickerSearch.toLowerCase()))
+                  : allRaceAthletes();
 
                 return (
                   <div style={{ paddingTop: 8, paddingBottom: 40 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#f472b6", marginBottom: 16 }}>
-                      ✏️ Manual Race Entry
-                    </div>
 
                     {/* Race Info */}
-                    <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 12 }}>Race Info</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                        <div>
-                          <label style={labelStyle}>Race Name</label>
-                          <input style={inputStyle} value={manualRaceName} onChange={e => setManualRaceName(e.target.value)} placeholder="My Race" />
-                        </div>
-                        <div>
-                          <label style={labelStyle}>Date</label>
-                          <input style={inputStyle} type="date" value={manualRaceDate} onChange={e => setManualRaceDate(e.target.value)} />
-                        </div>
-                        <div>
-                          <label style={labelStyle}>Event Name (for cert)</label>
-                          <input style={inputStyle} value={manualCertConfig.eventName} onChange={e => setManualCertConfig(c => ({ ...c, eventName: e.target.value }))} placeholder="Timeathon Race Event" />
-                        </div>
-                        <div>
-                          <label style={labelStyle}>Org Name (for cert)</label>
-                          <input style={inputStyle} value={manualCertConfig.orgName} onChange={e => setManualCertConfig(c => ({ ...c, orgName: e.target.value }))} placeholder="Optional" />
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>Race Info</div>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                      <div style={{ flex: 2 }}>
+                        <div style={{ fontSize: 10, color: "#5a86a8", marginBottom: 4 }}>Race Name</div>
+                        <input style={inputSt} value={manualRaceName} onChange={e => setManualRaceName(e.target.value)} placeholder="e.g. Spring 2026 Tri" />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 10, color: "#5a86a8", marginBottom: 4 }}>Date</div>
+                        <input style={{ ...inputSt, colorScheme: "dark" }} type="date" value={manualRaceDate} onChange={e => setManualRaceDate(e.target.value)} />
+                      </div>
+                    </div>
+
+                    {/* Certificate & Event */}
+                    <div style={{ marginBottom: 14, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>Certificate &amp; Event</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        <input value={manualCertConfig.eventName} onChange={e => setManualCertConfig(c => ({ ...c, eventName: e.target.value }))} placeholder="Event name for certificates" style={inputSt} />
+                        <input value={manualCertConfig.orgName} onChange={e => setManualCertConfig(c => ({ ...c, orgName: e.target.value }))} placeholder="Organization name (optional)" style={inputSt} />
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <button onClick={() => manualLogoInputRef.current.click()} style={{ ...btnStyle("#5a86a8", true), padding: "7px 14px", fontSize: 12 }}>&#8679; Custom Logo</button>
+                          {manualCertConfig.customLogoB64 && <span style={{ fontSize: 11, color: "#4ade80" }}>&#10003; Logo uploaded</span>}
+                          {manualCertConfig.customLogoB64 && <button onClick={() => setManualCertConfig(c => ({ ...c, customLogoB64: null }))} style={{ background: "none", border: "none", color: "#5a86a8", cursor: "pointer", fontSize: 12 }}>Remove</button>}
+                          <input ref={manualLogoInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleManualLogoImport} />
                         </div>
                       </div>
+                    </div>
 
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 10, marginTop: 4 }}>Course Distances</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                        <div>
-                          <label style={labelStyle}>Swim</label>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <input style={{ ...inputStyle, width: 70 }} type="number" min="0" value={manualCourse.swimYards} onChange={e => setManualCourse(c => ({ ...c, swimYards: +e.target.value }))} />
-                            <select style={{ ...inputStyle, width: "auto", padding: "8px 6px" }} value={manualUnits.swim} onChange={e => setManualUnits(u => ({ ...u, swim: e.target.value }))}>
-                              <option value="yards">yds</option>
-                              <option value="meters">m</option>
-                            </select>
+                    {/* Courses */}
+                    <div style={{ marginBottom: 14, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>Courses &nbsp;&mdash;&nbsp; <span style={{ color: "#48cae4", fontWeight: 400 }}>distances for pace calculations</span></div>
+                      <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                        {[["swim","#00aeef",["yards","meters"]],["bike","#ffd166",["miles","km"]],["run","#f4742b",["miles","km"]]].map(([seg, col, opts]) => (
+                          <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <span style={{ fontSize: 10, color: col, letterSpacing: 1, textTransform: "uppercase" }}>{seg}</span>
+                            {opts.map(u => (
+                              <button key={u} onClick={() => setManualUnits(un => ({ ...un, [seg]: u }))} style={{ padding: "2px 7px", fontSize: 10, background: manualUnits[seg] === u ? col : "transparent", color: manualUnits[seg] === u ? "#071829" : "#5a86a8", border: "1px solid " + (manualUnits[seg] === u ? col : "rgba(255,255,255,0.1)"), borderRadius: 3, cursor: "pointer", fontWeight: manualUnits[seg] === u ? 700 : 400 }}>{u}</button>
+                            ))}
                           </div>
+                        ))}
+                      </div>
+                      <div style={{ background: "#071829", borderRadius: 6, padding: "10px 12px", border: "1px solid rgba(0,174,239,0.12)" }}>
+                        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                          <input value={manualCourse.name} onChange={e => setManualCourse(c => ({ ...c, name: e.target.value }))}
+                            style={{ flex: 1, background: "#0c2240", border: "1px solid rgba(0,174,239,0.3)", borderRadius: 4, padding: "6px 10px", color: "#e8f4fb", fontSize: 13, outline: "none", fontWeight: 700 }} placeholder="Course name" />
                         </div>
-                        <div>
-                          <label style={labelStyle}>Bike</label>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <input style={{ ...inputStyle, width: 70 }} type="number" min="0" step="0.1" value={manualCourse.bikeMiles} onChange={e => setManualCourse(c => ({ ...c, bikeMiles: +e.target.value }))} />
-                            <select style={{ ...inputStyle, width: "auto", padding: "8px 6px" }} value={manualUnits.bike} onChange={e => setManualUnits(u => ({ ...u, bike: e.target.value }))}>
-                              <option value="miles">mi</option>
-                              <option value="km">km</option>
-                            </select>
+                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            <label style={{ fontSize: 10, color: "#00aeef", letterSpacing: 1 }}>{manualUnits.swim === "meters" ? "SWIM (meters)" : "SWIM (yards)"}</label>
+                            <input type="number" min="1" value={manualCourse.swimYards} onChange={e => setManualCourse(c => ({ ...c, swimYards: +e.target.value }))} style={distInputStyle} />
                           </div>
-                        </div>
-                        <div>
-                          <label style={labelStyle}>Run</label>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <input style={{ ...inputStyle, width: 70 }} type="number" min="0" step="0.1" value={manualCourse.runMiles} onChange={e => setManualCourse(c => ({ ...c, runMiles: +e.target.value }))} />
-                            <select style={{ ...inputStyle, width: "auto", padding: "8px 6px" }} value={manualUnits.run} onChange={e => setManualUnits(u => ({ ...u, run: e.target.value }))}>
-                              <option value="miles">mi</option>
-                              <option value="km">km</option>
-                            </select>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            <label style={{ fontSize: 10, color: "#ffd166", letterSpacing: 1 }}>{manualUnits.bike === "km" ? "BIKE (km)" : "BIKE (miles)"}</label>
+                            <input type="number" min="0.1" step="0.1" value={manualCourse.bikeMiles} onChange={e => setManualCourse(c => ({ ...c, bikeMiles: +e.target.value }))} style={distInputStyle} />
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            <label style={{ fontSize: 10, color: "#f4742b", letterSpacing: 1 }}>{manualUnits.run === "km" ? "RUN (km)" : "RUN (miles)"}</label>
+                            <input type="number" min="0.1" step="0.1" value={manualCourse.runMiles} onChange={e => setManualCourse(c => ({ ...c, runMiles: +e.target.value }))} style={distInputStyle} />
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    {/* Athlete Picker */}
-                    <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
+                    {/* Age Groups */}
+                    <div style={{ marginBottom: 14, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6" }}>Add Athletes</div>
-                        <button onClick={addBlank} style={{ ...btnStyle("#f472b6", true), padding: "5px 12px", fontSize: 11 }}>+ Add Blank</button>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8" }}>Age Groups</div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button onClick={() => setManualAgeGroups(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Youth</button>
+                          <button onClick={() => setManualAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#5a86a8", true), padding: "3px 8px", fontSize: 10 }}>Adult 5yr</button>
+                          <button onClick={() => setManualAgeGroups(g => [...g, "0-10"])} style={{ ...btnStyle("#48cae4", true), padding: "3px 8px", fontSize: 10 }}>+ Group</button>
+                        </div>
                       </div>
-                      {allLibAthletes.length > 0 && (
-                        <div style={{ marginBottom: 12 }}>
-                          <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Search athlete library..." value={manualSearch} onChange={e => setManualSearch(e.target.value)} />
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 120, overflowY: "auto" }}>
-                            {searchResults.slice(0, 30).map(a => {
-                              const already = addedNames.has(a.name.toLowerCase().trim());
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {manualAgeGroups.map((ag, agIdx) => {
+                          const s = parseAgeGroupStruct(ag);
+                          function updateAg(type, a, b) {
+                            const newLabel = ageGroupLabel(type, a, b);
+                            setManualAgeGroups(g => g.map(item => item === ag ? newLabel : item));
+                            setManualAthletes(prev => prev.map(ath => ath.ageGroup === ag ? { ...ath, ageGroup: newLabel } : ath));
+                          }
+                          return (
+                            <div key={agIdx} style={{ display: "flex", alignItems: "center", gap: 6, background: "#071829", border: "1px solid rgba(0,174,239,0.18)", borderRadius: 6, padding: "6px 10px" }}>
+                              <select value={s.type} onChange={e => updateAg(e.target.value, s.a, s.b)}
+                                style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "4px 8px", color: "#00aeef", fontSize: 12, outline: "none", cursor: "pointer" }}>
+                                <option value="range">Age Range</option>
+                                <option value="under">And Under</option>
+                                <option value="over">And Over</option>
+                              </select>
+                              {s.type === "range" ? (
+                                <>
+                                  <input type="number" value={s.a} min={0} max={s.b - 1} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
+                                    style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "4px 6px", color: "#e8f4fb", fontSize: 13, width: 52, outline: "none", textAlign: "center" }} />
+                                  <span style={{ color: "#5a86a8", fontSize: 12 }}>–</span>
+                                  <input type="number" value={s.b} min={s.a + 1} max={199} onChange={e => updateAg(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
+                                    style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "4px 6px", color: "#e8f4fb", fontSize: 13, width: 52, outline: "none", textAlign: "center" }} />
+                                </>
+                              ) : (
+                                <>
+                                  <input type="number" value={s.a} min={0} max={199} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
+                                    style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "4px 6px", color: "#e8f4fb", fontSize: 13, width: 52, outline: "none", textAlign: "center" }} />
+                                  <span style={{ fontSize: 12, color: "#5a86a8" }}>{s.type === "under" ? "and under" : "and over"}</span>
+                                </>
+                              )}
+                              <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: "#3a6080", fontStyle: "italic" }}>{ag}</div>
+                              {manualAgeGroups.length > 1 && (
+                                <button onClick={() => {
+                                  const remaining = manualAgeGroups.filter(g => g !== ag);
+                                  setManualAthletes(prev => prev.map(a => a.ageGroup === ag ? { ...a, ageGroup: remaining[0] } : a));
+                                  setManualAgeGroups(remaining);
+                                }} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 16, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>&times;</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Athletes */}
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>Athletes</div>
+                    {manualAthletes.map((ma, i) => (
+                      <div key={ma.id} style={{ marginBottom: 10, borderRadius: 6 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                          <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#f472b6", flexShrink: 0 }}>{i + 1}</div>
+                          <input value={ma.firstName} onChange={e => {
+                            const fn = e.target.value;
+                            setManualAthletes(prev => prev.map(a => a.id === ma.id ? { ...a, firstName: fn, name: `${fn} ${a.lastName}`.trim() } : a));
+                            setManualResults(null);
+                          }} placeholder="First"
+                            style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "8px 8px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                          <input value={ma.lastName} onChange={e => {
+                            const ln = e.target.value;
+                            setManualAthletes(prev => prev.map(a => a.id === ma.id ? { ...a, lastName: ln, name: `${a.firstName} ${ln}`.trim() } : a));
+                            setManualResults(null);
+                          }} placeholder="Last"
+                            style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "8px 8px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                          <button onClick={() => removeManualAth(ma.id)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginLeft: 38, flexWrap: "wrap", marginBottom: 6 }}>
+                          <select value={ma.gender} onChange={e => updateManualAth(ma.id, "gender", e.target.value)}
+                            style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "5px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                          </select>
+                          <select value={ma.ageGroup} onChange={e => updateManualAth(ma.id, "ageGroup", e.target.value)}
+                            style={{ background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 4, padding: "5px 10px", color: "#e8f4fb", fontSize: 12, outline: "none", cursor: "pointer" }}>
+                            {manualAgeGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginLeft: 38, flexWrap: "wrap" }}>
+                          {SEGMENTS.map((seg, si) => (
+                            <div key={si} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                              <label style={{ fontSize: 9, color: ["#00aeef","#4ade80","#ffd166","#4ade80","#f4742b"][si], letterSpacing: 1, fontWeight: 700, textTransform: "uppercase" }}>{seg}</label>
+                              <input value={ma.segs[si]} onChange={e => updateManualSeg(ma.id, si, e.target.value)} placeholder="0:00"
+                                style={{ background: "#0c2240", border: `1px solid ${ma.segs[si] && !parseSegTime(ma.segs[si]) ? "rgba(255,80,80,0.6)" : "rgba(0,174,239,0.2)"}`, borderRadius: 4, padding: "5px 8px", color: "#e8f4fb", fontSize: 13, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                      <button onClick={() => { setManualAthletePickerSearch(""); setShowManualAthletePicker(true); }} style={btnStyle("#48cae4", true)}>+ Add Athlete</button>
+                      <button onClick={() => setManualResults(computeManualRace())} style={btnStyle("#f472b6")}>Calculate Results</button>
+                    </div>
+
+                    {/* Athlete picker modal */}
+                    {showManualAthletePicker && (
+                      <div style={{ position: "fixed", inset: 0, background: "rgba(7,24,41,0.92)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+                        onClick={e => { if (e.target === e.currentTarget) { setShowManualAthletePicker(false); setManualAthletePickerSearch(""); } }}>
+                        <div style={{ background: "#0c2240", borderTop: "2px solid #f472b6", borderRadius: "12px 12px 0 0", width: "100%", maxWidth: 500, maxHeight: "70vh", display: "flex", flexDirection: "column", padding: "16px 16px 24px" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#e8f4fb", letterSpacing: 1 }}>Add Athlete</div>
+                            <button onClick={() => { setShowManualAthletePicker(false); setManualAthletePickerSearch(""); }} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: 0 }}>&times;</button>
+                          </div>
+                          <input autoFocus value={manualAthletePickerSearch} onChange={e => setManualAthletePickerSearch(e.target.value)} placeholder="Search athletes…"
+                            style={{ background: "#071829", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 6, padding: "9px 12px", color: "#e8f4fb", fontSize: 13, outline: "none", marginBottom: 10, width: "100%", boxSizing: "border-box" }} />
+                          <div style={{ overflowY: "auto", flex: 1 }}>
+                            <button onClick={() => { addBlankManual(); setShowManualAthletePicker(false); setManualAthletePickerSearch(""); }}
+                              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "rgba(244,114,182,0.08)", border: "1px dashed rgba(244,114,182,0.3)", borderRadius: 6, padding: "10px 12px", color: "#f472b6", fontSize: 13, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
+                              <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
+                              <span style={{ fontWeight: 700 }}>New Athlete</span>
+                            </button>
+                            {filteredRoster.length === 0 && manualAthletePickerSearch && (
+                              <div style={{ fontSize: 12, color: "#3a6080", textAlign: "center", padding: "12px 0" }}>No match — use New Athlete above.</div>
+                            )}
+                            {filteredRoster.map((ath, idx) => {
+                              const already = addedNames.has(ath.name.toLowerCase().trim());
                               return (
-                                <button key={a.name} onClick={() => !already && addFromLib(a)}
-                                  style={{ background: already ? "rgba(244,114,182,0.08)" : "rgba(244,114,182,0.15)", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 20, padding: "4px 12px", fontSize: 12, color: already ? "#5a86a8" : "#f472b6", cursor: already ? "default" : "pointer", fontWeight: 600 }}>
-                                  {a.name}{already ? " ✓" : ""}
+                                <button key={idx} onClick={() => { if (!already) { addFromLib(ath); setShowManualAthletePicker(false); setManualAthletePickerSearch(""); } }} disabled={already}
+                                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "transparent", border: "1px solid rgba(0,174,239,0.1)", borderRadius: 6, padding: "9px 12px", color: already ? "#3a6080" : "#e8f4fb", fontSize: 13, cursor: already ? "default" : "pointer", marginBottom: 4, textAlign: "left" }}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ath.name}</div>
+                                    <div style={{ fontSize: 11, color: "#5a86a8" }}>{ath.gender}{ath.ageGroup ? ` · ${ath.ageGroup}` : ""}</div>
+                                  </div>
+                                  {already && <span style={{ fontSize: 10, color: "#3a6080", flexShrink: 0 }}>already added</span>}
                                 </button>
                               );
                             })}
                           </div>
                         </div>
-                      )}
-                    </div>
-
-                    {/* Athlete Rows */}
-                    {manualAthletes.length > 0 && (
-                      <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 12 }}>
-                          Enter Times &nbsp;<span style={{ color: "#3a6080", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>— format: MM:SS or MM:SS.s</span>
-                        </div>
-                        {/* Header row */}
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 90px 70px 70px 70px 70px 70px 28px", gap: 6, marginBottom: 6, padding: "0 4px" }}>
-                          {["Athlete","Gender","Age Grp",...SEGMENTS,""].map((h, i) => (
-                            <div key={i} style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: "#3a6080", textAlign: "center" }}>{h}</div>
-                          ))}
-                        </div>
-                        {manualAthletes.map(ma => (
-                          <div key={ma.id} style={{ display: "grid", gridTemplateColumns: "1fr 80px 90px 70px 70px 70px 70px 70px 28px", gap: 6, marginBottom: 8, alignItems: "center" }}>
-                            <input style={{ ...segInputStyle, width: "100%", textAlign: "left", fontSize: 13, padding: "5px 8px" }} value={ma.name} onChange={e => updateAthlete(ma.id, "name", e.target.value)} placeholder="Name" />
-                            <select style={{ ...segInputStyle, width: "100%" }} value={ma.gender} onChange={e => updateAthlete(ma.id, "gender", e.target.value)}>
-                              <option>Male</option>
-                              <option>Female</option>
-                            </select>
-                            <input list={`ag-${ma.id}`} style={{ ...segInputStyle, width: "100%" }} value={ma.ageGroup} onChange={e => updateAthlete(ma.id, "ageGroup", e.target.value)} placeholder="Age Grp" />
-                            <datalist id={`ag-${ma.id}`}>{DEFAULT_AGE_GROUPS.map(ag => <option key={ag} value={ag} />)}</datalist>
-                            {SEGMENTS.map((seg, si) => (
-                              <input key={si} style={{ ...segInputStyle, borderColor: ma.segs[si] && !parseSegTime(ma.segs[si]) ? "rgba(255,80,80,0.6)" : "rgba(244,114,182,0.2)" }}
-                                value={ma.segs[si]}
-                                onChange={e => updateSeg(ma.id, si, e.target.value)}
-                                placeholder="0:00" />
-                            ))}
-                            <button onClick={() => removeAthlete(ma.id)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>&times;</button>
-                          </div>
-                        ))}
                       </div>
                     )}
 
-                    {/* Actions */}
-                    {manualAthletes.length > 0 && (
-                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-                        <button onClick={handleCalculate} style={{ ...btnStyle("#f472b6"), flex: 1, minWidth: 140 }}>Calculate Results</button>
-                        {resultsRace && (
-                          <>
-                            <button onClick={() => printArchivedResults(resultsRace)} style={{ ...btnStyle("#00aeef", true) }}>📊 Print Results</button>
-                            <button onClick={() => printArchivedCert(resultsRace, null)} style={{ ...btnStyle("#ffd166", true) }}>🏆 Print All Certs</button>
-                            <button onClick={handleSaveToArchive} style={{ ...btnStyle("#4ade80", true) }}>💾 Save to Past Races</button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    {manualSavedMsg && <div style={{ color: "#4ade80", fontSize: 13, fontWeight: 700, marginBottom: 12, textAlign: "center" }}>{manualSavedMsg}</div>}
-
-                    {/* Results Preview */}
-                    {resultsRace && finishers.length > 0 && (
-                      <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6", marginBottom: 12 }}>
-                          Results — {finishers.length} Finisher{finishers.length !== 1 ? "s" : ""}
-                        </div>
-                        <div style={{ overflowX: "auto" }}>
-                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                            <thead>
-                              <tr>
-                                {["#","Athlete","Gender","Age Grp",...SEGMENTS,"Chip Time"].map((h, i) => (
-                                  <th key={i} style={{ padding: "6px 8px", background: "#071829", color: "#5a86a8", fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", textAlign: i < 2 ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {finishers.map((ath, rank) => (
-                                <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                                  <td style={{ padding: "7px 8px", color: rank === 0 ? "#ffd166" : rank === 1 ? "#a0aec0" : rank === 2 ? "#c47e2f" : "#e8f4fb", fontFamily: "'Bebas Neue',sans-serif", fontSize: 16 }}>{rank + 1}</td>
-                                  <td style={{ padding: "7px 8px", color: "#e8f4fb", fontWeight: 700 }}>{ath.name}</td>
-                                  <td style={{ padding: "7px 8px", color: "#5a86a8", textAlign: "center" }}>{ath.gender}</td>
-                                  <td style={{ padding: "7px 8px", color: "#5a86a8", textAlign: "center" }}>{ath.ageGroup}</td>
-                                  {SEGMENTS.map((_, si) => {
-                                    const dur = archiveSegDur(ath, si);
-                                    return <td key={si} style={{ padding: "7px 8px", color: "#aac4d8", textAlign: "center", fontFamily: "monospace" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>;
-                                  })}
-                                  <td style={{ padding: "7px 8px", color: "#f472b6", fontWeight: 700, textAlign: "center", fontFamily: "monospace" }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        {/* Age Group Breakdown */}
-                        {(() => {
-                          const agMap = {};
-                          finishers.forEach(a => {
-                            const key = `${a.gender} · ${a.ageGroup}`;
-                            if (!agMap[key]) agMap[key] = [];
-                            agMap[key].push(a);
-                          });
-                          const keys = Object.keys(agMap);
-                          if (keys.length <= 1) return null;
-                          return (
-                            <div style={{ marginTop: 16 }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>Age Group Breakdown</div>
-                              {keys.map(key => (
-                                <div key={key} style={{ marginBottom: 12 }}>
-                                  <div style={{ fontSize: 11, fontWeight: 700, color: "#00aeef", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6, borderLeft: "3px solid #00aeef", paddingLeft: 8 }}>{key}</div>
-                                  {agMap[key].map((ath, i) => (
-                                    <div key={ath.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent", borderRadius: 4 }}>
-                                      <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 18, color: i === 0 ? "#ffd166" : i === 1 ? "#a0aec0" : i === 2 ? "#c47e2f" : "#3a6080", minWidth: 22 }}>{i + 1}</div>
-                                      <div style={{ flex: 1, color: "#e8f4fb", fontWeight: 600, fontSize: 13 }}>{ath.name}</div>
-                                      <div style={{ fontFamily: "monospace", color: "#f472b6", fontSize: 12, fontWeight: 700 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                    {/* Results */}
+                    {resultsRace && (
+                      <div style={{ marginTop: 20 }}>
+                        {finishers.length > 0 ? (
+                          <div style={{ background: "#0c2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6" }}>
+                                Results — {finishers.length} Finisher{finishers.length !== 1 ? "s" : ""}
+                              </div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <button onClick={() => printArchivedResults(resultsRace)} style={{ ...btnStyle("#00aeef", true), padding: "5px 10px", fontSize: 11 }}>📊 Print Results</button>
+                                <button onClick={() => printArchivedCert(resultsRace, null)} style={{ ...btnStyle("#ffd166", true), padding: "5px 10px", fontSize: 11 }}>🏆 All Certs</button>
+                                <button onClick={() => {
+                                  const entry = { ...resultsRace, id: "manual_" + Date.now() };
+                                  const updated = [...savedArchive, entry];
+                                  setSavedArchive(updated);
+                                  localStorage.setItem("tri-archive", JSON.stringify(updated));
+                                  if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
+                                  setManualSavedMsg("Saved to Past Races!");
+                                  setTimeout(() => setManualSavedMsg(""), 3000);
+                                }} style={{ ...btnStyle("#4ade80", true), padding: "5px 10px", fontSize: 11 }}>💾 Save</button>
+                              </div>
+                            </div>
+                            {manualSavedMsg && <div style={{ color: "#4ade80", fontSize: 12, fontWeight: 700, marginBottom: 10, textAlign: "center" }}>{manualSavedMsg}</div>}
+                            <div style={{ overflowX: "auto" }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                <thead>
+                                  <tr>{["#","Athlete","Gender","Age Grp",...SEGMENTS,"Chip Time"].map((h, i) => (
+                                    <th key={i} style={{ padding: "6px 8px", background: "#071829", color: "#5a86a8", fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", textAlign: i < 2 ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
+                                  ))}</tr>
+                                </thead>
+                                <tbody>
+                                  {finishers.map((ath, rank) => (
+                                    <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                                      <td style={{ padding: "7px 8px", color: rank === 0 ? "#ffd166" : rank === 1 ? "#a0aec0" : rank === 2 ? "#c47e2f" : "#e8f4fb", fontFamily: "'Bebas Neue',sans-serif", fontSize: 16 }}>{rank + 1}</td>
+                                      <td style={{ padding: "7px 8px", color: "#e8f4fb", fontWeight: 700 }}>{ath.name}</td>
+                                      <td style={{ padding: "7px 8px", color: "#5a86a8", textAlign: "center" }}>{ath.gender}</td>
+                                      <td style={{ padding: "7px 8px", color: "#5a86a8", textAlign: "center" }}>{ath.ageGroup}</td>
+                                      {SEGMENTS.map((_, si) => { const dur = archiveSegDur(ath, si); return <td key={si} style={{ padding: "7px 8px", color: "#aac4d8", textAlign: "center", fontFamily: "monospace" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>; })}
+                                      <td style={{ padding: "7px 8px", color: "#f472b6", fontWeight: 700, textAlign: "center", fontFamily: "monospace" }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {(() => {
+                              const agMap = {};
+                              finishers.forEach(a => { const key = `${a.gender} · ${a.ageGroup}`; if (!agMap[key]) agMap[key] = []; agMap[key].push(a); });
+                              const keys = Object.keys(agMap);
+                              if (keys.length <= 1) return null;
+                              return (
+                                <div style={{ marginTop: 16 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 10 }}>Age Group Breakdown</div>
+                                  {keys.map(key => (
+                                    <div key={key} style={{ marginBottom: 12 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 700, color: "#00aeef", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6, borderLeft: "3px solid #00aeef", paddingLeft: 8 }}>{key}</div>
+                                      {agMap[key].map((ath, i) => (
+                                        <div key={ath.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent", borderRadius: 4 }}>
+                                          <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 18, color: i === 0 ? "#ffd166" : i === 1 ? "#a0aec0" : i === 2 ? "#c47e2f" : "#3a6080", minWidth: 22 }}>{i + 1}</div>
+                                          <div style={{ flex: 1, color: "#e8f4fb", fontWeight: 600, fontSize: 13 }}>{ath.name}</div>
+                                          <div style={{ fontFamily: "monospace", color: "#f472b6", fontSize: 12, fontWeight: 700 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                                        </div>
+                                      ))}
                                     </div>
                                   ))}
                                 </div>
-                              ))}
+                              );
+                            })()}
+                            <div style={{ marginTop: 14, borderTop: "1px solid rgba(244,114,182,0.15)", paddingTop: 12 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 8 }}>Individual Certificates</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {finishers.map(ath => (
+                                  <button key={ath.id} onClick={() => printArchivedCert(resultsRace, ath)} style={{ ...btnStyle("#ffd166", true), padding: "4px 12px", fontSize: 11 }}>🏅 {ath.name}</button>
+                                ))}
+                              </div>
                             </div>
-                          );
-                        })()}
-
-                        {/* Individual Cert buttons */}
-                        <div style={{ marginTop: 14, borderTop: "1px solid rgba(244,114,182,0.15)", paddingTop: 12 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 8 }}>Individual Certificates</div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                            {finishers.map(ath => (
-                              <button key={ath.id} onClick={() => printArchivedCert(resultsRace, ath)} style={{ ...btnStyle("#ffd166", true), padding: "4px 12px", fontSize: 11 }}>
-                                🏅 {ath.name}
-                              </button>
-                            ))}
                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {resultsRace && finishers.length === 0 && (
-                      <div style={{ background: "#0c2240", border: "1px solid rgba(244,114,182,0.2)", borderRadius: 8, padding: "20px", textAlign: "center", color: "#3a6080", fontSize: 13 }}>
-                        No athletes with all 5 segments filled in. Make sure all times are in MM:SS format.
+                        ) : (
+                          <div style={{ background: "#0c2240", border: "1px solid rgba(244,114,182,0.2)", borderRadius: 8, padding: "20px", textAlign: "center", color: "#3a6080", fontSize: 13 }}>
+                            No athletes with all 5 segments filled in. Make sure all times are in MM:SS format.
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
