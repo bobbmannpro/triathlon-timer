@@ -251,6 +251,8 @@
         const [liveRaceLoading, setLiveRaceLoading] = useState(false);
         const liveRaceUnsubRef = useRef(null);
         const [spectatorClockMs, setSpectatorClockMs] = useState(0);
+        const [joinCode, setJoinCode] = useState("");
+        const [joinAthIdx, setJoinAthIdx] = useState(null);
 
         // Local ticker for spectator — interpolates clock forward between RTDB updates
         useEffect(() => {
@@ -1905,6 +1907,16 @@
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#a78bfa" }}>&#8594;</div>
                     </button>
 
+                    {/* Join as Athlete */}
+                    <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setJoinCode(""); setJoinAthIdx(null); setView("join"); }} style={{ background: "linear-gradient(135deg,#0c2240,#071a2e)", border: "2px solid #38bdf8", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                      <div style={{ fontSize: 40, lineHeight: 1 }}>🏃</div>
+                      <div>
+                        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#38bdf8" }}>Join as Athlete</div>
+                        <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>Enter a race code to track your live splits</div>
+                      </div>
+                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#38bdf8" }}>&#8594;</div>
+                    </button>
+
                   </div>
                 </div>
               )}
@@ -2839,6 +2851,108 @@
                   </div>
                 );
               })()}
+
+              {/* ── JOIN AS ATHLETE ── */}
+              {view === "join" && (
+                <div style={{ paddingTop: 8, maxWidth: 480, margin: "0 auto" }}>
+                  {!liveRace ? (
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#5a86a8", marginBottom: 8 }}>RACE CODE</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                          onKeyDown={e => e.key === "Enter" && watchRace(joinCode)}
+                          placeholder="e.g. ABC123" maxLength={6}
+                          style={{ flex: 1, background: "#0c2240", border: "2px solid rgba(56,189,248,0.4)", borderRadius: 8, padding: "12px 14px", color: "#38bdf8", fontSize: 22, fontFamily: "'Bebas Neue'", letterSpacing: 6, outline: "none", textAlign: "center" }} />
+                        <button onClick={() => watchRace(joinCode)} style={{ ...btnStyle("#38bdf8"), padding: "12px 20px", fontSize: 13 }}>Find Race</button>
+                      </div>
+                      {liveRaceLoading && <div style={{ color: "#5a86a8", fontSize: 12, marginTop: 8, textAlign: "center" }}>Searching…</div>}
+                      {liveRaceError && <div style={{ color: "#f4742b", fontSize: 12, marginTop: 8, textAlign: "center" }}>{liveRaceError}</div>}
+                    </div>
+                  ) : joinAthIdx === null ? (
+                    <div>
+                      <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div>
+                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 3, color: "#38bdf8" }}>{liveRace.publisherName || "Live Race"}</div>
+                          <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1 }}>CODE: {liveRace.code} · {(liveRace.athletes || []).length} athletes</div>
+                        </div>
+                        <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setJoinCode(""); }} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#5a86a8", marginBottom: 10 }}>SELECT YOUR NAME</div>
+                      {(liveRace.athletes || []).map((ath, idx) => (
+                        <button key={idx} onClick={() => setJoinAthIdx(idx)}
+                          style={{ display: "block", width: "100%", background: "#0c2240", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6, padding: "12px 14px", color: "#e8f4fb", fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
+                          {ath.name} <span style={{ fontSize: 11, color: "#5a86a8", fontWeight: 400 }}>{ath.gender} · {ath.ageGroup}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (() => {
+                    const ath = (liveRace.athletes || [])[joinAthIdx];
+                    if (!ath) return null;
+                    const SEGS = liveRace.segments || SEGMENTS;
+                    const splits = Array.from({length: SEGS.length}, (_, i) =>
+                      ath.splits && ath.splits[i] != null ? ath.splits[i] : null
+                    );
+                    const nextIdx = ath.finished ? -1 : splits.findIndex(s => s === null);
+                    const liveSegMs = nextIdx === 0
+                      ? (ath.startOffset != null ? spectatorClockMs - ath.startOffset : null)
+                      : nextIdx > 0
+                        ? spectatorClockMs - splits[nextIdx - 1]
+                        : null;
+                    const durations = splits.map((s, i) => {
+                      if (s === null) return null;
+                      const prev = i === 0 ? (ath.startOffset || 0) : splits[i - 1];
+                      return prev != null ? s - prev : null;
+                    });
+                    return (
+                      <div>
+                        <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div>
+                            <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1, marginBottom: 2 }}>CODE: {liveRace.code}</div>
+                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 26, letterSpacing: 3, color: "#e8f4fb" }}>{ath.name}</div>
+                          </div>
+                          <button onClick={() => setJoinAthIdx(null)} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Change</button>
+                        </div>
+
+                        {!ath.started ? (
+                          <div style={{ background: "rgba(56,189,248,0.06)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 8, padding: "20px", textAlign: "center", marginBottom: 14 }}>
+                            <div style={{ fontSize: 28, marginBottom: 6 }}>⏳</div>
+                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 3, color: "#38bdf8" }}>Waiting for Start</div>
+                            <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 4 }}>The race director will send you off shortly</div>
+                          </div>
+                        ) : ath.finished ? (
+                          <div style={{ background: "rgba(74,222,128,0.08)", border: "2px solid #4ade80", borderRadius: 8, padding: "20px", textAlign: "center", marginBottom: 14 }}>
+                            <div style={{ fontSize: 28, marginBottom: 6 }}>🎉</div>
+                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#4ade80" }}>You Finished!</div>
+                            {splits[SEGS.length - 1] != null && ath.startOffset != null && (
+                              <div style={{ fontSize: 32, fontFamily: "'Bebas Neue'", letterSpacing: 4, color: "#e8f4fb", marginTop: 6 }}>{formatElapsed(splits[SEGS.length - 1] - ath.startOffset)}</div>
+                            )}
+                          </div>
+                        ) : nextIdx >= 0 ? (
+                          <div style={{ background: "rgba(56,189,248,0.06)", border: "2px solid #38bdf8", borderRadius: 8, padding: "16px", textAlign: "center", marginBottom: 14 }}>
+                            <div style={{ fontSize: 11, color: "#5a86a8", letterSpacing: 2, marginBottom: 4 }}>CURRENT SEGMENT</div>
+                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, letterSpacing: 3, color: "#38bdf8" }}>{SEGS[nextIdx]}</div>
+                            {liveSegMs != null && (
+                              <div style={{ fontSize: 40, fontFamily: "'Bebas Neue'", letterSpacing: 4, color: "#e8f4fb", marginTop: 4 }}>{formatElapsed(liveSegMs)}</div>
+                            )}
+                          </div>
+                        ) : null}
+
+                        <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px" }}>
+                          <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 2, marginBottom: 10 }}>SPLITS</div>
+                          {SEGS.map((seg, i) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < SEGS.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                              <div style={{ fontSize: 13, color: durations[i] != null ? "#e8f4fb" : i === nextIdx ? "#38bdf8" : "#3a6080", fontWeight: durations[i] != null ? 600 : 400 }}>{seg}</div>
+                              <div style={{ fontSize: 13, fontFamily: "'Bebas Neue'", letterSpacing: 2, color: durations[i] != null ? "#e8f4fb" : i === nextIdx ? "#38bdf8" : "#3a6080" }}>
+                                {durations[i] != null ? formatElapsed(durations[i]) : i === nextIdx && liveSegMs != null ? formatElapsed(liveSegMs) : "—"}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {/* ── SETUP ── */}
               {view === "setup" && (
