@@ -252,6 +252,10 @@
         const liveRaceUnsubRef = useRef(null);
         const [spectatorClockMs, setSpectatorClockMs] = useState(0);
         const [joinAthIdx, setJoinAthIdx] = useState(null);
+        const [joinRegistering, setJoinRegistering] = useState(false);
+        const [joinSelfName, setJoinSelfName] = useState(() => { try { return JSON.parse(localStorage.getItem("tri-my-profile") || "{}").name || ""; } catch { return ""; } });
+        const [joinSelfGender, setJoinSelfGender] = useState(() => { try { return JSON.parse(localStorage.getItem("tri-my-profile") || "{}").gender || "Male"; } catch { return "Male"; } });
+        const [joinSelfAgeGroup, setJoinSelfAgeGroup] = useState(() => { try { return JSON.parse(localStorage.getItem("tri-my-profile") || "{}").ageGroup || ""; } catch { return ""; } });
 
         // Local ticker for spectator — interpolates clock forward between RTDB updates
         useEffect(() => {
@@ -438,6 +442,24 @@
           } catch (e) { console.warn("Session restore failed:", e); }
         }, []);
 
+        // When race is live, listen for athletes self-registering and merge them into local state
+        useEffect(() => {
+          if (!liveRaceCode || !currentUser) return;
+          const ref = rtdb.ref("liveRaces/" + liveRaceCode + "/athletes");
+          const fn = snap => {
+            const rtdbAthletes = snap.val() || [];
+            const list = Array.isArray(rtdbAthletes) ? rtdbAthletes : Object.values(rtdbAthletes);
+            setAthletes(prev => {
+              const existingNames = new Set(prev.map(a => a.name.toLowerCase()));
+              const toAdd = list.filter(a => a && a.name && !existingNames.has(a.name.toLowerCase()));
+              if (toAdd.length === 0) return prev;
+              return [...prev, ...toAdd.map(a => ({ id: Date.now() + Math.random(), name: a.name, gender: a.gender || "Male", ageGroup: a.ageGroup || "", splits: Array(SEGMENTS.length).fill(null), startOffset: null, started: false, finished: false }))];
+            });
+          };
+          ref.on("value", fn);
+          return () => ref.off("value", fn);
+        }, [liveRaceCode]);
+
         // Firebase auth listener — loads RTDB data on login
         useEffect(() => {
           const unsub = auth.onAuthStateChanged(async user => {
@@ -577,6 +599,23 @@
           ref.on("value", fn, () => { setLiveRaceLoading(false); setLiveRaceError("Could not connect. Check the code and try again."); });
           liveRaceUnsubRef.current = { ref, fn };
         }
+
+        async function joinSelfRegister() {
+          if (!joinSelfName.trim() || !liveRace) return;
+          const name = joinSelfName.trim();
+          const gender = joinSelfGender;
+          const ageGroup = joinSelfAgeGroup.trim();
+          localStorage.setItem("tri-my-profile", JSON.stringify({ name, gender, ageGroup }));
+          const snap = await rtdb.ref("liveRaces/" + liveRace.code + "/athletes").once("value");
+          const current = snap.val() || [];
+          const list = Array.isArray(current) ? current : Object.values(current);
+          const newIdx = list.length;
+          const newAth = { name, gender, ageGroup, splits: Array(SEGMENTS.length).fill(null), startOffset: null, started: false, finished: false };
+          await rtdb.ref("liveRaces/" + liveRace.code + "/athletes/" + newIdx).set(newAth);
+          setJoinAthIdx(newIdx);
+          setJoinRegistering(false);
+        }
+
         function rebuildAthletesFromRTDB(data) {
           const segCount = (data.segments || SEGMENTS).length;
           return (data.athletes || []).map((ath, i) => ({
@@ -2876,13 +2915,45 @@
                         </div>
                         <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setJoinCode(""); }} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#5a86a8", marginBottom: 10 }}>SELECT YOUR NAME</div>
-                      {(liveRace.athletes || []).map((ath, idx) => (
-                        <button key={idx} onClick={() => setJoinAthIdx(idx)}
-                          style={{ display: "block", width: "100%", background: "#0c2240", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6, padding: "12px 14px", color: "#e8f4fb", fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
-                          {ath.name} <span style={{ fontSize: 11, color: "#5a86a8", fontWeight: 400 }}>{ath.gender} · {ath.ageGroup}</span>
-                        </button>
-                      ))}
+                      {!joinRegistering ? (
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#5a86a8", marginBottom: 10 }}>SELECT YOUR NAME</div>
+                          {(liveRace.athletes || []).map((ath, idx) => (
+                            <button key={idx} onClick={() => setJoinAthIdx(idx)}
+                              style={{ display: "block", width: "100%", background: "#0c2240", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6, padding: "12px 14px", color: "#e8f4fb", fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
+                              {ath.name} <span style={{ fontSize: 11, color: "#5a86a8", fontWeight: 400 }}>{ath.gender} · {ath.ageGroup}</span>
+                            </button>
+                          ))}
+                          <button onClick={() => setJoinRegistering(true)} style={{ display: "block", width: "100%", background: "none", border: "1px dashed rgba(56,189,248,0.3)", borderRadius: 6, padding: "12px 14px", color: "#5a86a8", fontSize: 13, cursor: "pointer", marginTop: 8, textAlign: "center" }}>
+                            + I'm not on the list — add myself
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#5a86a8", marginBottom: 14 }}>YOUR INFO</div>
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 10, color: "#5a86a8", marginBottom: 4, letterSpacing: 1 }}>FULL NAME</div>
+                            <input value={joinSelfName} onChange={e => setJoinSelfName(e.target.value)} placeholder="First Last" style={{ width: "100%", boxSizing: "border-box", background: "#0c2240", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 6, padding: "10px 12px", color: "#e8f4fb", fontSize: 15, outline: "none" }} />
+                          </div>
+                          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 10, color: "#5a86a8", marginBottom: 4, letterSpacing: 1 }}>GENDER</div>
+                              <select value={joinSelfGender} onChange={e => setJoinSelfGender(e.target.value)} style={{ width: "100%", background: "#0c2240", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 6, padding: "10px 12px", color: "#e8f4fb", fontSize: 14, outline: "none" }}>
+                                <option>Male</option><option>Female</option><option>Non-binary</option>
+                              </select>
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 10, color: "#5a86a8", marginBottom: 4, letterSpacing: 1 }}>AGE GROUP</div>
+                              <input value={joinSelfAgeGroup} onChange={e => setJoinSelfAgeGroup(e.target.value)} placeholder="e.g. 9-10" list="join-ag-list" style={{ width: "100%", boxSizing: "border-box", background: "#0c2240", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 6, padding: "10px 12px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
+                              <datalist id="join-ag-list">{(liveRace.ageGroups || DEFAULT_AGE_GROUPS).map(ag => <option key={ag} value={ag} />)}</datalist>
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => setJoinRegistering(false)} style={{ flex: 1, background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 6, padding: "12px", color: "#5a86a8", fontSize: 13, cursor: "pointer" }}>Back</button>
+                            <button onClick={joinSelfRegister} disabled={!joinSelfName.trim()} style={{ flex: 2, ...btnStyle("#38bdf8"), padding: "12px", fontSize: 14, letterSpacing: 1, opacity: joinSelfName.trim() ? 1 : 0.4 }}>Join Race →</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (() => {
                     const ath = (liveRace.athletes || [])[joinAthIdx];
@@ -3312,16 +3383,16 @@
                           {livePublishError && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6, maxWidth: 280, lineHeight: 1.4 }}>{livePublishError}</div>}
                         </div>
                       ) : (
-                        <div style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: syncMode ? "rgba(74,222,128,0.08)" : "rgba(255,209,102,0.08)", border: `1px solid ${syncMode ? "rgba(74,222,128,0.4)" : "rgba(255,209,102,0.3)"}`, borderRadius: 6, padding: "6px 12px" }}>
-                          {syncMode ? (
-                            <span style={{ fontSize: 10, color: "#4ade80", letterSpacing: 2, fontWeight: 700 }}>⚡ SYNCED</span>
-                          ) : (
-                            <span style={{ fontSize: 11, color: "#5a86a8", letterSpacing: 1 }}>LIVE</span>
-                          )}
-                          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: syncMode ? "#4ade80" : "#ffd166", letterSpacing: 4 }}>{liveRaceCode}</span>
-                          <span style={{ fontSize: 10, color: "#5a86a8" }}>{syncMode ? "multi-device active" : "share with spectators"}</span>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); syncModeRef.current = false; setSyncMode(false); if (!syncMode) rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
-                            style={{ background: "none", border: "none", color: "#3a6080", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>&times;</button>
+                        <div style={{ background: "rgba(56,189,248,0.06)", border: "2px solid rgba(56,189,248,0.35)", borderRadius: 10, padding: "14px 16px", marginTop: 6 }}>
+                          <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 2, marginBottom: 6 }}>ATHLETE JOIN CODE</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 52, letterSpacing: 10, color: "#38bdf8", lineHeight: 1, flex: 1 }}>{liveRaceCode}</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                              <button onClick={() => navigator.clipboard?.writeText(liveRaceCode)} style={{ ...btnStyle("#38bdf8", true), fontSize: 11, padding: "5px 10px", letterSpacing: 1 }}>Copy</button>
+                              <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); syncModeRef.current = false; setSyncMode(false); if (!syncMode) rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#3a6080", fontSize: 10, cursor: "pointer", padding: "4px 8px" }}>Stop Live</button>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 6 }}>Athletes open Timeathon → Join as Athlete and enter this code{syncMode ? <span style={{ color: "#4ade80", marginLeft: 8, fontWeight: 700 }}>⚡ Synced</span> : ""}</div>
                         </div>
                       )}
                     </div>
