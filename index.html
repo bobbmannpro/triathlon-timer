@@ -308,6 +308,7 @@
         const [archiveOpenId, setArchiveOpenId] = useState(null);
         const [archiveOpenAthId, setArchiveOpenAthId] = useState(null);
         const archiveSessionRef = useRef(null);
+        const liveSessionRef   = useRef(null);
 
         // Manual Race Entry
         const [manualRaceName, setManualRaceName] = useState("My Race");
@@ -391,7 +392,13 @@
 
         // Persist live race session whenever meaningful state changes
         useEffect(() => {
-          if (clockStarted) saveSession();
+          if (!clockStarted) return;
+          liveSessionRef.current = {
+            clockRunning, clockStarted,
+            athletes, courses, units, certConfig, ageGroups, raceMode,
+            loadedRaceId, liveRaceCode,
+          };
+          saveSession();
         }, [athletes, clockRunning, clockStarted, courses, units, certConfig, ageGroups, raceMode]);
 
         // Heartbeat: keep savedAt + clockMs fresh every 10s while clock is running
@@ -683,22 +690,17 @@
         }
 
         function saveSession() {
-          if (!clockStarted) return;
+          const snap = liveSessionRef.current;
+          if (!snap || !snap.clockStarted) return;
+          const liveMs = snap.clockRunning && startTimeRef.current != null
+            ? Date.now() - startTimeRef.current
+            : offsetRef.current;
           try {
             localStorage.setItem("tri-active-session", JSON.stringify({
               savedAt: Date.now(),
-              clockMs,
-              clockRunning,
-              clockStarted,
-              athletes,
-              courses,
-              units,
-              certConfig,
-              ageGroups,
-              raceMode,
-              loadedRaceId,
-              liveRaceCode,
+              clockMs: liveMs,
               archiveSessionId: archiveSessionRef.current,
+              ...snap,
             }));
           } catch (e) { console.warn("saveSession failed:", e); }
         }
