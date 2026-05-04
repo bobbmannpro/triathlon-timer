@@ -381,10 +381,54 @@
           return () => { ref.off("value", fn); hostListenerRef.current = null; };
         }, [liveRaceCode]);
 
-        // Auto-archive whenever an athlete finishes
+        // Auto-archive whenever an athlete finishes; clear session when all done
         useEffect(() => {
-          if (athletes.some(a => a.finished)) autoArchiveRace();
+          if (athletes.some(a => a.finished)) {
+            autoArchiveRace();
+            if (athletes.length > 0 && athletes.every(a => a.finished)) clearSession();
+          }
         }, [athletes]);
+
+        // Persist live race session whenever meaningful state changes
+        useEffect(() => {
+          if (clockStarted) saveSession();
+        }, [athletes, clockRunning, clockStarted, courses, units, certConfig, ageGroups, raceMode]);
+
+        // Heartbeat: keep savedAt + clockMs fresh every 10s while clock is running
+        useEffect(() => {
+          if (!clockRunning) return;
+          const id = setInterval(() => saveSession(), 10000);
+          return () => clearInterval(id);
+        }, [clockRunning]);
+
+        // Restore live session on page refresh
+        useEffect(() => {
+          try {
+            const raw = localStorage.getItem("tri-active-session");
+            if (!raw) return;
+            const s = JSON.parse(raw);
+            if (!s || !s.clockStarted) return;
+            const now = Date.now();
+            const restoredMs = s.clockRunning
+              ? (s.clockMs || 0) + (now - (s.savedAt || now))
+              : (s.clockMs || 0);
+            // Set ref synchronously before state batch flushes so clock useEffect reads correct offset
+            offsetRef.current = restoredMs;
+            if (s.archiveSessionId) archiveSessionRef.current = s.archiveSessionId;
+            if (s.athletes)    setAthletes(s.athletes);
+            if (s.courses)     setCourses(s.courses);
+            if (s.units)       setUnits(s.units);
+            if (s.certConfig)  setCertConfig(s.certConfig);
+            if (s.ageGroups)   setAgeGroups(s.ageGroups);
+            if (s.raceMode)    setRaceMode(s.raceMode);
+            if (s.loadedRaceId !== undefined) setLoadedRaceId(s.loadedRaceId);
+            if (s.liveRaceCode) setLiveRaceCode(s.liveRaceCode);
+            setClockMs(restoredMs);
+            setClockStarted(true);
+            setView("race");
+            setClockRunning(s.clockRunning === true);
+          } catch (e) { console.warn("Session restore failed:", e); }
+        }, []);
 
         // Firebase auth listener — loads RTDB data on login
         useEffect(() => {
@@ -638,6 +682,30 @@
           if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
         }
 
+        function saveSession() {
+          if (!clockStarted) return;
+          try {
+            localStorage.setItem("tri-active-session", JSON.stringify({
+              savedAt: Date.now(),
+              clockMs,
+              clockRunning,
+              clockStarted,
+              athletes,
+              courses,
+              units,
+              certConfig,
+              ageGroups,
+              raceMode,
+              loadedRaceId,
+              liveRaceCode,
+              archiveSessionId: archiveSessionRef.current,
+            }));
+          } catch (e) { console.warn("saveSession failed:", e); }
+        }
+        function clearSession() {
+          localStorage.removeItem("tri-active-session");
+        }
+
         function startClock() {
           if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
           offsetRef.current = 0;
@@ -653,6 +721,7 @@
         function resetClock()  { setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0); }
 
         function resetTimers() {
+          clearSession();
           archiveSessionRef.current = null;
           syncModeRef.current = false;
           setSyncMode(false);
@@ -801,6 +870,7 @@
           e.target.value = "";
         }
         function startNewRace() {
+          clearSession();
           setAthletes([freshAthlete()]);
           resetClock();
           setView("setup");
