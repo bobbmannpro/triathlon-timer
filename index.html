@@ -631,13 +631,11 @@
             finishedCount: athletes.filter(a => a.finished).length,
             totalCount: athletes.length,
           };
-          setSavedArchive(prev => {
-            const idx = prev.findIndex(r => r.id === sessionId);
-            const updated = idx >= 0 ? prev.map((r, i) => i === idx ? entry : r) : [...prev, entry];
-            localStorage.setItem("tri-archive", JSON.stringify(updated));
-            if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
-            return updated;
-          });
+          const idx = savedArchive.findIndex(r => r.id === sessionId);
+          const updated = idx >= 0 ? savedArchive.map((r, i) => i === idx ? entry : r) : [...savedArchive, entry];
+          setSavedArchive(updated);
+          try { localStorage.setItem("tri-archive", JSON.stringify(updated)); } catch(e) { console.warn("Archive persist failed:", e); }
+          if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
         }
 
         function startClock() {
@@ -732,6 +730,7 @@
               courseId: a.courseId || loadedCourses[0].id
             };
           }));
+          archiveSessionRef.current = null;
           resetClock();
           setEditTarget(null);
         }
@@ -1906,7 +1905,7 @@
                               {archiveDeleteConfirm === race.id ? (
                                 <div style={{ display: "flex", gap: 6, alignItems: "center", width: "100%", paddingTop: 6, borderTop: "1px solid rgba(244,116,43,0.2)", marginTop: 4 }}>
                                   <span style={{ fontSize: 12, color: "#f4742b", flex: 1 }}>Delete this race from Past Races?</span>
-                                  <button onClick={() => { setSavedArchive(prev => { const updated = prev.filter(r => r.id !== race.id); localStorage.setItem("tri-archive", JSON.stringify(updated)); if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error); return updated; }); setArchiveDeleteConfirm(null); if (archiveOpenId === race.id) setArchiveOpenId(null); }} style={{ ...btnStyle("#f4742b"), padding: "4px 12px", fontSize: 11 }}>Delete</button>
+                                  <button onClick={() => { const updated = savedArchive.filter(r => r.id !== race.id); setSavedArchive(updated); try { localStorage.setItem("tri-archive", JSON.stringify(updated)); } catch(e) { console.warn("Archive persist failed:", e); } if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error); setArchiveDeleteConfirm(null); if (archiveOpenId === race.id) setArchiveOpenId(null); }} style={{ ...btnStyle("#f4742b"), padding: "4px 12px", fontSize: 11 }}>Delete</button>
                                   <button onClick={() => setArchiveDeleteConfirm(null)} style={{ ...btnStyle("#5a86a8", true), padding: "4px 12px", fontSize: 11 }}>Cancel</button>
                                 </div>
                               ) : (
