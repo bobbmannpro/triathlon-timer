@@ -282,27 +282,34 @@
           }
           const ref = rtdb.ref(`liveRaces/${liveRace.code}/athletes`);
           const fn = snap => {
-            const map = leafletMapRef.current;
-            if (!map) return;
-            const athletes = snap.val() || [];
-            athletes.forEach((ath, idx) => {
-              if (!ath || !ath.gps) return;
-              const pos = [ath.gps.lat, ath.gps.lng];
-              const markerId = ath.id || idx;
-              const curSeg = (ath.splits || []).findIndex(s => s === null);
-              const col = segColors[curSeg === -1 ? SEGMENTS.length - 1 : curSeg] || "#00aeef";
-              const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
-              const distLabel = ath.gps.distanceMi != null ? ` · ${ath.gps.distanceMi.toFixed(2)} mi` : "";
-              const tipText = `${athName}${distLabel}`;
-              if (leafletMarkersRef.current[markerId]) {
-                leafletMarkersRef.current[markerId].setLatLng(pos);
-                leafletMarkersRef.current[markerId].setTooltipContent(tipText);
-              } else {
-                leafletMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 10, color: col, fillColor: col, fillOpacity: 0.8, weight: 2 })
-                  .bindTooltip(tipText, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" })
-                  .addTo(map);
-              }
-            });
+            try {
+              const map = leafletMapRef.current;
+              if (!map) return;
+              // Guard: map container must still be in the DOM
+              const container = map.getContainer && map.getContainer();
+              if (!container || !document.body.contains(container)) return;
+              const athletes = snap.val() || [];
+              athletes.forEach((ath, idx) => {
+                if (!ath || !ath.gps) return;
+                const pos = [ath.gps.lat, ath.gps.lng];
+                const markerId = ath.id || idx;
+                const curSeg = (ath.splits || []).findIndex(s => s === null);
+                const col = segColors[curSeg === -1 ? SEGMENTS.length - 1 : curSeg] || "#00aeef";
+                const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
+                const distLabel = ath.gps.distanceMi != null ? ` · ${ath.gps.distanceMi.toFixed(2)} mi` : "";
+                const tipText = `${athName}${distLabel}`;
+                try {
+                  if (leafletMarkersRef.current[markerId]) {
+                    leafletMarkersRef.current[markerId].setLatLng(pos);
+                    leafletMarkersRef.current[markerId].setTooltipContent(tipText);
+                  } else {
+                    leafletMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 10, color: col, fillColor: col, fillOpacity: 0.8, weight: 2 })
+                      .bindTooltip(tipText, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" })
+                      .addTo(map);
+                  }
+                } catch(_) { delete leafletMarkersRef.current[markerId]; }
+              });
+            } catch(_) {}
           };
           ref.on("value", fn);
           gpsListenerRef.current = { ref, fn };
@@ -383,6 +390,7 @@
         const gpsWatchRef = useRef(null);
         const mapRef = useRef(null);
         const leafletMapRef = useRef(null);
+        const liveUpdateThrottleRef = useRef(0);
         const leafletMarkersRef = useRef({});
         const gpsListenerRef = useRef(null);
         const setupMapRef = useRef(null);
@@ -488,7 +496,11 @@
         }, [clockRunning]);
 
         useEffect(() => {
-          if (liveRaceCode && athletes.some(a => a.started)) updateLiveRace(liveRaceCode);
+          if (!liveRaceCode || !athletes.some(a => a.started)) return;
+          const now = Date.now();
+          if (now - liveUpdateThrottleRef.current < 1000) return;
+          liveUpdateThrottleRef.current = now;
+          updateLiveRace(liveRaceCode);
         }, [athletes, clockMs]);
 
         useEffect(() => {
