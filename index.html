@@ -316,20 +316,6 @@
           return () => { ref.off("value", fn); gpsListenerRef.current = null; };
         }, [liveRace, view]);
 
-        // Watch token GPS listener — tracks whether the Garmin watch has started sending data
-        useEffect(() => {
-          if (watchGpsListenerRef.current) {
-            watchGpsListenerRef.current.ref.off("value", watchGpsListenerRef.current.fn);
-            watchGpsListenerRef.current = null;
-          }
-          if (!watchToken || !joinRace || joinAthIdx === null) { setWatchConnected(false); return; }
-          const ref = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`);
-          const fn = snap => setWatchConnected(snap.exists());
-          ref.on("value", fn);
-          watchGpsListenerRef.current = { ref, fn };
-          return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
-        }, [watchToken, joinRace, joinAthIdx]);
-
         // Measure clock banner height so sticky map knows where to sit
         useEffect(() => {
           const measure = () => { if (clockBannerRef.current) setClockBannerH(clockBannerRef.current.offsetHeight); };
@@ -401,6 +387,20 @@
         const [watchConnected, setWatchConnected] = useState(false);
         const [watchTokenLoading, setWatchTokenLoading] = useState(false);
         const watchGpsListenerRef = useRef(null);
+
+        // Watch token GPS listener — tracks whether the Garmin watch has started sending data
+        useEffect(() => {
+          if (watchGpsListenerRef.current) {
+            watchGpsListenerRef.current.ref.off("value", watchGpsListenerRef.current.fn);
+            watchGpsListenerRef.current = null;
+          }
+          if (!watchToken || !joinRace || joinAthIdx === null) { setWatchConnected(false); return; }
+          const ref = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`);
+          const fn = snap => setWatchConnected(snap.exists());
+          ref.on("value", fn);
+          watchGpsListenerRef.current = { ref, fn };
+          return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
+        }, [watchToken, joinRace, joinAthIdx]);
 
         const [joinedRaces, setJoinedRaces] = useState({});
         const [registrationStep, setRegistrationStep] = useState("code");
