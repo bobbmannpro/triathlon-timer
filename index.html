@@ -316,6 +316,20 @@
           return () => { ref.off("value", fn); gpsListenerRef.current = null; };
         }, [liveRace, view]);
 
+        // Watch token GPS listener — tracks whether the Garmin watch has started sending data
+        useEffect(() => {
+          if (watchGpsListenerRef.current) {
+            watchGpsListenerRef.current.ref.off("value", watchGpsListenerRef.current.fn);
+            watchGpsListenerRef.current = null;
+          }
+          if (!watchToken || !joinRace || joinAthIdx === null) { setWatchConnected(false); return; }
+          const ref = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`);
+          const fn = snap => setWatchConnected(snap.exists());
+          ref.on("value", fn);
+          watchGpsListenerRef.current = { ref, fn };
+          return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
+        }, [watchToken, joinRace, joinAthIdx]);
+
         // Measure clock banner height so sticky map knows where to sit
         useEffect(() => {
           const measure = () => { if (clockBannerRef.current) setClockBannerH(clockBannerRef.current.offsetHeight); };
@@ -383,6 +397,10 @@
         const [joinGpsConsent, setJoinGpsConsent] = useState(false);
         const [joinGpsPos, setJoinGpsPos] = useState(null);
         const [joinNextSeg, setJoinNextSeg] = useState(0);
+        const [watchToken, setWatchToken] = useState(null);
+        const [watchConnected, setWatchConnected] = useState(false);
+        const [watchTokenLoading, setWatchTokenLoading] = useState(false);
+        const watchGpsListenerRef = useRef(null);
 
         const [joinedRaces, setJoinedRaces] = useState({});
         const [registrationStep, setRegistrationStep] = useState("code");
@@ -1527,6 +1545,32 @@
           }
           setJoinGpsActive(false);
           setJoinGpsStatus("Tracking stopped.");
+        }
+
+        async function generateWatchToken() {
+          if (!joinRace || joinAthIdx === null) return;
+          setWatchTokenLoading(true);
+          const token = Math.random().toString(36).slice(2, 6).toUpperCase() +
+                        Math.random().toString(36).slice(2, 6).toUpperCase();
+          const ath = joinRace.athletes[joinAthIdx];
+          const athleteName = ath ? (ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || "") : "";
+          try {
+            await rtdb.ref(`watchTokens/${token}`).set({
+              raceCode: joinRace.code,
+              athIdx: joinAthIdx,
+              athleteName,
+              expiresAt: Date.now() + 6 * 60 * 60 * 1000
+            });
+            setWatchToken(token);
+          } catch(e) { console.error("Watch token create failed:", e); }
+          setWatchTokenLoading(false);
+        }
+
+        async function clearWatchToken() {
+          if (!watchToken) return;
+          try { await rtdb.ref(`watchTokens/${watchToken}`).remove(); } catch(_) {}
+          setWatchToken(null);
+          setWatchConnected(false);
         }
 
         function goToRace() {
@@ -2986,10 +3030,41 @@
                                   I understand my <strong style={{ color: "#e8f4fb" }}>live GPS location</strong> will be visible to race spectators and stored in the race database for the duration of this event. I consent to this tracking.
                                 </span>
                               </label>
-                              <button onClick={startGpsTracking} disabled={!joinGpsConsent}
-                                style={{ ...btnStyle("#4ade80"), width: "100%", padding: "16px", fontSize: 16, letterSpacing: 2, fontFamily: "'Bebas Neue'", opacity: joinGpsConsent ? 1 : 0.35, cursor: joinGpsConsent ? "pointer" : "not-allowed" }}>
+                              <button onClick={startGpsTracking} disabled={!joinGpsConsent || !!watchToken}
+                                style={{ ...btnStyle("#4ade80"), width: "100%", padding: "16px", fontSize: 16, letterSpacing: 2, fontFamily: "'Bebas Neue'", opacity: (joinGpsConsent && !watchToken) ? 1 : 0.35, cursor: (joinGpsConsent && !watchToken) ? "pointer" : "not-allowed" }}>
                                 📍 Start GPS Tracking
                               </button>
+
+                              {/* ── GARMIN WATCH OPTION ── */}
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 10px" }}>
+                                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
+                                <span style={{ fontSize: 10, color: "#3a6080", letterSpacing: 2, textTransform: "uppercase" }}>or</span>
+                                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
+                              </div>
+
+                              {!watchToken ? (
+                                <button onClick={generateWatchToken} disabled={watchTokenLoading || joinGpsActive}
+                                  style={{ ...btnStyle("#00aeef", true), width: "100%", padding: "14px", fontSize: 13, letterSpacing: 1, opacity: (watchTokenLoading || joinGpsActive) ? 0.45 : 1, cursor: (watchTokenLoading || joinGpsActive) ? "not-allowed" : "pointer" }}>
+                                  {watchTokenLoading ? "Generating…" : "⌚ Connect Garmin Watch"}
+                                </button>
+                              ) : (
+                                <div style={{ background: "#071829", border: `2px solid ${watchConnected ? "#4ade80" : "#00aeef"}`, borderRadius: 10, padding: "16px", textAlign: "center" }}>
+                                  <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 8 }}>⌚ Garmin Watch Code</div>
+                                  <div style={{ fontFamily: "'Bebas Neue', monospace", fontSize: 38, letterSpacing: 10, color: "#00aeef", marginBottom: 2 }}>
+                                    {watchToken.slice(0, 4)} {watchToken.slice(4)}
+                                  </div>
+                                  <div style={{ fontSize: 10, color: "#3a6080", marginBottom: 12 }}>Enter in the Timeathon Garmin app · expires in 6 hours</div>
+                                  {watchConnected ? (
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
+                                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#4ade80", animation: "gpsping 1.2s ease-in-out infinite" }} />
+                                      <span style={{ fontSize: 12, color: "#4ade80", fontWeight: 700 }}>Watch connected · GPS active</span>
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 10 }}>Waiting for watch to connect…</div>
+                                  )}
+                                  <button onClick={clearWatchToken} style={{ ...btnStyle("#f4742b", true), padding: "6px 16px", fontSize: 11 }}>Cancel</button>
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <div>
