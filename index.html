@@ -324,6 +324,7 @@
         const [deleteConfirm, setDeleteConfirm] = useState(null);
         const [showSaveBeforeReg, setShowSaveBeforeReg] = useState(false);
         const [clearRaceConfirm, setClearRaceConfirm] = useState(false);
+        const [deleteJoinedConfirm, setDeleteJoinedConfirm] = useState(null);
         const [raceMode, setRaceMode] = useState("separate");
         const [liveRaceCode, setLiveRaceCode] = useState(null);
         const [livePublishError, setLivePublishError] = useState("");
@@ -813,6 +814,14 @@
           }
           setView("join");
           await joinRaceByCode(code);
+        }
+
+        function deleteJoinedRace(code) {
+          const updated = { ...joinedRaces };
+          delete updated[code];
+          setJoinedRaces(updated);
+          try { localStorage.setItem("tri-joined-races", JSON.stringify(updated)); } catch(e) {}
+          if (currentUser) rtdb.ref("users/" + currentUser.uid + "/joinedRaces/" + code).remove().catch(console.error);
         }
 
         async function publishLiveRace(codeIn) {
@@ -2801,13 +2810,25 @@
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         {Object.values(joinedRaces).sort((a, b) => (b.joinedAt || 0) - (a.joinedAt || 0)).map(jr => (
                           <div key={jr.code} style={{ background: "#0c2240", border: "1px solid rgba(74,222,128,0.25)", borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{jr.raceName}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{jr.raceName}</div>
                               <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 2 }}>
                                 {jr.hostName} &nbsp;·&nbsp; CODE: <span style={{ color: "#4ade80", fontFamily: "'Bebas Neue'", letterSpacing: 2 }}>{jr.code}</span>
                               </div>
                             </div>
-                            <button onClick={() => rejoinRace(jr.code)} style={{ ...btnStyle("#4ade80"), padding: "6px 14px", fontSize: 12, flexShrink: 0 }}>Rejoin</button>
+                            <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+                              {deleteJoinedConfirm === jr.code ? (
+                                <>
+                                  <button onClick={() => { deleteJoinedRace(jr.code); setDeleteJoinedConfirm(null); }} style={{ ...btnStyle("#f87171"), padding: "5px 10px", fontSize: 11 }}>Delete?</button>
+                                  <button onClick={() => setDeleteJoinedConfirm(null)} style={{ ...btnStyle("#5a86a8", true), padding: "5px 10px", fontSize: 11 }}>No</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={() => rejoinRace(jr.code)} style={{ ...btnStyle("#4ade80"), padding: "6px 14px", fontSize: 12 }}>Rejoin</button>
+                                  <button onClick={() => setDeleteJoinedConfirm(jr.code)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 18, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>&times;</button>
+                                </>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -3572,22 +3593,21 @@
                   </div>
 
                   {/* ── GPS Waypoints ── */}
-                  <div style={{ marginTop: 20, background: "#0c2240", border: "2px solid rgba(74,222,128,0.35)", borderRadius: 8, padding: "14px 16px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#4ade80" }}>📍 GPS Waypoints</div>
-                      <div style={{ fontSize: 10, color: "#5a86a8" }}>— GPS Demo Feature</div>
-                    </div>
-                    <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 10 }}>
-                      Click the map to place a pin, or drag existing pins to reposition. Add custom checkpoints for any extra points on the course.
-                    </div>
+                  <div style={{ marginTop: 20, background: "#0c2240", border: "2px solid rgba(74,222,128,0.35)", borderRadius: 8 }}>
 
-                    {/* Setup map */}
-                    {activePlacementId && (
-                      <div style={{ fontSize: 11, color: "#ffd166", background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 8, textAlign: "center" }}>
-                        Click the map to place <strong>{waypoints.find(w => w.id === activePlacementId)?.label}</strong> — or press Esc to cancel
+                    {/* Sticky map + heading — stays visible while scrolling waypoint list */}
+                    <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#0c2240", borderRadius: "8px 8px 0 0", padding: "14px 16px 0" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#4ade80" }}>📍 GPS Waypoints</div>
+                        <div style={{ fontSize: 10, color: "#5a86a8" }}>— tap map to place pins</div>
                       </div>
-                    )}
-                    <div ref={initSetupMap} style={{ height: 260, borderRadius: 8, overflow: "hidden", marginBottom: 10, cursor: activePlacementId ? "crosshair" : "grab", outline: activePlacementId ? "2px solid #ffd166" : "none" }} />
+
+                      {activePlacementId && (
+                        <div style={{ fontSize: 11, color: "#ffd166", background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 8, textAlign: "center" }}>
+                          Click the map to place <strong>{waypoints.find(w => w.id === activePlacementId)?.label}</strong> — or press Esc to cancel
+                        </div>
+                      )}
+                      <div ref={initSetupMap} style={{ height: 240, borderRadius: 8, overflow: "hidden", marginBottom: 10, cursor: activePlacementId ? "crosshair" : "grab", outline: activePlacementId ? "2px solid #ffd166" : "none" }} />
 
                     {/* Sync setup map pins on every render */}
                     {(() => {
@@ -3614,8 +3634,10 @@
                       });
                       return null;
                     })()}
+                    </div>{/* end sticky map wrapper */}
 
-                    {/* Waypoint cards */}
+                    {/* Waypoint cards — scroll under the sticky map */}
+                    <div style={{ padding: "4px 16px 14px" }}>
                     {waypoints.map((wp, wi) => {
                       const wpColor = WP_COLORS[wi % WP_COLORS.length];
                       return (
@@ -3689,7 +3711,8 @@
                       style={{ ...btnStyle("#5a86a8", true), width: "100%", padding: "8px", fontSize: 12, marginTop: 4 }}>
                       + Add Checkpoint
                     </button>
-                  </div>
+                    </div>{/* end cards section */}
+                  </div>{/* end GPS Waypoints card */}
 
                   {/* ── Saved Races ── */}
                   <div style={{ marginTop: 20, background: "#0c2240", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "14px 16px" }}>
