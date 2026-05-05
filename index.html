@@ -3174,7 +3174,11 @@
                             <div style={{ marginTop: 16, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(74,222,128,0.3)", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
                               <div style={{ fontSize: 10, letterSpacing: 3, color: "#4ade80", padding: "8px 12px", background: "#0c2240" }}>📍 LIVE GPS MAP</div>
                               <div ref={el => {
-                                if (!el || leafletMapRef.current) return;
+                                if (!el) {
+                                  if (leafletMapRef.current) { leafletMapRef.current.remove(); leafletMapRef.current = null; leafletMarkersRef.current = {}; }
+                                  return;
+                                }
+                                if (leafletMapRef.current) return;
                                 const firstGps = rankedWatchAthletes.find(a => a.gps);
                                 const center = wps[0] ? [wps[0].lat, wps[0].lng]
                                   : firstGps ? [firstGps.gps.lat, firstGps.gps.lng]
