@@ -391,6 +391,7 @@
         const mapRef = useRef(null);
         const leafletMapRef = useRef(null);
         const liveUpdateThrottleRef = useRef(0);
+        const clockBannerRef = useRef(null);
         const leafletMarkersRef = useRef({});
         const gpsListenerRef = useRef(null);
         const setupMapRef = useRef(null);
@@ -2135,7 +2136,7 @@
             <div style={{ maxWidth: 640, margin: "0 auto", padding: "16px 16px 60px" }}>
 
               {/* STOPWATCH — race flow only */}
-              {["setup", "race", "results"].includes(view) && <div style={{ background: "#0c2240", borderRadius: 8, border: "1px solid rgba(0,174,239,0.3)", padding: "14px 20px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
+              {["setup", "race", "results"].includes(view) && <div ref={clockBannerRef} style={{ background: "#0c2240", borderRadius: 8, border: "1px solid rgba(0,174,239,0.3)", padding: "14px 20px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
                 <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 56, letterSpacing: 4, color: clockRunning ? "#00aeef" : clockStarted ? "#ffd166" : "#3a6080", lineHeight: 1 }}>
                   {formatTime(clockMs)}
                 </div>
@@ -3608,7 +3609,7 @@
                   <div style={{ marginTop: 20, background: "#0c2240", border: "2px solid rgba(74,222,128,0.35)", borderRadius: 8 }}>
 
                     {/* Sticky map + heading — stays visible while scrolling waypoint list */}
-                    <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#0c2240", borderRadius: "8px 8px 0 0", padding: "14px 16px 0" }}>
+                    <div style={{ position: "sticky", top: clockBannerRef.current ? clockBannerRef.current.offsetHeight + 8 : 0, zIndex: 50, background: "#0c2240", borderRadius: "8px 8px 0 0", padding: "14px 16px 0" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#4ade80" }}>📍 GPS Waypoints</div>
                         <div style={{ fontSize: 10, color: "#5a86a8" }}>— tap map to place pins</div>
