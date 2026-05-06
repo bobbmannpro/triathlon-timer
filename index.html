@@ -310,6 +310,16 @@
                       .bindTooltip(tipText, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" })
                       .addTo(map);
                   }
+                  // Trail — only draw once athlete has started
+                  if (ath.started) {
+                    if (!leafletTrailPointsRef.current[markerId]) leafletTrailPointsRef.current[markerId] = [];
+                    leafletTrailPointsRef.current[markerId].push(pos);
+                    if (leafletTrailsRef.current[markerId]) {
+                      leafletTrailsRef.current[markerId].setLatLngs(leafletTrailPointsRef.current[markerId]);
+                    } else {
+                      leafletTrailsRef.current[markerId] = L.polyline(leafletTrailPointsRef.current[markerId], { color: col, weight: 2.5, opacity: 0.7 }).addTo(map);
+                    }
+                  }
                   if (markerId === watchSelectedAthIdRef.current) {
                     map.panTo(pos, { animate: true, duration: 0.5 });
                   }
@@ -329,6 +339,8 @@
               leafletMapRef.current.remove();
               leafletMapRef.current = null;
               leafletMarkersRef.current = {};
+              leafletTrailsRef.current = {};
+              leafletTrailPointsRef.current = {};
             }
             return;
           }
@@ -499,6 +511,8 @@
         const clockBannerRef = useRef(null);
         const [clockBannerH, setClockBannerH] = useState(0);
         const leafletMarkersRef = useRef({});
+        const leafletTrailsRef = useRef({});
+        const leafletTrailPointsRef = useRef({});
         const gpsListenerRef = useRef(null);
         const setupMapRef = useRef(null);
         const setupMapViewRef = useRef(null);
@@ -729,7 +743,9 @@
                   joinAllMarkersRef.current[markerId].setLatLng(pos);
                 } else {
                   joinAllMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 8, color: "#a78bfa", fillColor: "#a78bfa", fillOpacity: 0.8, weight: 2 })
-                    .bindTooltip(athName, { permanent: false, direction: "top" }).addTo(map);
+                    .bindTooltip(athName, { permanent: false, direction: "top" })
+                    .on("click", () => { try { joinLeafletMapRef.current?.panTo(pos, { animate: true, duration: 0.5 }); } catch(_) {} })
+                    .addTo(map);
                 }
               });
             } catch(_) {}
@@ -1736,9 +1752,15 @@
             for (let i = 1; i < t.length; i++) totalDistMi += haversineM(t[i-1][0], t[i-1][1], t[i][0], t[i][1]) / 1609.344;
           }
           let raceStartedForMe = !!(joinRace?.athletes?.[joinAthIdx]?.started);
+          let firstFix = true;
           gpsWatchRef.current = navigator.geolocation.watchPosition(pos => {
             const { latitude: lat, longitude: lng, heading, speed } = pos.coords;
             if (prevLat !== null) { totalDistMi += haversineM(prevLat, prevLng, lat, lng) / 1609.344; }
+            // Center map on first GPS fix
+            if (firstFix) {
+              firstFix = false;
+              try { if (joinLeafletMapRef.current) joinLeafletMapRef.current.setView([lat, lng], 16, { animate: true }); } catch(_) {}
+            }
             prevLat = lat; prevLng = lng;
             setJoinGpsPos({ lat, lng, accuracy: pos.coords.accuracy });
             setJoinGpsStatus(`GPS active · accuracy ±${Math.round(pos.coords.accuracy)}m · ${totalDistMi.toFixed(2)} mi`);
@@ -3474,6 +3496,12 @@
                                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", animation: "gpsping 1.4s ease-out infinite" }} />
                                 <span style={{ fontSize: 9, color: "#4ade80", letterSpacing: 1, fontWeight: 700 }}>GPS LIVE</span>
                               </div>
+                            )}
+                            {joinGpsPos && (
+                              <button onClick={() => { try { joinLeafletMapRef.current?.setView([joinGpsPos.lat, joinGpsPos.lng], 16, { animate: true }); } catch(_) {} }}
+                                style={{ position: "absolute", bottom: 8, left: 8, zIndex: 1000, background: "rgba(7,24,41,0.85)", border: "1px solid rgba(0,174,239,0.4)", borderRadius: 20, padding: "4px 10px", color: "#00aeef", fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: 1 }}>
+                                ⊕ ME
+                              </button>
                             )}
                           </div>
 
