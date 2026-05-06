@@ -667,7 +667,9 @@
                           }));
                           setAthletes(restoredAthletes);
                           const elapsed = ld.clockRunning ? (Date.now() - (ld.updatedAt || Date.now())) : 0;
-                          setClockMs((ld.clockMs || 0) + elapsed);
+                          const restoredClockMs = (ld.clockMs || 0) + elapsed;
+                          offsetRef.current = restoredClockMs;
+                          setClockMs(restoredClockMs);
                           setClockStarted(true);
                           setClockRunning(ld.clockRunning || false);
                           setLiveRaceCode(code);
