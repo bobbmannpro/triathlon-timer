@@ -258,12 +258,15 @@
         const [liveRaceLoading, setLiveRaceLoading] = useState(false);
         const liveRaceUnsubRef = useRef(null);
         const [spectatorClockMs, setSpectatorClockMs] = useState(0);
+        const [watchSelectedAthId, setWatchSelectedAthId] = useState(null);
+        const watchSelectedAthIdRef = useRef(null);
 
         // Local ticker for spectator — interpolates clock forward between RTDB updates
         useEffect(() => {
           if (!liveRace) return;
           const tick = () => {
-            const elapsed = Date.now() - (liveRace.updatedAt || Date.now());
+            if (!liveRace.clockRunning) { setSpectatorClockMs(liveRace.clockMs || 0); return; }
+            const elapsed = Math.max(0, Date.now() - (liveRace.updatedAt || Date.now()));
             setSpectatorClockMs((liveRace.clockMs || 0) + elapsed);
           };
           tick();
@@ -306,6 +309,9 @@
                     leafletMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 10, color: col, fillColor: col, fillOpacity: 0.8, weight: 2 })
                       .bindTooltip(tipText, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" })
                       .addTo(map);
+                  }
+                  if (markerId === watchSelectedAthIdRef.current) {
+                    map.panTo(pos, { animate: true, duration: 0.5 });
                   }
                 } catch(_) { delete leafletMarkersRef.current[markerId]; }
               });
@@ -436,6 +442,21 @@
         const [btDevices, setBtDevices] = useState([]);
         const [btScanning, setBtScanning] = useState(false);
         const btCharacteristicsRef = useRef({});
+        const [athleteGpsStatus, setAthleteGpsStatus] = useState({});
+        const athleteGpsListenerRef = useRef(null);
+
+        // Athlete live race data + map state
+        const [joinGpsTrail, setJoinGpsTrail] = useState([]);
+        const joinGpsTrailRef = useRef([]);
+        const [joinLiveData, setJoinLiveData] = useState(null);
+        const [joinLiveClockMs, setJoinLiveClockMs] = useState(0);
+        const joinLiveListenerRef = useRef(null);
+        const joinMapContainerRef = useRef(null);
+        const joinLeafletMapRef = useRef(null);
+        const joinLeafletTrailRef = useRef(null);
+        const joinAthMarkerRef = useRef(null);
+        const joinAllMarkersRef = useRef({});
+        const joinGpsMapListenerRef = useRef(null);
 
         // Watch token GPS listener — tracks whether the Garmin watch has started sending data
         useEffect(() => {
@@ -451,12 +472,12 @@
           return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
         }, [watchToken, joinRace, joinAthIdx]);
 
-        // Auto-start GPS when consent given + race live + athlete selected + not already tracking
+        // Auto-start GPS immediately when athlete is identified — no consent gate
         useEffect(() => {
-          if (joinGpsConsent && joinRace && joinAthIdx !== null && !joinGpsActive && !watchToken) {
+          if (joinRace && joinAthIdx !== null && !joinGpsActive && !watchToken) {
             startGpsTracking();
           }
-        }, [joinRace?.code, joinAthIdx, joinGpsConsent]);
+        }, [joinRace?.code, joinAthIdx]);
 
         const [joinedRaces, setJoinedRaces] = useState({});
         const [registrationStep, setRegistrationStep] = useState("code");
@@ -602,6 +623,122 @@
           }).catch(console.error);
         }, [clockRunning, clockStarted, liveRaceCode]);
 
+        // Host-side GPS status listener — watches athlete GPS timestamps in Firebase
+        useEffect(() => {
+          if (athleteGpsListenerRef.current) {
+            athleteGpsListenerRef.current.ref.off("value", athleteGpsListenerRef.current.fn);
+            athleteGpsListenerRef.current = null;
+          }
+          if (!liveRaceCode) { setAthleteGpsStatus({}); return; }
+          const ref = rtdb.ref(`liveRaces/${liveRaceCode}/athletes`);
+          const fn = snap => {
+            const athArr = snap.val() || [];
+            const now = Date.now();
+            const status = {};
+            athArr.forEach((ath, idx) => {
+              status[idx] = !!(ath && ath.gps && ath.gps.t && (now - ath.gps.t < 15000));
+            });
+            setAthleteGpsStatus(status);
+          };
+          ref.on("value", fn);
+          athleteGpsListenerRef.current = { ref, fn };
+          return () => { ref.off("value", fn); athleteGpsListenerRef.current = null; };
+        }, [liveRaceCode]);
+
+        // Athlete live race data listener — subscribes to Firebase when athlete joins a race
+        useEffect(() => {
+          if (joinLiveListenerRef.current) {
+            joinLiveListenerRef.current.ref.off("value", joinLiveListenerRef.current.fn);
+            joinLiveListenerRef.current = null;
+          }
+          if (!joinRace?.code) { setJoinLiveData(null); return; }
+          const ref = rtdb.ref("liveRaces/" + joinRace.code);
+          const fn = snap => setJoinLiveData(snap.exists() ? { ...snap.val(), code: snap.key } : null);
+          ref.on("value", fn);
+          joinLiveListenerRef.current = { ref, fn };
+          return () => { ref.off("value", fn); joinLiveListenerRef.current = null; };
+        }, [joinRace?.code]);
+
+        // Athlete live clock interpolation
+        useEffect(() => {
+          if (!joinLiveData) return;
+          const tick = () => {
+            if (!joinLiveData.clockRunning) { setJoinLiveClockMs(joinLiveData.clockMs || 0); return; }
+            const elapsed = Math.max(0, Date.now() - (joinLiveData.updatedAt || Date.now()));
+            setJoinLiveClockMs((joinLiveData.clockMs || 0) + elapsed);
+          };
+          tick();
+          const id = setInterval(tick, 100);
+          return () => clearInterval(id);
+        }, [joinLiveData]);
+
+        // Athlete map init — draws waypoints + route, restores trail on refresh
+        useEffect(() => {
+          // Always destroy existing map so the new container (name-picker vs race view) gets initialized
+          if (joinLeafletMapRef.current) {
+            try { joinLeafletMapRef.current.remove(); } catch(_) {}
+            joinLeafletMapRef.current = null;
+            joinLeafletTrailRef.current = null;
+            joinAthMarkerRef.current = null;
+            joinAllMarkersRef.current = {};
+          }
+          if (view !== "join" || !joinRace) return;
+          const el = joinMapContainerRef.current;
+          if (!el) return;
+          const wps = (joinRace.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
+          const center = wps[0] ? [wps[0].lat, wps[0].lng] : [37.7749, -122.4194];
+          const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 15);
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+          if (wps.length > 1) {
+            L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#5a86a8", weight: 2, dashArray: "6 4", opacity: 0.5 }).addTo(map);
+            try { map.fitBounds(wps.map(w => [w.lat, w.lng]), { padding: [20, 20] }); } catch(_) {}
+          }
+          wps.forEach(wp => {
+            const col = wp.action === "start" ? "#4ade80" : wp.action === "split" && wp.segIdx === 4 ? "#f4742b" : "#ffd166";
+            L.circleMarker([wp.lat, wp.lng], { radius: 7, color: col, fillColor: col, fillOpacity: 0.85, weight: 2 })
+              .bindTooltip(wp.label, { permanent: false, direction: "top" }).addTo(map);
+          });
+          if (joinGpsTrailRef.current.length > 1) {
+            joinLeafletTrailRef.current = L.polyline(joinGpsTrailRef.current, { color: "#4ade80", weight: 3, opacity: 0.85 }).addTo(map);
+          }
+          joinLeafletMapRef.current = map;
+          setTimeout(() => map.invalidateSize(), 200);
+        }, [joinRace?.code, joinAthIdx, view]);
+
+        // Other-athletes GPS listener for athlete's own map
+        useEffect(() => {
+          if (joinGpsMapListenerRef.current) {
+            joinGpsMapListenerRef.current.ref.off("value", joinGpsMapListenerRef.current.fn);
+            joinGpsMapListenerRef.current = null;
+          }
+          if (view !== "join" || !joinRace?.code || joinAthIdx === null) return;
+          const ref = rtdb.ref(`liveRaces/${joinRace.code}/athletes`);
+          const fn = snap => {
+            const map = joinLeafletMapRef.current;
+            if (!map) return;
+            try {
+              const container = map.getContainer && map.getContainer();
+              if (!container || !document.body.contains(container)) return;
+              const athletes = snap.val() || [];
+              athletes.forEach((ath, idx) => {
+                if (idx === joinAthIdx || !ath || !ath.gps) return;
+                const pos = [ath.gps.lat, ath.gps.lng];
+                const markerId = `ath-${idx}`;
+                const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
+                if (joinAllMarkersRef.current[markerId]) {
+                  joinAllMarkersRef.current[markerId].setLatLng(pos);
+                } else {
+                  joinAllMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 8, color: "#a78bfa", fillColor: "#a78bfa", fillOpacity: 0.8, weight: 2 })
+                    .bindTooltip(athName, { permanent: false, direction: "top" }).addTo(map);
+                }
+              });
+            } catch(_) {}
+          };
+          ref.on("value", fn);
+          joinGpsMapListenerRef.current = { ref, fn };
+          return () => { ref.off("value", fn); joinGpsMapListenerRef.current = null; };
+        }, [joinRace?.code, joinAthIdx, view]);
+
         // Persist director's live session — write only; explicit removal happens on stop/sign-out
         useEffect(() => {
           if (liveRaceCode) {
@@ -735,8 +872,14 @@
                         setJoinRace({ ...jd, code });
                         if (athIdx !== null && athIdx !== undefined) setJoinAthIdx(athIdx);
                         setView("join");
+                        // Restore GPS trail
+                        try {
+                          const trailRaw = localStorage.getItem("tri-gps-trail");
+                          if (trailRaw) { const t = JSON.parse(trailRaw); joinGpsTrailRef.current = t; setJoinGpsTrail(t); }
+                        } catch(_) {}
                       } else {
                         localStorage.removeItem("tri-active-join");
+                        localStorage.removeItem("tri-gps-trail");
                       }
                     }
                   }
@@ -1587,6 +1730,12 @@
           const triggered = new Set();
           let nextWpIdx = 0;
           let prevLat = null, prevLng = null, totalDistMi = 0;
+          // Restore cumulative distance from trail length estimate if trail exists
+          if (joinGpsTrailRef.current.length > 0) {
+            const t = joinGpsTrailRef.current;
+            for (let i = 1; i < t.length; i++) totalDistMi += haversineM(t[i-1][0], t[i-1][1], t[i][0], t[i][1]) / 1609.344;
+          }
+          let raceStartedForMe = !!(joinRace?.athletes?.[joinAthIdx]?.started);
           gpsWatchRef.current = navigator.geolocation.watchPosition(pos => {
             const { latitude: lat, longitude: lng, heading, speed } = pos.coords;
             if (prevLat !== null) { totalDistMi += haversineM(prevLat, prevLng, lat, lng) / 1609.344; }
@@ -1595,6 +1744,35 @@
             setJoinGpsStatus(`GPS active · accuracy ±${Math.round(pos.coords.accuracy)}m · ${totalDistMi.toFixed(2)} mi`);
             rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`)
               .set({ lat, lng, heading, speed, distanceMi: +totalDistMi.toFixed(3), t: Date.now() }).catch(console.error);
+            // Trail tracking
+            joinGpsTrailRef.current = [...joinGpsTrailRef.current, [lat, lng]];
+            setJoinGpsTrail([...joinGpsTrailRef.current]);
+            try { localStorage.setItem("tri-gps-trail", JSON.stringify(joinGpsTrailRef.current)); } catch(_) {}
+            // Update athlete's own map marker + trail imperatively
+            const map = joinLeafletMapRef.current;
+            if (map) {
+              try {
+                const container = map.getContainer && map.getContainer();
+                if (container && document.body.contains(container)) {
+                  const lpos = [lat, lng];
+                  if (joinAthMarkerRef.current) {
+                    joinAthMarkerRef.current.setLatLng(lpos);
+                  } else {
+                    const myName = joinRace.athletes?.[joinAthIdx]?.name || "You";
+                    joinAthMarkerRef.current = L.circleMarker(lpos, { radius: 12, color: "#4ade80", fillColor: "#4ade80", fillOpacity: 0.9, weight: 3 })
+                      .bindTooltip(myName, { permanent: true, direction: "top", offset: [0, -14], className: "leaflet-ath-label" })
+                      .addTo(map);
+                  }
+                  if (raceStartedForMe && joinGpsTrailRef.current.length > 1) {
+                    if (joinLeafletTrailRef.current) {
+                      joinLeafletTrailRef.current.setLatLngs(joinGpsTrailRef.current);
+                    } else {
+                      joinLeafletTrailRef.current = L.polyline(joinGpsTrailRef.current, { color: "#4ade80", weight: 3, opacity: 0.85 }).addTo(map);
+                    }
+                  }
+                }
+              } catch(_) {}
+            }
             allWps.forEach((wp, wi) => {
               if (triggered.has(wi)) return;
               if (haversineM(lat, lng, wp.lat, wp.lng) >= wp.radiusM) return;
@@ -1610,6 +1788,7 @@
                 const athRef = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}`);
                 if (wp.action === "start") {
                   athRef.update({ startOffset: clockMs, started: true }).catch(console.error);
+                  raceStartedForMe = true;
                 } else if (wp.action === "split") {
                   athRef.child(`splits/${wp.segIdx}`).set(clockMs).catch(console.error);
                   if (wp.segIdx === 4) athRef.update({ finished: true }).catch(console.error);
@@ -1753,6 +1932,7 @@
                     if (parsed.cadence !== null && parsed.cadence !== undefined) r.cadence = parsed.cadence;
                   } else if (key === "hr") {
                     r.heartRate = parsed.heartRate;
+                    return { ...d, readings: r, hrHistory: [...(d.hrHistory || []), { t: Date.now(), bpm: parsed.heartRate }].slice(-7200) };
                   } else if (key === "power") {
                     r.power = parsed.power;
                   } else if (key === "rsc") {
@@ -1786,7 +1966,7 @@
               optionalServices: ["heart_rate", "cycling_speed_and_cadence", "cycling_power", "running_speed_and_cadence"],
             });
             setBtDevices(prev => prev.some(d => d.id === device.id) ? prev
-              : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {} }]);
+              : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {}, hrHistory: [] }]);
             await connectBleDevice(device);
           } catch (err) {
             if (err.name !== "NotFoundError") console.error("BLE scan error:", err);
@@ -2288,7 +2468,7 @@
                           CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{finishedCount} finished&nbsp;&nbsp;·&nbsp;&nbsp;{onCourseCount} on course
                         </div>
                       </div>
-                      <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); localStorage.removeItem("tri-active-watch"); }}
+                      <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); setWatchSelectedAthId(null); watchSelectedAthIdRef.current = null; localStorage.removeItem("tri-active-watch"); }}
                         style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px", flexShrink: 0 }}>Leave</button>
                     </div>
 
@@ -3220,23 +3400,13 @@
                   {/* Waiting for race to go live */}
                   {registrationStep === "waiting" && !joinRace && (
                     <div style={{ textAlign: "center", padding: "30px 0 16px" }}>
-                      <div style={{ fontSize: 48, marginBottom: 12 }}>⏳</div>
+                      <div style={{ fontSize: 48, marginBottom: 12 }}>🏁</div>
                       <div style={{ fontFamily: "'Bebas Neue'", fontSize: 28, letterSpacing: 4, color: "#4ade80" }}>YOU'RE IN!</div>
                       <div style={{ fontSize: 13, color: "#5a86a8", marginTop: 8, marginBottom: 20, lineHeight: 1.5 }}>
-                        Registered for <strong style={{ color: "#e8f4fb" }}>{regRaceData?.raceName || "the race"}</strong>.<br/>Waiting for the director to start…
+                        Registered for <strong style={{ color: "#e8f4fb" }}>{regRaceData?.raceName || "the race"}</strong>.<br/>Waiting for the director to publish the race…
                       </div>
-                      <div style={{ background: "rgba(0,174,239,0.06)", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 10, padding: "16px 14px", marginBottom: 16, textAlign: "left" }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#00aeef", letterSpacing: 2, marginBottom: 10 }}>📍 GET GPS READY</div>
-                        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontSize: 12, color: "#5a86a8", lineHeight: 1.5 }}>
-                          <input type="checkbox" checked={joinGpsConsent} onChange={e => setJoinGpsConsent(e.target.checked)}
-                            style={{ marginTop: 2, accentColor: "#00aeef", flexShrink: 0 }} />
-                          I consent to live GPS tracking during this event. My location will be visible to race spectators.
-                        </label>
-                        {joinGpsConsent && (
-                          <div style={{ fontSize: 11, color: "#4ade80", marginTop: 10 }}>
-                            ✓ GPS will start automatically once the race goes live and you select your name.
-                          </div>
-                        )}
+                      <div style={{ background: "rgba(0,174,239,0.06)", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "12px 14px", marginBottom: 16, textAlign: "left", fontSize: 11, color: "#5a86a8", lineHeight: 1.6 }}>
+                        📍 GPS tracking will start automatically when the race goes live and you select your name. By participating you consent to live location tracking visible to race spectators.
                       </div>
                       <button onClick={() => { setRegistrationStep("code"); setRegRaceData(null); }}
                         style={{ ...btnStyle("#5a86a8", true), padding: "8px 20px", fontSize: 12 }}>Back</button>
@@ -3250,11 +3420,18 @@
                           <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 3, color: "#4ade80" }}>{joinRace.publisherName}'s Race</div>
                           <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1 }}>CODE: {joinRace.code} · {(joinRace.athletes || []).length} athletes</div>
                         </div>
-                        <button onClick={() => { setJoinRace(null); setJoinAthIdx(null); stopGpsTracking(); localStorage.removeItem("tri-active-join"); }} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
+                        <button onClick={() => { setJoinRace(null); setJoinAthIdx(null); stopGpsTracking(); joinGpsTrailRef.current = []; setJoinGpsTrail([]); setJoinLiveData(null); localStorage.removeItem("tri-active-join"); try { localStorage.removeItem("tri-gps-trail"); } catch(_) {} }} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
                       </div>
 
                       {joinAthIdx === null ? (
                         <div>
+                          {/* Course map preview while picking name */}
+                          {(joinRace.waypoints || []).some(w => w.lat !== null) && (
+                            <div style={{ marginBottom: 14, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(0,174,239,0.25)", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
+                              <div style={{ fontSize: 10, letterSpacing: 3, color: "#00aeef", padding: "7px 12px", background: "#0c2240" }}>📍 RACE COURSE</div>
+                              <div ref={joinMapContainerRef} style={{ height: 200 }} />
+                            </div>
+                          )}
                           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#5a86a8", marginBottom: 10 }}>SELECT YOUR NAME</div>
                           {(joinRace.athletes || []).map((ath, idx) => (
                             <button key={idx} onClick={() => setJoinAthIdx(idx)}
@@ -3265,86 +3442,89 @@
                         </div>
                       ) : (
                         <div>
-                          <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
-                            <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 2 }}>TRACKING AS</div>
-                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 26, letterSpacing: 3, color: "#e8f4fb" }}>{joinRace.athletes[joinAthIdx]?.name}</div>
-                            <button onClick={() => setJoinAthIdx(null)} style={{ fontSize: 11, color: "#5a86a8", background: "none", border: "none", cursor: "pointer", padding: 0 }}>Change ›</button>
-                          </div>
-
-                          {!joinGpsActive ? (
-                            <div>
-                              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "rgba(0,174,239,0.06)", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "12px 14px", marginBottom: 12, cursor: "pointer" }}>
-                                <input type="checkbox" checked={joinGpsConsent} onChange={e => setJoinGpsConsent(e.target.checked)}
-                                  style={{ marginTop: 2, accentColor: "#4ade80", flexShrink: 0, width: 16, height: 16, cursor: "pointer" }} />
-                                <span style={{ fontSize: 11, color: "#8ab4cc", lineHeight: 1.5 }}>
-                                  I understand my <strong style={{ color: "#e8f4fb" }}>live GPS location</strong> will be visible to race spectators and stored in the race database for the duration of this event. I consent to this tracking.
-                                </span>
-                              </label>
-                              <div style={{ fontSize: 10, color: "#3a6080", marginBottom: 10, lineHeight: 1.5 }}>
-                                📱 If a Garmin, Apple Watch, or other GPS watch is paired to this phone, its location is automatically used.
-                              </div>
-                              <button onClick={startGpsTracking} disabled={!joinGpsConsent || !!watchToken}
-                                style={{ ...btnStyle("#4ade80"), width: "100%", padding: "16px", fontSize: 16, letterSpacing: 2, fontFamily: "'Bebas Neue'", opacity: (joinGpsConsent && !watchToken) ? 1 : 0.35, cursor: (joinGpsConsent && !watchToken) ? "pointer" : "not-allowed" }}>
-                                📍 Start GPS Tracking
-                              </button>
-
-                              {/* ── GARMIN WATCH OPTION ── */}
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 10px" }}>
-                                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
-                                <span style={{ fontSize: 10, color: "#3a6080", letterSpacing: 2, textTransform: "uppercase" }}>or</span>
-                                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
-                              </div>
-
-                              {!watchToken ? (
-                                <button onClick={generateWatchToken} disabled={watchTokenLoading || joinGpsActive}
-                                  style={{ ...btnStyle("#00aeef", true), width: "100%", padding: "14px", fontSize: 13, letterSpacing: 1, opacity: (watchTokenLoading || joinGpsActive) ? 0.45 : 1, cursor: (watchTokenLoading || joinGpsActive) ? "not-allowed" : "pointer" }}>
-                                  {watchTokenLoading ? "Generating…" : "⌚ Connect Garmin Watch"}
-                                </button>
-                              ) : (
-                                <div style={{ background: "#071829", border: `2px solid ${watchConnected ? "#4ade80" : "#00aeef"}`, borderRadius: 10, padding: "16px", textAlign: "center" }}>
-                                  <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 8 }}>⌚ Garmin Watch Code</div>
-                                  <div style={{ fontFamily: "'Bebas Neue', monospace", fontSize: 38, letterSpacing: 10, color: "#00aeef", marginBottom: 2 }}>
-                                    {watchToken.slice(0, 4)} {watchToken.slice(4)}
-                                  </div>
-                                  <div style={{ fontSize: 10, color: "#3a6080", marginBottom: 12 }}>Enter in the Timeathon Garmin app · expires in 6 hours</div>
-                                  {watchConnected ? (
-                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
-                                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#4ade80", animation: "gpsping 1.2s ease-in-out infinite" }} />
-                                      <span style={{ fontSize: 12, color: "#4ade80", fontWeight: 700 }}>Watch connected · GPS active</span>
-                                    </div>
-                                  ) : (
-                                    <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 10 }}>Waiting for watch to connect…</div>
-                                  )}
-                                  <button onClick={clearWatchToken} style={{ ...btnStyle("#f4742b", true), padding: "6px 16px", fontSize: 11 }}>Cancel</button>
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div>
-                              <div style={{ background: "rgba(74,222,128,0.08)", border: "2px solid #4ade80", borderRadius: 8, padding: "16px", marginBottom: 12, textAlign: "center" }}>
-                                <div style={{ fontSize: 28, marginBottom: 4 }}>📡</div>
-                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#4ade80" }}>GPS ACTIVE</div>
-                                <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 4 }}>{joinGpsStatus}</div>
-                                {joinGpsPos && (
-                                  <div style={{ fontSize: 10, color: "#3a6080", marginTop: 4 }}>
-                                    {joinGpsPos.lat.toFixed(5)}, {joinGpsPos.lng.toFixed(5)}
-                                  </div>
-                                )}
-                              </div>
-                              <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
-                                <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 2, marginBottom: 6 }}>NEXT CHECKPOINT</div>
-                                {(() => {
-                                  const allWps = (joinRace.waypoints || waypoints).filter(wp => wp.lat !== null);
-                                  const next = allWps[joinNextSeg];
-                                  return next
-                                    ? <div style={{ fontWeight: 700, color: "#e8f4fb" }}>{next.label} <span style={{ color: "#5a86a8", fontWeight: 400, fontSize: 12 }}>within {next.radiusM}m</span></div>
-                                    : <div style={{ color: "#4ade80", fontWeight: 700 }}>All checkpoints passed 🎉</div>;
-                                })()}
-                              </div>
-                              <button onClick={stopGpsTracking} style={{ ...btnStyle("#f4742b", true), width: "100%", padding: "12px" }}>Stop Tracking</button>
+                          {/* Race clock */}
+                          {joinLiveData && joinLiveData.clockStarted && (
+                            <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "10px 16px", marginBottom: 12, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
+                              <div style={{ fontSize: 9, letterSpacing: 3, color: "#5a86a8" }}>RACE CLOCK</div>
+                              <div style={{ fontFamily: "'Bebas Neue'", fontSize: 44, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(joinLiveClockMs)}</div>
                             </div>
                           )}
-                          {joinGpsStatus && !joinGpsActive && <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 10, textAlign: "center" }}>{joinGpsStatus}</div>}
+
+                          {/* GPS status bar */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, background: joinGpsActive ? "rgba(74,222,128,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${joinGpsActive ? "rgba(74,222,128,0.25)" : "rgba(255,255,255,0.06)"}`, borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
+                            <div style={{ width: 8, height: 8, borderRadius: "50%", background: joinGpsActive ? "#4ade80" : "#3a6080", boxShadow: joinGpsActive ? "0 0 0 0 rgba(74,222,128,0.6)" : "none", animation: joinGpsActive ? "gpsping 1.4s ease-out infinite" : "none", flexShrink: 0 }} />
+                            <div style={{ fontSize: 11, color: joinGpsActive ? "#4ade80" : "#3a6080", flex: 1 }}>
+                              {joinGpsActive ? joinGpsStatus : (joinGpsStatus || "Starting GPS…")}
+                            </div>
+                            <div style={{ fontSize: 10, color: "#3a6080" }}>
+                              {joinRace.athletes[joinAthIdx]?.name}
+                              <button onClick={() => setJoinAthIdx(null)} style={{ fontSize: 10, color: "#3a6080", background: "none", border: "none", cursor: "pointer", padding: "0 0 0 6px" }}>change</button>
+                            </div>
+                          </div>
+
+                          {/* Live GPS map with waypoints + trail */}
+                          <div style={{ marginBottom: 12, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(74,222,128,0.3)", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
+                            <div style={{ fontSize: 10, letterSpacing: 3, color: "#4ade80", padding: "7px 12px", background: "#0c2240", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                              <span>📍 RACE MAP</span>
+                              {joinGpsTrail.length > 0 && <span style={{ color: "#5a86a8" }}>{joinGpsTrail.length} pts tracked</span>}
+                            </div>
+                            <div ref={joinMapContainerRef} style={{ height: 260 }} />
+                            {joinGpsActive && (
+                              <div style={{ position: "absolute", bottom: 8, right: 8, display: "flex", alignItems: "center", gap: 5, background: "rgba(7,24,41,0.8)", borderRadius: 20, padding: "4px 8px", zIndex: 1000 }}>
+                                <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", animation: "gpsping 1.4s ease-out infinite" }} />
+                                <span style={{ fontSize: 9, color: "#4ade80", letterSpacing: 1, fontWeight: 700 }}>GPS LIVE</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Next checkpoint */}
+                          {(() => {
+                            const allWps = (joinRace.waypoints || waypoints).filter(wp => wp.lat !== null);
+                            const next = allWps[joinNextSeg];
+                            return allWps.length > 0 && (
+                              <div style={{ background: "#0c2240", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+                                <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 2, marginBottom: 4 }}>NEXT CHECKPOINT</div>
+                                {next
+                                  ? <div style={{ fontWeight: 700, color: "#e8f4fb", fontSize: 13 }}>{next.label} <span style={{ color: "#5a86a8", fontWeight: 400, fontSize: 11 }}>· {next.radiusM}m radius</span></div>
+                                  : <div style={{ color: "#4ade80", fontWeight: 700 }}>All checkpoints passed 🎉</div>}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Race roster */}
+                          <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", marginBottom: 10 }}>RACE ROSTER</div>
+                          {(joinLiveData?.athletes || joinRace.athletes || []).map((ath, idx) => {
+                            const isMe = idx === joinAthIdx;
+                            const clock = joinLiveClockMs;
+                            const chipMs = ath.started && ath.startOffset != null ? clock - ath.startOffset : null;
+                            const finishMs = ath.finished && ath.startOffset != null && ath.splits ? ath.splits[ath.splits.length - 1] - ath.startOffset : null;
+                            return (
+                              <div key={idx} style={{ background: isMe ? "rgba(74,222,128,0.07)" : "#0c2240", borderRadius: 8, marginBottom: 7, border: `1px solid ${isMe ? "rgba(74,222,128,0.35)" : "rgba(255,255,255,0.06)"}`, padding: "10px 14px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <div>
+                                    <div style={{ fontWeight: 700, fontSize: 13, color: isMe ? "#4ade80" : "#e8f4fb" }}>
+                                      {ath.name || `${ath.firstName || ""} ${ath.lastName || ""}`.trim()}
+                                      {isMe && <span style={{ fontSize: 9, color: "#4ade80", marginLeft: 7, letterSpacing: 1, fontWeight: 700 }}>YOU</span>}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: "#5a86a8" }}>{ath.ageGroup}{ath.ageGroup && ath.gender ? " · " : ""}{ath.gender}</div>
+                                  </div>
+                                  <div style={{ textAlign: "right" }}>
+                                    {ath.finished ? (
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 16, color: "#4ade80", letterSpacing: 1 }}>{formatElapsed(finishMs)} 🏁</div>
+                                    ) : ath.started ? (
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 18, color: "#00aeef", letterSpacing: 1 }}>{formatElapsed(chipMs)}</div>
+                                    ) : (
+                                      <div style={{ fontSize: 11, color: "#3a6080" }}>Waiting…</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {joinGpsActive && (
+                            <button onClick={stopGpsTracking} style={{ ...btnStyle("#f4742b", true), width: "100%", padding: "10px", marginTop: 8, fontSize: 12 }}>Stop GPS Tracking</button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -3431,6 +3611,31 @@
                                     <div style={{ fontSize: 11, color: "#3a6080" }}>Disconnected — no data</div>
                                   )}
                                 </div>
+                                {dev.hrHistory && dev.hrHistory.length > 1 && (() => {
+                                  const pts = dev.hrHistory;
+                                  const W = 280, H = 60;
+                                  const minBpm = Math.min(...pts.map(p => p.bpm)) - 5;
+                                  const maxBpm = Math.max(...pts.map(p => p.bpm)) + 5;
+                                  const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+                                  const tRange = Math.max(t1 - t0, 1);
+                                  const x = t => ((t - t0) / tRange) * W;
+                                  const y = bpm => H - ((bpm - minBpm) / Math.max(maxBpm - minBpm, 1)) * H;
+                                  const polyPts = pts.map(p => `${x(p.t).toFixed(1)},${y(p.bpm).toFixed(1)}`).join(" ");
+                                  const lastBpm = pts[pts.length - 1].bpm;
+                                  const minsAgo = Math.round((t1 - t0) / 60000);
+                                  return (
+                                    <div style={{ marginTop: 10, background: "#071829", borderRadius: 6, padding: "8px 10px" }}>
+                                      <div style={{ fontSize: 9, color: "#5a86a8", letterSpacing: 2, marginBottom: 6 }}>HR HISTORY</div>
+                                      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+                                        <polyline fill="none" stroke="#f4742b" strokeWidth="1.5" points={polyPts} />
+                                        <text x={W - 2} y={y(lastBpm).toFixed(1)} fill="#f4742b" fontSize="9" textAnchor="end" dominantBaseline="middle">{lastBpm}</text>
+                                      </svg>
+                                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#3a6080", marginTop: 2 }}>
+                                        <span>{minsAgo > 0 ? `${minsAgo}m ago` : "just started"}</span><span>now</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             ))}
                           </div>
@@ -3697,7 +3902,7 @@
                               CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{wFinished} finished&nbsp;&nbsp;·&nbsp;&nbsp;{wOnCourse} on course
                             </div>
                           </div>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); localStorage.removeItem("tri-active-watch"); }}
+                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); setWatchSelectedAthId(null); watchSelectedAthIdRef.current = null; localStorage.removeItem("tri-active-watch"); }}
                             style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
                         </div>
                         <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
@@ -3717,8 +3922,11 @@
                           });
                           const borderColor = ath.finished ? "rgba(74,222,128,0.4)" : ath.started ? "rgba(0,174,239,0.3)" : "rgba(255,255,255,0.07)";
                           const topAccent = ath.finished ? "#4ade80" : ath.started ? "#00aeef" : "transparent";
+                          const isSelected = ath.id === watchSelectedAthId;
                           return (
-                            <div key={ath.id} style={{ background: "#0c2240", borderRadius: 10, marginBottom: 10, border: `1px solid ${borderColor}`, borderTop: `3px solid ${topAccent}`, overflow: "hidden" }}>
+                            <div key={ath.id}
+                              onClick={() => { const next = isSelected ? null : ath.id; setWatchSelectedAthId(next); watchSelectedAthIdRef.current = next; }}
+                              style={{ background: "#0c2240", borderRadius: 10, marginBottom: 10, border: `1px solid ${isSelected ? "rgba(167,139,250,0.6)" : borderColor}`, borderTop: `3px solid ${isSelected ? "#a78bfa" : topAccent}`, overflow: "hidden", cursor: "pointer" }}>
                               <div style={{ padding: "12px 14px" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                                   <div style={{ minWidth: 40, textAlign: "center", flexShrink: 0 }}>
@@ -3765,6 +3973,15 @@
                                         </div>
                                       );
                                     })}
+                                  </div>
+                                )}
+                                {isSelected && ath.gps && (
+                                  <div style={{ borderTop: "1px solid rgba(167,139,250,0.2)", padding: "10px 14px", background: "rgba(167,139,250,0.05)" }}>
+                                    <div style={{ fontSize: 10, color: "#a78bfa", letterSpacing: 2, marginBottom: 6 }}>📍 LIVE GPS</div>
+                                    <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#5a86a8", flexWrap: "wrap" }}>
+                                      {ath.gps.distanceMi != null && <span>Distance: <strong style={{ color: "#e8f4fb" }}>{ath.gps.distanceMi.toFixed(2)} mi</strong></span>}
+                                      {ath.gps.speed != null && ath.gps.speed > 0 && <span>Speed: <strong style={{ color: "#e8f4fb" }}>{(ath.gps.speed * 2.237).toFixed(1)} mph</strong></span>}
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -4364,8 +4581,11 @@
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: done ? "#4ade80" : "#00aeef", lineHeight: 1, minWidth: 24 }}>{i + 1}</div>
                             <div>
-                              <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                                 <span style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</span>
+                                {athleteGpsStatus[i] && (
+                                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", boxShadow: "0 0 0 0 rgba(74,222,128,0.6)", animation: "gpsping 1.4s ease-out infinite", flexShrink: 0 }} title="GPS active" />
+                                )}
                                 {ath.dob && calcAge(ath.dob) !== null && (
                                   <span style={{ fontSize: 11, color: "#5a86a8" }}>Age {calcAge(ath.dob)}</span>
                                 )}
