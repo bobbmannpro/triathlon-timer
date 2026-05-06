@@ -314,7 +314,50 @@
           ref.on("value", fn);
           gpsListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); gpsListenerRef.current = null; };
-        }, [liveRace, view]);
+        }, [liveRace?.code, view]);
+
+        // Watch map init — only re-runs when the race changes, not on every GPS update
+        useEffect(() => {
+          if (view !== "watch" || !liveRace) {
+            if (leafletMapRef.current) {
+              leafletMapRef.current.remove();
+              leafletMapRef.current = null;
+              leafletMarkersRef.current = {};
+            }
+            return;
+          }
+          const el = watchMapContainerRef.current;
+          if (!el || leafletMapRef.current) return;
+          const wps = (liveRace.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
+          const athletes = liveRace.athletes || [];
+          const firstGps = athletes.find && athletes.find(a => a && a.gps);
+          const center = wps[0] ? [wps[0].lat, wps[0].lng]
+            : firstGps ? [firstGps.gps.lat, firstGps.gps.lng]
+            : [37.7749, -122.4194];
+          const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 15);
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+          if (wps.length > 1) {
+            L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#4ade80", weight: 3, opacity: 0.7 }).addTo(map);
+          }
+          wps.forEach(wp => {
+            L.circleMarker([wp.lat, wp.lng], { radius: 8, color: "#4ade80", fillColor: "#4ade80", fillOpacity: 0.3, weight: 2 })
+              .bindTooltip(wp.label, { permanent: false }).addTo(map);
+          });
+          athletes.forEach && athletes.forEach((ath, idx) => {
+            if (!ath || !ath.gps) return;
+            const pos = [ath.gps.lat, ath.gps.lng];
+            const markerId = ath.id || idx;
+            const curSeg = (ath.splits || []).findIndex(s => s === null);
+            const col = segColors[curSeg === -1 ? SEGMENTS.length - 1 : curSeg] || "#00aeef";
+            const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
+            const distLabel = ath.gps.distanceMi != null ? ` · ${ath.gps.distanceMi.toFixed(2)} mi` : "";
+            leafletMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 10, color: col, fillColor: col, fillOpacity: 0.8, weight: 2 })
+              .bindTooltip(`${athName}${distLabel}`, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" })
+              .addTo(map);
+          });
+          leafletMapRef.current = map;
+          setTimeout(() => map.invalidateSize(), 200);
+        }, [liveRace?.code, view]);
 
         // Measure clock banner height so sticky map knows where to sit
         useEffect(() => {
@@ -423,6 +466,7 @@
         const gpsWatchRef = useRef(null);
         const mapRef = useRef(null);
         const leafletMapRef = useRef(null);
+        const watchMapContainerRef = useRef(null);
         const liveUpdateThrottleRef = useRef(0);
         const clockBannerRef = useRef(null);
         const [clockBannerH, setClockBannerH] = useState(0);
@@ -3677,40 +3721,7 @@
                           return (
                             <div style={{ marginTop: 16, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(74,222,128,0.3)", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
                               <div style={{ fontSize: 10, letterSpacing: 3, color: "#4ade80", padding: "8px 12px", background: "#0c2240" }}>📍 LIVE GPS MAP</div>
-                              <div ref={el => {
-                                if (!el) {
-                                  if (leafletMapRef.current) { leafletMapRef.current.remove(); leafletMapRef.current = null; leafletMarkersRef.current = {}; }
-                                  return;
-                                }
-                                if (leafletMapRef.current) return;
-                                const firstGps = rankedWatchAthletes.find(a => a.gps);
-                                const center = wps[0] ? [wps[0].lat, wps[0].lng]
-                                  : firstGps ? [firstGps.gps.lat, firstGps.gps.lng]
-                                  : [37.7749, -122.4194];
-                                const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 15);
-                                L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
-                                if (wps.length > 1) {
-                                  L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#4ade80", weight: 3, opacity: 0.7 }).addTo(map);
-                                }
-                                wps.forEach(wp => {
-                                  L.circleMarker([wp.lat, wp.lng], { radius: 8, color: "#4ade80", fillColor: "#4ade80", fillOpacity: 0.3, weight: 2 })
-                                    .bindTooltip(wp.label, { permanent: false }).addTo(map);
-                                });
-                                rankedWatchAthletes.forEach((ath, idx) => {
-                                  if (!ath.gps) return;
-                                  const pos = [ath.gps.lat, ath.gps.lng];
-                                  const markerId = ath.id || idx;
-                                  const curSeg = (ath.splits || []).findIndex(s => s === null);
-                                  const col = segColors[curSeg === -1 ? SEGMENTS.length - 1 : curSeg] || "#00aeef";
-                                  const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
-                                  const distLabel = ath.gps.distanceMi != null ? ` · ${ath.gps.distanceMi.toFixed(2)} mi` : "";
-                                  leafletMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 10, color: col, fillColor: col, fillOpacity: 0.8, weight: 2 })
-                                    .bindTooltip(`${athName}${distLabel}`, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" })
-                                    .addTo(map);
-                                });
-                                leafletMapRef.current = map;
-                                setTimeout(() => map.invalidateSize(), 200);
-                              }} style={{ height: 220 }} />
+                              <div ref={watchMapContainerRef} style={{ height: 220 }} />
                               <div style={{ position: "absolute", bottom: 8, right: 8, display: "flex", alignItems: "center", gap: 5, background: "rgba(7,24,41,0.75)", borderRadius: 20, padding: "4px 8px", zIndex: 1000 }}>
                                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: hasGps ? "#4ade80" : "#3a6080", boxShadow: hasGps ? "0 0 0 0 rgba(74,222,128,0.6)" : "none", animation: hasGps ? "gpsping 1.4s ease-out infinite" : "none" }} />
                                 <span style={{ fontSize: 9, color: hasGps ? "#4ade80" : "#3a6080", letterSpacing: 1, fontWeight: 700 }}>{hasGps ? "GPS LIVE" : "NO SIGNAL"}</span>
