@@ -451,6 +451,13 @@
           return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
         }, [watchToken, joinRace, joinAthIdx]);
 
+        // Auto-start GPS when consent given + race live + athlete selected + not already tracking
+        useEffect(() => {
+          if (joinGpsConsent && joinRace && joinAthIdx !== null && !joinGpsActive && !watchToken) {
+            startGpsTracking();
+          }
+        }, [joinRace?.code, joinAthIdx, joinGpsConsent]);
+
         const [joinedRaces, setJoinedRaces] = useState({});
         const [registrationStep, setRegistrationStep] = useState("code");
         const [regProfile, setRegProfile] = useState({ firstName: "", lastName: "", gender: "Male", ageGroup: "", dob: "" });
@@ -586,12 +593,29 @@
           if (athletes.some(a => a.finished)) autoArchiveRace();
         }, [athletes]);
 
+        // Immediately persist clock running state — no throttle, no athlete gate
+        useEffect(() => {
+          if (!liveRaceCode || !clockStarted) return;
+          rtdb.ref("liveRaces/" + liveRaceCode).update({
+            clockMs,
+            clockRunning,
+            updatedAt: Date.now(),
+          }).catch(console.error);
+        }, [clockRunning, clockStarted, liveRaceCode]);
+
         // Persist director's live session — write only; explicit removal happens on stop/sign-out
         useEffect(() => {
           if (liveRaceCode) {
             try { localStorage.setItem("tri-active-live", JSON.stringify({ code: liveRaceCode })); } catch(e) {}
           }
         }, [liveRaceCode]);
+
+        // Persist spectator watch session — cleared on Leave
+        useEffect(() => {
+          if (liveRace && view === "watch") {
+            try { localStorage.setItem("tri-active-watch", JSON.stringify({ code: liveRace.code })); } catch(e) {}
+          }
+        }, [liveRace?.code, view]);
 
         // Persist athlete's joined race — write only; explicit removal happens on Leave/sign-out
         useEffect(() => {
@@ -681,6 +705,15 @@
                         localStorage.removeItem("tri-active-live");
                       }
                     }
+                  }
+                } catch(_) {}
+
+                // Restore spectator watch session after refresh
+                try {
+                  const watchRaw = localStorage.getItem("tri-active-watch");
+                  if (watchRaw) {
+                    const { code } = JSON.parse(watchRaw);
+                    if (code) { setView("watch"); watchRace(code); }
                   }
                 } catch(_) {}
 
@@ -925,7 +958,7 @@
           const payload = {
             code, publishedBy: currentUser.uid,
             publisherName: userProfile?.displayName || userProfile?.firstName || currentUser.email,
-            startedAt: Date.now(), clockMs, status: "live",
+            startedAt: Date.now(), clockMs, clockRunning: false, clockStarted: false, status: "live",
             raceName: certConfig.eventName || "Race",
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
@@ -2256,7 +2289,7 @@
                           CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{finishedCount} finished&nbsp;&nbsp;·&nbsp;&nbsp;{onCourseCount} on course
                         </div>
                       </div>
-                      <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); }}
+                      <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); localStorage.removeItem("tri-active-watch"); }}
                         style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px", flexShrink: 0 }}>Leave</button>
                     </div>
 
@@ -3187,11 +3220,24 @@
 
                   {/* Waiting for race to go live */}
                   {registrationStep === "waiting" && !joinRace && (
-                    <div style={{ textAlign: "center", padding: "40px 0" }}>
+                    <div style={{ textAlign: "center", padding: "30px 0 16px" }}>
                       <div style={{ fontSize: 48, marginBottom: 12 }}>⏳</div>
                       <div style={{ fontFamily: "'Bebas Neue'", fontSize: 28, letterSpacing: 4, color: "#4ade80" }}>YOU'RE IN!</div>
-                      <div style={{ fontSize: 13, color: "#5a86a8", marginTop: 8, marginBottom: 24, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 13, color: "#5a86a8", marginTop: 8, marginBottom: 20, lineHeight: 1.5 }}>
                         Registered for <strong style={{ color: "#e8f4fb" }}>{regRaceData?.raceName || "the race"}</strong>.<br/>Waiting for the director to start…
+                      </div>
+                      <div style={{ background: "rgba(0,174,239,0.06)", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 10, padding: "16px 14px", marginBottom: 16, textAlign: "left" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#00aeef", letterSpacing: 2, marginBottom: 10 }}>📍 GET GPS READY</div>
+                        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontSize: 12, color: "#5a86a8", lineHeight: 1.5 }}>
+                          <input type="checkbox" checked={joinGpsConsent} onChange={e => setJoinGpsConsent(e.target.checked)}
+                            style={{ marginTop: 2, accentColor: "#00aeef", flexShrink: 0 }} />
+                          I consent to live GPS tracking during this event. My location will be visible to race spectators.
+                        </label>
+                        {joinGpsConsent && (
+                          <div style={{ fontSize: 11, color: "#4ade80", marginTop: 10 }}>
+                            ✓ GPS will start automatically once the race goes live and you select your name.
+                          </div>
+                        )}
                       </div>
                       <button onClick={() => { setRegistrationStep("code"); setRegRaceData(null); }}
                         style={{ ...btnStyle("#5a86a8", true), padding: "8px 20px", fontSize: 12 }}>Back</button>
@@ -3235,6 +3281,9 @@
                                   I understand my <strong style={{ color: "#e8f4fb" }}>live GPS location</strong> will be visible to race spectators and stored in the race database for the duration of this event. I consent to this tracking.
                                 </span>
                               </label>
+                              <div style={{ fontSize: 10, color: "#3a6080", marginBottom: 10, lineHeight: 1.5 }}>
+                                📱 If a Garmin, Apple Watch, or other GPS watch is paired to this phone, its location is automatically used.
+                              </div>
                               <button onClick={startGpsTracking} disabled={!joinGpsConsent || !!watchToken}
                                 style={{ ...btnStyle("#4ade80"), width: "100%", padding: "16px", fontSize: 16, letterSpacing: 2, fontFamily: "'Bebas Neue'", opacity: (joinGpsConsent && !watchToken) ? 1 : 0.35, cursor: (joinGpsConsent && !watchToken) ? "pointer" : "not-allowed" }}>
                                 📍 Start GPS Tracking
@@ -3398,12 +3447,19 @@
                     </div>
 
                     {!joinRace || joinAthIdx === null ? (
-                      <div style={{ fontSize: 12, color: "#3a6080", background: "rgba(0,174,239,0.04)", border: "1px solid rgba(0,174,239,0.12)", borderRadius: 8, padding: "12px 14px" }}>
-                        Join a race in the{" "}
-                        <button onClick={() => setView("join")} style={{ background: "none", border: "none", color: "#00aeef", fontSize: 12, cursor: "pointer", padding: 0, fontWeight: 700 }}>
-                          Play tab
-                        </button>{" "}
-                        and select your athlete to pair a Garmin watch.
+                      <div style={{ background: "rgba(0,174,239,0.04)", border: "1px solid rgba(0,174,239,0.12)", borderRadius: 8, padding: "14px" }}>
+                        <div style={{ fontSize: 12, color: "#e8f4fb", fontWeight: 700, marginBottom: 6 }}>⌚ Garmin Watch</div>
+                        <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 12, lineHeight: 1.6 }}>
+                          Garmin watches connect via <strong style={{ color: "#00aeef" }}>WiFi</strong> — not Bluetooth.
+                          The watch reads a token from the internet and streams GPS directly to the race.
+                        </div>
+                        <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 12, lineHeight: 1.8 }}>
+                          To pair:{" "}
+                          <span style={{ color: "#e8f4fb" }}>Play tab</span> → enter race code → select your name → token appears here automatically.
+                        </div>
+                        <button onClick={() => setView("join")} style={{ ...btnStyle("#00aeef", true), fontSize: 11, padding: "8px 16px" }}>
+                          Go to Play Tab →
+                        </button>
                       </div>
                     ) : !watchToken ? (
                       <button onClick={generateWatchToken} disabled={watchTokenLoading || joinGpsActive}
@@ -3642,7 +3698,7 @@
                               CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{wFinished} finished&nbsp;&nbsp;·&nbsp;&nbsp;{wOnCourse} on course
                             </div>
                           </div>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); }}
+                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); localStorage.removeItem("tri-active-watch"); }}
                             style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
                         </div>
                         <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
