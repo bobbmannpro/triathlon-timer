@@ -388,6 +388,12 @@
         const [watchTokenLoading, setWatchTokenLoading] = useState(false);
         const watchGpsListenerRef = useRef(null);
 
+        // Devices tab — Bluetooth LE
+        const [btSupported] = useState(() => typeof navigator !== "undefined" && !!navigator.bluetooth);
+        const [btDevices, setBtDevices] = useState([]);
+        const [btScanning, setBtScanning] = useState(false);
+        const btCharacteristicsRef = useRef({});
+
         // Watch token GPS listener — tracks whether the Garmin watch has started sending data
         useEffect(() => {
           if (watchGpsListenerRef.current) {
@@ -1573,6 +1579,159 @@
           setWatchConnected(false);
         }
 
+        // ── BLE / Bluetooth helpers ──────────────────────────────────────────
+
+        function parseHeartRate(dv) {
+          const flags = dv.getUint8(0);
+          return { heartRate: (flags & 0x01) ? dv.getUint16(1, true) : dv.getUint8(1) };
+        }
+
+        function parseCscMeasurement(dv, prevCsc, wheelCircM = 2.1) {
+          const flags = dv.getUint8(0);
+          const hasWheel = flags & 0x01;
+          const hasCrank = flags & 0x02;
+          let offset = 1;
+          let speed = null, cadence = null;
+          let cumWheelRevs, lastWheelEvt, cumCrankRevs, lastCrankEvt;
+
+          if (hasWheel && dv.byteLength >= offset + 6) {
+            cumWheelRevs = dv.getUint32(offset, true);
+            lastWheelEvt = dv.getUint16(offset + 4, true);
+            offset += 6;
+            if (prevCsc && prevCsc.cumWheelRevs !== undefined) {
+              const dRevs = (cumWheelRevs - prevCsc.cumWheelRevs + 0x100000000) % 0x100000000;
+              const dTime = ((lastWheelEvt - prevCsc.lastWheelEvt + 0x10000) % 0x10000) / 1024;
+              if (dTime > 0) speed = (dRevs * wheelCircM) / dTime;
+            }
+          }
+
+          if (hasCrank && dv.byteLength >= offset + 4) {
+            cumCrankRevs = dv.getUint16(offset, true);
+            lastCrankEvt = dv.getUint16(offset + 2, true);
+            if (prevCsc && prevCsc.cumCrankRevs !== undefined) {
+              const dRevs = (cumCrankRevs - prevCsc.cumCrankRevs + 0x10000) % 0x10000;
+              const dTime = ((lastCrankEvt - prevCsc.lastCrankEvt + 0x10000) % 0x10000) / 1024;
+              if (dTime > 0) cadence = Math.round((dRevs / dTime) * 60);
+            }
+          }
+
+          return {
+            speed, cadence,
+            cumWheelRevs: cumWheelRevs !== undefined ? cumWheelRevs : prevCsc?.cumWheelRevs,
+            lastWheelEvt: lastWheelEvt !== undefined ? lastWheelEvt : prevCsc?.lastWheelEvt,
+            cumCrankRevs: cumCrankRevs !== undefined ? cumCrankRevs : prevCsc?.cumCrankRevs,
+            lastCrankEvt: lastCrankEvt !== undefined ? lastCrankEvt : prevCsc?.lastCrankEvt,
+          };
+        }
+
+        function parseCyclingPower(dv) {
+          return { power: dv.getInt16(2, true) };
+        }
+
+        function parseRscMeasurement(dv) {
+          return { speed: dv.getUint16(1, true) / 256, cadence: dv.getUint8(3) };
+        }
+
+        async function connectBleDevice(device) {
+          const gattServer = await device.gatt.connect();
+          const deviceId = device.id;
+          btCharacteristicsRef.current[deviceId] = {};
+
+          const services = [
+            {
+              uuid: "0000180d-0000-1000-8000-00805f9b34fb",
+              chars: [{ uuid: "00002a37-0000-1000-8000-00805f9b34fb", key: "hr", parser: (dv) => parseHeartRate(dv) }],
+            },
+            {
+              uuid: "00001816-0000-1000-8000-00805f9b34fb",
+              chars: [{ uuid: "00002a5b-0000-1000-8000-00805f9b34fb", key: "csc", parser: (dv, dev) => parseCscMeasurement(dv, dev.readings.cscRaw) }],
+            },
+            {
+              uuid: "00001818-0000-1000-8000-00805f9b34fb",
+              chars: [{ uuid: "00002a63-0000-1000-8000-00805f9b34fb", key: "power", parser: (dv) => parseCyclingPower(dv) }],
+            },
+            {
+              uuid: "00001814-0000-1000-8000-00805f9b34fb",
+              chars: [{ uuid: "00002a53-0000-1000-8000-00805f9b34fb", key: "rsc", parser: (dv) => parseRscMeasurement(dv) }],
+            },
+          ];
+
+          for (const svc of services) {
+            let service;
+            try { service = await gattServer.getPrimaryService(svc.uuid); } catch (_) { continue; }
+            for (const { uuid, key, parser } of svc.chars) {
+              let char;
+              try { char = await service.getCharacteristic(uuid); } catch (_) { continue; }
+              btCharacteristicsRef.current[deviceId][uuid] = char;
+              await char.startNotifications();
+              char.addEventListener("characteristicvaluechanged", e => {
+                setBtDevices(prev => prev.map(d => {
+                  if (d.id !== deviceId) return d;
+                  const parsed = parser(e.target.value, d);
+                  const r = { ...d.readings };
+                  if (key === "csc") {
+                    r.cscRaw = { ...parsed };
+                    if (parsed.speed !== null && parsed.speed !== undefined) r.speed = +(parsed.speed * 3.6).toFixed(1);
+                    if (parsed.cadence !== null && parsed.cadence !== undefined) r.cadence = parsed.cadence;
+                  } else if (key === "hr") {
+                    r.heartRate = parsed.heartRate;
+                  } else if (key === "power") {
+                    r.power = parsed.power;
+                  } else if (key === "rsc") {
+                    r.speed = +(parsed.speed * 3.6).toFixed(1);
+                    r.cadence = parsed.cadence;
+                  }
+                  return { ...d, readings: r };
+                }));
+              });
+            }
+          }
+
+          device.addEventListener("gattserverdisconnected", () => {
+            setBtDevices(prev => prev.map(d => d.id === deviceId ? { ...d, connected: false, gattServer: null } : d));
+          });
+
+          setBtDevices(prev => prev.map(d => d.id === deviceId ? { ...d, gattServer, connected: true } : d));
+        }
+
+        async function scanBluetooth() {
+          if (!btSupported) return;
+          setBtScanning(true);
+          try {
+            const device = await navigator.bluetooth.requestDevice({
+              filters: [
+                { services: ["heart_rate"] },
+                { services: ["cycling_speed_and_cadence"] },
+                { services: ["cycling_power"] },
+                { services: ["running_speed_and_cadence"] },
+              ],
+              optionalServices: ["heart_rate", "cycling_speed_and_cadence", "cycling_power", "running_speed_and_cadence"],
+            });
+            setBtDevices(prev => prev.some(d => d.id === device.id) ? prev
+              : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {} }]);
+            await connectBleDevice(device);
+          } catch (err) {
+            if (err.name !== "NotFoundError") console.error("BLE scan error:", err);
+          } finally {
+            setBtScanning(false);
+          }
+        }
+
+        function disconnectBleDevice(deviceId) {
+          const chars = btCharacteristicsRef.current[deviceId] || {};
+          for (const char of Object.values(chars)) {
+            try { char.stopNotifications(); } catch (_) {}
+          }
+          delete btCharacteristicsRef.current[deviceId];
+          setBtDevices(prev => {
+            const dev = prev.find(d => d.id === deviceId);
+            if (dev?.gattServer?.connected) {
+              try { dev.device.gatt.disconnect(); } catch (_) {}
+            }
+            return prev.filter(d => d.id !== deviceId);
+          });
+        }
+
         function goToRace() {
           setAthletes(a => a.map((ath, i) => ({ ...ath, name: ath.name || `Athlete ${i + 1}` })));
           setView("race");
@@ -2174,7 +2333,7 @@
 
             {/* NAV — always visible */}
             <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240" }}>
-              {[["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Play"]].map(([v, label]) => (
+              {[["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Play"],["devices","📡 Devices"]].map(([v, label]) => (
                 <button key={v} onClick={() => setView(v)} style={{
                   flex: 1, padding: "11px 0", background: "none", border: "none",
                   borderBottom: view === v ? "3px solid #00aeef" : "3px solid transparent",
@@ -3096,6 +3255,184 @@
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── DEVICES ── */}
+              {view === "devices" && (
+                <div style={{ paddingTop: 8, maxWidth: 480, margin: "0 auto" }}>
+                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 30, letterSpacing: 4, color: "#e8f4fb", marginBottom: 18 }}>
+                    Devices
+                  </div>
+
+                  {/* Bluetooth card */}
+                  <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 12, border: "1px solid rgba(0,174,239,0.15)", padding: "18px 16px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>
+                      Bluetooth
+                    </div>
+
+                    {!btSupported ? (
+                      <div style={{ background: "rgba(244,116,43,0.08)", border: "1px solid rgba(244,116,43,0.3)", borderRadius: 8, padding: "12px 14px", fontSize: 12, color: "#f4742b" }}>
+                        Web Bluetooth is not available in this browser. Use Chrome or Edge on HTTPS.
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          onClick={scanBluetooth}
+                          disabled={btScanning}
+                          style={{ ...btnStyle("#00aeef"), width: "100%", padding: "14px", fontSize: 14, letterSpacing: 1, fontFamily: "'Bebas Neue', sans-serif", opacity: btScanning ? 0.6 : 1, cursor: btScanning ? "not-allowed" : "pointer" }}
+                        >
+                          {btScanning ? "Scanning…" : "Scan for Bluetooth Devices"}
+                        </button>
+
+                        {btDevices.length > 0 && (
+                          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                            {btDevices.map(dev => (
+                              <div key={dev.id} style={{ background: "#071829", border: `1px solid ${dev.connected ? "#4ade80" : "#3a6080"}`, borderRadius: 10, padding: "14px 14px 10px" }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    {dev.connected && (
+                                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#4ade80", animation: "gpsping 1.2s ease-in-out infinite" }} />
+                                    )}
+                                    <span style={{ fontWeight: 700, fontSize: 13, color: "#e8f4fb" }}>{dev.name}</span>
+                                  </div>
+                                  <button onClick={() => disconnectBleDevice(dev.id)} style={{ ...btnStyle("#f4742b", true), padding: "4px 10px", fontSize: 11 }}>
+                                    Disconnect
+                                  </button>
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                  {dev.readings.heartRate != null && (
+                                    <div style={{ background: "#0c2240", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
+                                      <div style={{ fontSize: 9, letterSpacing: 2, color: "#5a86a8", textTransform: "uppercase" }}>HR</div>
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#f4742b", letterSpacing: 1 }}>
+                                        {dev.readings.heartRate}<span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>bpm</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {dev.readings.cadence != null && (
+                                    <div style={{ background: "#0c2240", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
+                                      <div style={{ fontSize: 9, letterSpacing: 2, color: "#5a86a8", textTransform: "uppercase" }}>Cadence</div>
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#ffd166", letterSpacing: 1 }}>
+                                        {dev.readings.cadence}<span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>rpm</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {dev.readings.speed != null && (
+                                    <div style={{ background: "#0c2240", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
+                                      <div style={{ fontSize: 9, letterSpacing: 2, color: "#5a86a8", textTransform: "uppercase" }}>Speed</div>
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#00aeef", letterSpacing: 1 }}>
+                                        {dev.readings.speed}<span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>km/h</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {dev.readings.power != null && (
+                                    <div style={{ background: "#0c2240", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
+                                      <div style={{ fontSize: 9, letterSpacing: 2, color: "#5a86a8", textTransform: "uppercase" }}>Power</div>
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#a78bfa", letterSpacing: 1 }}>
+                                        {dev.readings.power}<span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>W</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {!dev.connected && Object.keys(dev.readings).filter(k => !["cscRaw"].includes(k)).length === 0 && (
+                                    <div style={{ fontSize: 11, color: "#3a6080" }}>Disconnected — no data</div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Garmin Watch (WiFi) card */}
+                  <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 12, border: "1px solid rgba(0,174,239,0.15)", padding: "18px 16px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 12 }}>
+                      Garmin Watch (WiFi)
+                    </div>
+
+                    {!joinRace || joinAthIdx === null ? (
+                      <div style={{ fontSize: 12, color: "#3a6080", background: "rgba(0,174,239,0.04)", border: "1px solid rgba(0,174,239,0.12)", borderRadius: 8, padding: "12px 14px" }}>
+                        Join a race in the{" "}
+                        <button onClick={() => setView("join")} style={{ background: "none", border: "none", color: "#00aeef", fontSize: 12, cursor: "pointer", padding: 0, fontWeight: 700 }}>
+                          Play tab
+                        </button>{" "}
+                        and select your athlete to pair a Garmin watch.
+                      </div>
+                    ) : !watchToken ? (
+                      <button onClick={generateWatchToken} disabled={watchTokenLoading || joinGpsActive}
+                        style={{ ...btnStyle("#00aeef", true), width: "100%", padding: "14px", fontSize: 13, letterSpacing: 1, opacity: (watchTokenLoading || joinGpsActive) ? 0.45 : 1, cursor: (watchTokenLoading || joinGpsActive) ? "not-allowed" : "pointer" }}>
+                        {watchTokenLoading ? "Generating…" : "⌚ Pair Garmin Watch"}
+                      </button>
+                    ) : (
+                      <div style={{ background: "#071829", border: `2px solid ${watchConnected ? "#4ade80" : "#00aeef"}`, borderRadius: 10, padding: "16px", textAlign: "center" }}>
+                        <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginBottom: 8 }}>
+                          ⌚ Garmin Watch Code
+                        </div>
+                        <div style={{ fontFamily: "'Bebas Neue', monospace", fontSize: 38, letterSpacing: 10, color: "#00aeef", marginBottom: 2 }}>
+                          {watchToken.slice(0, 4)} {watchToken.slice(4)}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#3a6080", marginBottom: 12 }}>
+                          Enter in the Timeathon Garmin app · expires in 6 hours
+                        </div>
+                        {watchConnected ? (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
+                            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#4ade80", animation: "gpsping 1.2s ease-in-out infinite" }} />
+                            <span style={{ fontSize: 12, color: "#4ade80", fontWeight: 700 }}>Watch connected · GPS active</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 10 }}>Waiting for watch to connect…</div>
+                        )}
+                        <button onClick={clearWatchToken} style={{ ...btnStyle("#f4742b", true), padding: "6px 16px", fontSize: 11 }}>
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Live Data Dashboard card — only visible when at least one device is connected */}
+                  {(() => {
+                    const allReadings = btDevices.reduce((acc, dev) => ({ ...acc, ...dev.readings }), {});
+                    const hasAny = btDevices.some(d => d.connected) || watchConnected;
+                    if (!hasAny) return null;
+                    return (
+                      <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 12, border: "1px solid rgba(0,174,239,0.15)", padding: "18px 16px" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 14 }}>
+                          Live Data Dashboard
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
+                          {[
+                            { key: "heartRate", label: "Heart Rate", unit: "bpm",  color: "#f4742b" },
+                            { key: "cadence",   label: "Cadence",    unit: "rpm",  color: "#ffd166" },
+                            { key: "speed",     label: "Speed",      unit: "km/h", color: "#00aeef" },
+                            { key: "power",     label: "Power",      unit: "W",    color: "#a78bfa" },
+                          ].map(({ key, label, unit, color }) => {
+                            const val = allReadings[key];
+                            return (
+                              <div key={key} style={{ background: "#071829", borderRadius: 8, padding: "14px 10px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
+                                <div style={{ fontSize: 9, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 4 }}>{label}</div>
+                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 32, color: val != null ? color : "#1e3a52", letterSpacing: 1 }}>
+                                  {val != null ? val : "--"}
+                                </div>
+                                <div style={{ fontSize: 9, color: "#3a6080" }}>{unit}</div>
+                              </div>
+                            );
+                          })}
+                          {watchConnected && (
+                            <div style={{ background: "#071829", borderRadius: 8, padding: "14px 10px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
+                              <div style={{ fontSize: 9, letterSpacing: 2, textTransform: "uppercase", color: "#5a86a8", marginBottom: 4 }}>GPS</div>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                                <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80", animation: "gpsping 1.2s ease-in-out infinite" }} />
+                                <span style={{ fontFamily: "'Bebas Neue'", fontSize: 18, color: "#4ade80", letterSpacing: 1 }}>Active</span>
+                              </div>
+                              <div style={{ fontSize: 9, color: "#3a6080" }}>via Garmin</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                 </div>
               )}
 
