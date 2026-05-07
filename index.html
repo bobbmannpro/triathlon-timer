@@ -3049,11 +3049,21 @@
                           <div style={{ fontSize: 12, color: "#3a6080", textAlign: "center", padding: "12px 0" }}>No saved races — go to Setup to save one.</div>
                         ) : savedRaces.map(race => (
                           <div key={race.id} style={{ background: "#0c2240", borderRadius: 6, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                            <div>
+                            <div style={{ minWidth: 0 }}>
                               <div style={{ fontWeight: 700, fontSize: 13, color: "#e8f4fb" }}>{race.name}</div>
                               <div style={{ fontSize: 11, color: "#3a6080" }}>{race.athletes.length} athletes · {(race.courses || []).map(c => c.name).join("/") || ""} · {race.savedAt}{race.waypoints && race.waypoints.some(w => w.lat !== null) ? <span style={{ color: "#4ade80", marginLeft: 4 }}>· 📍 {race.waypoints.filter(w => w.lat !== null).length} pts</span> : null}</div>
                             </div>
-                            <button onClick={() => { loadRace(race); setView("setup"); setHomeSection(null); }} style={{ ...btnStyle("#ffd166"), padding: "5px 14px", fontSize: 11 }}>Load</button>
+                            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                              <button onClick={() => { loadRace(race); setView("setup"); setHomeSection(null); }} style={{ ...btnStyle("#ffd166"), padding: "5px 14px", fontSize: 11 }}>Load</button>
+                              {deleteConfirm === race.id ? (
+                                <>
+                                  <button onClick={() => { deleteRace(race.id); setDeleteConfirm(null); }} style={{ ...btnStyle("#f4742b"), padding: "5px 10px", fontSize: 11 }}>Delete?</button>
+                                  <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle("#5a86a8", true), padding: "5px 10px", fontSize: 11 }}>No</button>
+                                </>
+                              ) : (
+                                <button onClick={() => setDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#3a6080", fontSize: 16, cursor: "pointer", padding: "0 4px" }}>&times;</button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
