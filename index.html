@@ -158,11 +158,11 @@
         return last !== null ? last : null;
       }
 
-      function freshAthlete(name = "", id = Date.now(), gender = "Male", ageGroup = "9-10") {
+      function freshAthlete(name = "", id = Date.now(), gender = "Male", ageGroup = "9-10", courseId = null) {
         const parts = name.trim().split(" ");
         const firstName = parts[0] || "";
         const lastName = parts.slice(1).join(" ") || "";
-        return { id, name: name.trim(), firstName, lastName, gender, ageGroup, startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
+        return { id, name: name.trim(), firstName, lastName, gender, ageGroup, courseId, dob: "", startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
       }
       function athleteName(ath) {
         if (ath.firstName || ath.lastName) return `${ath.firstName || ""} ${ath.lastName || ""}`.trim();
@@ -661,7 +661,18 @@
           if (now - liveUpdateThrottleRef.current < 1000) return;
           liveUpdateThrottleRef.current = now;
           updateLiveRace(liveRaceCode);
-        }, [athletes, clockMs]);
+        }, [athletes, liveRaceCode]);
+
+        // Keep spectator/athlete clocks in sync independently of athlete state changes
+        useEffect(() => {
+          if (!liveRaceCode || !clockRunning) return;
+          const iv = setInterval(() => {
+            rtdb.ref("liveRaces/" + liveRaceCode)
+              .update({ clockMs: clockMsRef.current, clockRunning: true, updatedAt: Date.now() })
+              .catch(console.error);
+          }, 2000);
+          return () => clearInterval(iv);
+        }, [liveRaceCode, clockRunning]);
 
         useEffect(() => {
           if (athletes.some(a => a.finished)) autoArchiveRace();
@@ -718,7 +729,7 @@
             if (!tData || tData.distMi == null || tData.distMi < targetMi) return;
             logSplit(i, 2);
           });
-        }, [athleteTrainerData]);
+        }, [athleteTrainerData, athletes, courses]);
 
         // Athlete live race data listener — subscribes to Firebase when athlete joins a race
         useEffect(() => {
@@ -741,7 +752,11 @@
         useEffect(() => { hostRaceCodeRef.current = liveRaceCode ?? null; }, [liveRaceCode]);
         useEffect(() => {
           if (!liveRaceCode || !currentUser) { hostAthIdxRef.current = null; return; }
-          const idx = athletes.findIndex(a => a.uid === currentUser.uid);
+          let idx = athletes.findIndex(a => a.uid === currentUser.uid);
+          if (idx < 0 && currentUser.displayName) {
+            const dn = currentUser.displayName.trim().toLowerCase();
+            idx = athletes.findIndex(a => a.name?.trim().toLowerCase() === dn);
+          }
           hostAthIdxRef.current = idx >= 0 ? idx : null;
         }, [liveRaceCode, athletes, currentUser]);
 
@@ -1125,6 +1140,7 @@
             setRegistrationCode(code);
             setRegistrationOpen(true);
             setRegAthleteCount(0);
+            stopRegListener(); // detach any previous listener before attaching a new one
             const ref = rtdb.ref("liveRaces/" + code + "/registrations");
             const fn = snap => {
               if (!snap.exists()) { setRegAthleteCount(0); return; }
@@ -1274,7 +1290,7 @@
             publisherName: userProfile?.displayName || userProfile?.firstName || currentUser.email,
             startedAt: Date.now(), clockMs, clockRunning: false, clockStarted: false, status: "live",
             raceName: certConfig.eventName || "Race",
-            athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
+            athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
             courses,
             waypoints: waypoints.filter(wp => wp.lat !== null)
@@ -1292,12 +1308,28 @@
 
         function updateLiveRace(code) {
           if (!code || !currentUser) return;
-          rtdb.ref("liveRaces/" + code).update({
+          // Multi-path update: only touches explicit paths, never overwrites /athletes/{i}/gps, /trainer, /hr
+          const updates = {
             clockMs, clockRunning,
-            athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             updatedAt: Date.now(),
             waypoints: waypoints.filter(wp => wp.lat !== null)
-          }).catch(console.error);
+          };
+          athletes.forEach((ath, i) => {
+            updates[`athletes/${i}/id`]          = ath.id;
+            updates[`athletes/${i}/uid`]         = ath.uid || null;
+            updates[`athletes/${i}/name`]        = ath.name;
+            updates[`athletes/${i}/firstName`]   = ath.firstName || "";
+            updates[`athletes/${i}/lastName`]    = ath.lastName  || "";
+            updates[`athletes/${i}/gender`]      = ath.gender;
+            updates[`athletes/${i}/ageGroup`]    = ath.ageGroup;
+            updates[`athletes/${i}/courseId`]    = ath.courseId  || null;
+            updates[`athletes/${i}/dob`]         = ath.dob       || null;
+            updates[`athletes/${i}/started`]     = ath.started;
+            updates[`athletes/${i}/finished`]    = ath.finished;
+            updates[`athletes/${i}/startOffset`] = ath.startOffset;
+            updates[`athletes/${i}/splits`]      = ath.splits;
+          });
+          rtdb.ref("liveRaces/" + code).update(updates).catch(console.error);
         }
 
         function watchRace(code) {
@@ -1632,8 +1664,21 @@
           };
         }
         function startNewRace() {
+          stopRegListener();
+          if (registrationCode && !liveRaceCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error);
+          if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/status").set("closed").catch(console.error);
           setAthletes([freshAthlete()]);
           resetClock();
+          setCourses([{ id: 1, name: "Sprint", swimYards: 100, bikeMiles: 6, runMiles: 1.5, bikeType: "gps" }]);
+          setWaypoints(DEFAULT_WAYPOINTS);
+          setAgeGroups(DEFAULT_AGE_GROUPS);
+          setCertConfig({ eventName: "Timeathon Race Event", accentColor: "#00aeef", orgName: "", customLogoB64: null });
+          setRegistrationCode(null);
+          setRegistrationOpen(false);
+          setLiveRaceCode(null);
+          setLoadedRaceId(null);
+          setSaveRaceName("");
+          try { localStorage.removeItem("tri-active-live"); } catch(e) {}
           setView("setup");
         }
 
@@ -2192,9 +2237,17 @@
                       const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
                       if (code !== null && idx !== null) {
                         rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
-                          .set({ distMi: r.trainerDistMi, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
+                          .set({ distMi: r.trainerDistMi, speed: r.speed ?? null, cadence: r.cadence ?? null, power: r.power ?? null, t: Date.now() }).catch(console.error);
                       }
                       return { ...d, readings: r, trainerBaseRevs: base };
+                    }
+                    // No wheel revs — still push speed/cadence so trainer signal stays alive
+                    if (r.speed != null || r.cadence != null) {
+                      const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
+                      if (code !== null && idx !== null) {
+                        rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
+                          .set({ distMi: r.trainerDistMi ?? null, speed: r.speed ?? null, cadence: r.cadence ?? null, power: r.power ?? null, t: Date.now() }).catch(console.error);
+                      }
                     }
                   } else if (key === "hr") {
                     r.heartRate = parsed.heartRate;
@@ -2206,6 +2259,11 @@
                     return { ...d, readings: r, hrHistory: [...(d.hrHistory || []), { t: Date.now(), bpm: parsed.heartRate }].slice(-7200) };
                   } else if (key === "power") {
                     r.power = parsed.power;
+                    const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
+                    if (code !== null && idx !== null) {
+                      rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
+                        .set({ distMi: r.trainerDistMi ?? null, speed: r.speed ?? null, cadence: r.cadence ?? null, power: r.power ?? null, t: Date.now() }).catch(console.error);
+                    }
                   } else if (key === "rsc") {
                     r.speed = +(parsed.speed * 3.6).toFixed(1);
                     r.cadence = parsed.cadence;
@@ -2223,7 +2281,7 @@
                     const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
                     if (code !== null && idx !== null) {
                       rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
-                        .set({ distMi: r.trainerDistMi ?? null, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
+                        .set({ distMi: r.trainerDistMi ?? null, speed: r.speed ?? null, cadence: r.cadence ?? null, power: r.power ?? null, t: Date.now() }).catch(console.error);
                     }
                     return { ...d, readings: r, trainerBaseDistM: baseM };
                   }
