@@ -779,10 +779,19 @@
             if (fn || ln) {
               idx = athletes.findIndex(a => {
                 const an = a.name?.trim().toLowerCase() || "";
+                const afn = a.firstName?.trim().toLowerCase() || "";
+                const aln = a.lastName?.trim().toLowerCase() || "";
                 return (fn && ln && an === `${fn} ${ln}`) ||
-                  (a.firstName?.trim().toLowerCase() === fn && a.lastName?.trim().toLowerCase() === ln);
+                  (fn && ln && an === `${ln} ${fn}`) ||
+                  (afn && aln && afn === fn && aln === ln) ||
+                  (fn && an.startsWith(fn) && ln && an.endsWith(ln));
               });
             }
+          }
+          // Try email prefix match as last resort (e.g. "bob.mann@..." → athlete named "Bob Mann")
+          if (idx < 0 && currentUser.email) {
+            const prefix = currentUser.email.split("@")[0].replace(/[._]/g, " ").toLowerCase();
+            idx = athletes.findIndex(a => a.name?.trim().toLowerCase() === prefix);
           }
           const resolved = idx >= 0 ? idx : null;
           hostAthIdxRef.current = resolved;
@@ -5314,14 +5323,15 @@
                           </div>
                         )}
 
-                        {/* Trainer bike progress — host view, shows whenever athlete is on a trainer course */}
+                        {/* Trainer bike progress — shows for trainer/spin courses or whenever live trainer data arrives */}
                         {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
-                          if ((athCourse?.bikeType || "gps") === "gps") return null;
-                          if (next !== 2 && ath.splits[2] !== null) return null; // T2 already done — hide
+                          const isTrainerCourse = (athCourse?.bikeType || "gps") !== "gps";
+                          // Resolve tData BEFORE the gate so we can show the panel for any course when data is present
                           const tDataFb = athleteTrainerData[i];
-                          // Fallback: when host is this athlete and has a local BLE trainer device
-                          const tDataLocal = (!tDataFb && i === hostAthIdx)
+                          // Fallback: host's own local BLE device — exact match, or solo-athlete case when no UID/name match resolved
+                          const hostFallbackIdx = hostAthIdx ?? (athletes.length === 1 ? 0 : null);
+                          const tDataLocal = (!tDataFb && i === hostFallbackIdx)
                             ? btDevices.find(d => d.connected && (d.readings.speed != null || d.readings.trainerDistMi != null || d.readings.power != null))
                             : null;
                           const tData = tDataFb || (tDataLocal ? {
@@ -5331,27 +5341,32 @@
                             power:  tDataLocal.readings.power   ?? null,
                             t: Date.now()
                           } : null);
-                          const targetMi = parseFloat(athCourse?.bikeMiles) || 0;
+                          // Show panel if: trainer/spin course (always, to show no-signal prompt) OR any live trainer data arrived
+                          if (!isTrainerCourse && !tData) return null;
+                          if (next !== 2 && ath.splits[2] !== null) return null; // T2 already done — hide
+                          const targetMi = isTrainerCourse ? (parseFloat(athCourse?.bikeMiles) || 0) : 0;
                           const distMi = tData?.distMi ?? null;
                           const pct = targetMi > 0 && distMi != null ? Math.min(100, (distMi / targetMi) * 100) : 0;
                           const inBike = next === 2;
                           return (
                             <div style={{ padding: "0 14px 10px" }}>
                               <div style={{ background: "#071829", borderRadius: 6, padding: "8px 12px", border: `1px solid ${inBike ? "rgba(255,213,102,0.5)" : "rgba(255,213,102,0.2)"}` }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: distMi != null ? 4 : 0 }}>
-                                  <span style={{ fontSize: 10, color: "#ffd166", letterSpacing: 1 }}>🚲 {athCourse.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}</span>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: (isTrainerCourse && distMi != null) ? 4 : 0 }}>
+                                  <span style={{ fontSize: 10, color: "#ffd166", letterSpacing: 1 }}>🚲 {athCourse?.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}</span>
                                   <span style={{ fontFamily: "'Bebas Neue'", fontSize: 16, color: "#ffd166", letterSpacing: 1 }}>
-                                    {distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : 'No signal')}
+                                    {isTrainerCourse
+                                      ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : 'No signal'))
+                                      : (tData ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph` : 'No signal')}
                                   </span>
                                 </div>
-                                {targetMi > 0 && distMi != null && (
+                                {isTrainerCourse && targetMi > 0 && distMi != null && (
                                   <div style={{ background: "rgba(255,213,102,0.1)", borderRadius: 3, height: 5, marginBottom: 4 }}>
                                     <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#4ade80" : "#ffd166", borderRadius: 3, transition: "width 0.4s" }} />
                                   </div>
                                 )}
                                 <div style={{ fontSize: 10, color: tData ? "#5a86a8" : "#f87171" }}>
                                   {tData
-                                    ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph${tData.cadence != null ? ` · ${tData.cadence} rpm` : ''}${pct >= 100 ? ' · ✓ target reached' : ''}`
+                                    ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph${tData.cadence != null ? ` · ${tData.cadence} rpm` : ''}${tData.power != null ? ` · ${tData.power}w` : ''}${isTrainerCourse && pct >= 100 ? ' · ✓ target reached' : ''}`
                                     : (inBike ? 'No trainer signal — use Bike button above to advance manually' : 'Waiting for trainer signal…')}
                                 </div>
                               </div>
