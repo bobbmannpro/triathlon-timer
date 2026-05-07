@@ -2188,17 +2188,19 @@
                     if (parsed.speed != null) r.speed = +(parsed.speed * 3.6).toFixed(1);
                     if (parsed.cadence != null) r.cadence = +parsed.cadence.toFixed(0);
                     if (parsed.power != null) r.power = parsed.power;
+                    let baseM = d.trainerBaseDistM;
                     if (parsed.distanceM != null) {
                       r.ftmsDistM = parsed.distanceM;
-                      const baseM = d.trainerBaseDistM ?? parsed.distanceM;
+                      baseM = d.trainerBaseDistM ?? parsed.distanceM;
                       r.trainerDistMi = +Math.max(0, (parsed.distanceM - baseM) / 1609.344).toFixed(3);
-                      const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
-                      if (code !== null && idx !== null) {
-                        rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
-                          .set({ distMi: r.trainerDistMi, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
-                      }
-                      return { ...d, readings: r, trainerBaseDistM: baseM };
                     }
+                    // Push on every FTMS notification — speed/cadence alone is enough to keep trainer signal alive
+                    const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
+                    if (code !== null && idx !== null) {
+                      rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
+                        .set({ distMi: r.trainerDistMi ?? null, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
+                    }
+                    return { ...d, readings: r, trainerBaseDistM: baseM };
                   }
                   return { ...d, readings: r };
                 }));
@@ -3647,6 +3649,33 @@
                           </div>
                         </div>
                       )}
+                      {/* BLE device signal check */}
+                      {btDevices.filter(d => d.connected).length > 0 && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1, marginBottom: 6 }}>CONNECTED DEVICES</div>
+                          {btDevices.filter(d => d.connected).map(dev => {
+                            const hr = dev.readings.heartRate;
+                            const spd = dev.readings.speed;
+                            const cad = dev.readings.cadence;
+                            const distMi = dev.readings.trainerDistMi;
+                            return (
+                              <div key={dev.id} style={{ background: "#071829", borderRadius: 6, padding: "8px 12px", marginBottom: 5, display: "flex", alignItems: "center", gap: 10, border: "1px solid rgba(74,222,128,0.2)" }}>
+                                <span style={{ fontSize: 16, flexShrink: 0 }}>{hr != null ? "❤️" : "🚲"}</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 12, color: "#e8f4fb", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dev.name}</div>
+                                  <div style={{ fontSize: 11, color: "#5a86a8" }}>
+                                    {hr != null && <span style={{ color: "#f4742b" }}>❤️ {hr} bpm</span>}
+                                    {spd != null && <span style={{ marginLeft: hr != null ? 8 : 0 }}>{(spd * 0.621).toFixed(1)} mph</span>}
+                                    {cad != null && <span style={{ marginLeft: 6 }}>{cad} rpm</span>}
+                                    {distMi != null && <span style={{ marginLeft: 6 }}>{distMi.toFixed(2)} mi</span>}
+                                  </div>
+                                </div>
+                                <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", flexShrink: 0 }} />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       {regError && <div style={{ fontSize: 12, color: "#f87171", marginBottom: 8 }}>{regError}</div>}
                       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                         <button onClick={() => { setRegistrationStep("code"); setRegError(""); setRegRaceData(null); }}
@@ -3747,43 +3776,90 @@
                             )}
                           </div>
 
-                          {/* Bike trainer panel — shown when course uses trainer/spin bike mode and athlete is in bike segment */}
+                          {/* Trainer panel — always visible when trainer is connected */}
                           {(() => {
+                            const trainer = btDevices.find(d => d.connected && (d.readings.trainerDistMi != null || d.readings.speed != null || d.readings.cadence != null || d.readings.power != null));
+                            if (!trainer) return null;
                             const myAth = joinRace.athletes?.[joinAthIdx];
                             const myCourse = (joinRace.courses || []).find(c => c.id === myAth?.courseId) || (joinRace.courses || [])[0];
                             const coursebikeType = myCourse?.bikeType || "gps";
-                            if (coursebikeType === "gps") return null;
                             const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
-                            const bikeStarted = splits[1] != null;
-                            const bikeEnded = splits[2] != null;
-                            if (!bikeStarted || bikeEnded) return null;
-                            const trainer = btDevices.find(d => d.readings.trainerDistMi != null);
+                            const inBikeSeg = splits[1] != null && splits[2] == null;
                             const targetMi = parseFloat(myCourse?.bikeMiles) || 0;
-                            const distMi = trainer?.readings?.trainerDistMi ?? 0;
-                            const pct = targetMi > 0 ? Math.min(100, (distMi / targetMi) * 100) : 0;
+                            const distMi = trainer.readings.trainerDistMi ?? 0;
+                            const showProgress = inBikeSeg && coursebikeType !== "gps" && targetMi > 0;
+                            const pct = showProgress ? Math.min(100, (distMi / targetMi) * 100) : 0;
                             const bikeLabel = coursebikeType === "spin" ? "SPIN BIKE" : "BIKE TRAINER";
                             return (
                               <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 12, border: "1px solid rgba(255,213,102,0.4)" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: showProgress ? 8 : 4 }}>
                                   <div style={{ fontSize: 10, color: "#ffd166", letterSpacing: 2 }}>🚲 {bikeLabel}</div>
-                                  {targetMi > 0 && <div style={{ fontSize: 10, color: "#5a86a8" }}>{distMi.toFixed(2)} / {targetMi} mi</div>}
-                                </div>
-                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 36, color: "#ffd166", lineHeight: 1, marginBottom: 6 }}>
-                                  {distMi.toFixed(2)} <span style={{ fontSize: 14, color: "#5a86a8" }}>mi</span>
-                                </div>
-                                {targetMi > 0 && (
-                                  <div style={{ background: "rgba(255,213,102,0.1)", borderRadius: 4, height: 6, overflow: "hidden", marginBottom: 6 }}>
-                                    <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#4ade80" : "#ffd166", borderRadius: 4, transition: "width 0.5s" }} />
+                                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                                    {trainer.readings.speed != null && <span style={{ fontFamily: "'Bebas Neue'", fontSize: 18, color: "#ffd166", letterSpacing: 1 }}>{(trainer.readings.speed * 0.621).toFixed(1)} <span style={{ fontSize: 10, color: "#5a86a8" }}>mph</span></span>}
+                                    {trainer.readings.cadence != null && <span style={{ fontFamily: "'Bebas Neue'", fontSize: 18, color: "#ffd166", letterSpacing: 1 }}>{trainer.readings.cadence} <span style={{ fontSize: 10, color: "#5a86a8" }}>rpm</span></span>}
+                                    {trainer.readings.power != null && <span style={{ fontFamily: "'Bebas Neue'", fontSize: 18, color: "#ffd166", letterSpacing: 1 }}>{trainer.readings.power} <span style={{ fontSize: 10, color: "#5a86a8" }}>W</span></span>}
                                   </div>
-                                )}
-                                <div style={{ fontSize: 11, color: "#5a86a8" }}>
-                                  {trainer?.readings?.speed != null ? `${(trainer.readings.speed * 0.621).toFixed(1)} mph` : '--'}
-                                  {trainer?.readings?.cadence != null ? ` · ${trainer.readings.cadence} rpm` : ''}
-                                  {!trainer && <span style={{ color: "#ffd166" }}> — connect a trainer in Devices tab</span>}
                                 </div>
+                                {showProgress && (
+                                  <>
+                                    <div style={{ fontFamily: "'Bebas Neue'", fontSize: 36, color: "#ffd166", lineHeight: 1, marginBottom: 6 }}>
+                                      {distMi.toFixed(2)} <span style={{ fontSize: 14, color: "#5a86a8" }}>/ {targetMi} mi</span>
+                                    </div>
+                                    <div style={{ background: "rgba(255,213,102,0.1)", borderRadius: 4, height: 6, overflow: "hidden", marginBottom: 6 }}>
+                                      <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#4ade80" : "#ffd166", borderRadius: 4, transition: "width 0.5s" }} />
+                                    </div>
+                                  </>
+                                )}
+                                <div style={{ fontSize: 10, color: "#5a86a8" }}>{trainer.name}{showProgress ? ` · ${pct.toFixed(0)}% complete` : ''}</div>
                               </div>
                             );
                           })()}
+
+                          {/* HR monitor panel — always visible when HR device connected */}
+                          {(() => {
+                            const hrDev = btDevices.find(d => d.connected && d.readings.heartRate != null);
+                            if (!hrDev) return null;
+                            return (
+                              <div style={{ background: "#0c2240", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: "1px solid rgba(244,116,43,0.3)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <div style={{ fontSize: 10, color: "#f4742b", letterSpacing: 2 }}>❤️ HEART RATE</div>
+                                  <div style={{ fontFamily: "'Bebas Neue'", fontSize: 30, color: "#f4742b", letterSpacing: 1, lineHeight: 1 }}>
+                                    {hrDev.readings.heartRate} <span style={{ fontSize: 11, color: "#5a86a8" }}>bpm</span>
+                                  </div>
+                                </div>
+                                <div style={{ fontSize: 10, color: "#5a86a8", marginTop: 2 }}>{hrDev.name}</div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Garmin watch panel */}
+                          <div style={{ background: "#0c2240", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: `1px solid ${watchConnected ? "rgba(74,222,128,0.3)" : "rgba(0,174,239,0.15)"}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div style={{ fontSize: 10, color: "#00aeef", letterSpacing: 2 }}>⌚ GARMIN WATCH</div>
+                              {watchConnected && <span style={{ fontSize: 10, color: "#4ade80", letterSpacing: 1 }}>● CONNECTED</span>}
+                            </div>
+                            {!watchToken ? (
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+                                <div style={{ fontSize: 11, color: "#5a86a8" }}>Not paired — enter token on watch to stream GPS</div>
+                                <button onClick={generateWatchToken} disabled={watchTokenLoading}
+                                  style={{ ...btnStyle("#00aeef", true), padding: "5px 12px", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+                                  {watchTokenLoading ? "…" : "Pair"}
+                                </button>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                                <div>
+                                  <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, letterSpacing: 8, color: "#00aeef", lineHeight: 1 }}>
+                                    {watchToken.slice(0, 4)} {watchToken.slice(4)}
+                                  </div>
+                                  <div style={{ fontSize: 10, color: watchConnected ? "#4ade80" : "#5a86a8" }}>
+                                    {watchConnected ? "Streaming GPS from Garmin watch" : "Enter this code on your Garmin watch"}
+                                  </div>
+                                </div>
+                                <button onClick={clearWatchToken} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#3a6080", fontSize: 10, cursor: "pointer", padding: "4px 8px", flexShrink: 0, marginLeft: 8 }}>Unpair</button>
+                              </div>
+                            )}
+                          </div>
 
                           {/* Next checkpoint */}
                           {(() => {
