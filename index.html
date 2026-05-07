@@ -208,6 +208,7 @@
       // ── App ──────────────────────────────────────────────────────────────────
       function App() {
         const [view, setView] = useState("home");
+        const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
         const [homeSection, setHomeSection] = useState(null); // "races" when Existing Race expanded
         const [athletes, setAthletes] = useState([
           { id: 1, name: "Sam",     gender: "Male",   ageGroup: "9-10",  startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false },
@@ -678,6 +679,13 @@
           if (athletes.some(a => a.finished)) autoArchiveRace();
         }, [athletes]);
 
+        // Guard: redirect to home if setup/race is accessed without a race being initialized
+        useEffect(() => {
+          if (!raceInitialized && (view === "setup" || view === "race")) {
+            setView("home");
+          }
+        }, [raceInitialized, view]);
+
         // Immediately persist clock running state — no throttle, no athlete gate
         useEffect(() => {
           if (!liveRaceCode || !clockStarted) return;
@@ -991,6 +999,7 @@
                           setClockStarted(true);
                           setClockRunning(ld.clockRunning || false);
                           setLiveRaceCode(code);
+                          setRaceInitialized(true);
                           setView("race");
                         } else {
                           localStorage.removeItem("tri-active-live");
@@ -1119,6 +1128,8 @@
           setSaveRaceName("");
           setClearRaceConfirm(false);
           try { localStorage.removeItem("tri-active-live"); } catch(e) {}
+          setRaceInitialized(false);
+          setView("home");
         }
 
         async function _doOpenRegistration(code) {
@@ -1553,6 +1564,7 @@
           archiveSessionRef.current = null;
           resetClock();
           setEditTarget(null);
+          setRaceInitialized(true);
         }
 
         function deleteRace(id) {
@@ -1679,6 +1691,7 @@
           setLoadedRaceId(null);
           setSaveRaceName("");
           try { localStorage.removeItem("tri-active-live"); } catch(e) {}
+          setRaceInitialized(true);
           setView("setup");
         }
 
