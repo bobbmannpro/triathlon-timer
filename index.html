@@ -487,6 +487,7 @@
         const btCharacteristicsRef = useRef({});
         const [athleteGpsStatus, setAthleteGpsStatus] = useState({});
         const [athleteTrainerData, setAthleteTrainerData] = useState({});
+        const [athleteHrData, setAthleteHrData] = useState({});
         const athleteGpsListenerRef = useRef(null);
 
         // Athlete live race data + map state
@@ -703,21 +704,26 @@
             athleteGpsListenerRef.current.ref.off("value", athleteGpsListenerRef.current.fn);
             athleteGpsListenerRef.current = null;
           }
-          if (!liveRaceCode) { setAthleteGpsStatus({}); return; }
+          if (!liveRaceCode) { setAthleteGpsStatus({}); setAthleteTrainerData({}); setAthleteHrData({}); return; }
           const ref = rtdb.ref(`liveRaces/${liveRaceCode}/athletes`);
           const fn = snap => {
             const athArr = snap.val() || [];
             const now = Date.now();
             const status = {};
             const trainerMap = {};
+            const hrMap = {};
             athArr.forEach((ath, idx) => {
               status[idx] = !!(ath && ath.gps && ath.gps.t && (now - ath.gps.t < 20000));
               if (ath && ath.trainer && (now - (ath.trainer.t || 0) < 20000)) {
                 trainerMap[idx] = ath.trainer;
               }
+              if (ath && ath.hr && (now - (ath.hr.t || 0) < 15000)) {
+                hrMap[idx] = ath.hr;
+              }
             });
             setAthleteGpsStatus(status);
             setAthleteTrainerData(trainerMap);
+            setAthleteHrData(hrMap);
           };
           ref.on("value", fn);
           athleteGpsListenerRef.current = { ref, fn };
@@ -4691,6 +4697,21 @@
                             {courses.map(course => <option key={course.id} value={course.id}>{course.name}</option>)}
                           </select>
                         )}
+                        {athleteHrData[i] && (
+                          <div style={{ background: "rgba(244,116,43,0.12)", border: "1px solid rgba(244,116,43,0.4)", borderRadius: 4, padding: "3px 8px", fontSize: 11, color: "#f4742b", fontWeight: 700, whiteSpace: "nowrap" }}>
+                            ❤️ {athleteHrData[i].bpm} bpm
+                          </div>
+                        )}
+                        {athleteTrainerData[i] && (
+                          <div style={{ background: "rgba(255,213,102,0.1)", border: "1px solid rgba(255,213,102,0.35)", borderRadius: 4, padding: "3px 8px", fontSize: 11, color: "#ffd166", fontWeight: 700, whiteSpace: "nowrap" }}>
+                            🚲 {athleteTrainerData[i].speed != null ? `${(athleteTrainerData[i].speed * 0.621).toFixed(1)} mph` : "Trainer"}
+                          </div>
+                        )}
+                        {athleteGpsStatus[i] && (
+                          <div style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.35)", borderRadius: 4, padding: "3px 8px", fontSize: 11, color: "#4ade80", fontWeight: 700, whiteSpace: "nowrap" }}>
+                            📍 GPS
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -5190,6 +5211,12 @@
                                 <span style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</span>
                                 {athleteGpsStatus[i] && (
                                   <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", boxShadow: "0 0 0 0 rgba(74,222,128,0.6)", animation: "gpsping 1.4s ease-out infinite", flexShrink: 0 }} title="GPS active" />
+                                )}
+                                {athleteHrData[i] && (
+                                  <span style={{ fontSize: 11, color: "#f4742b", fontWeight: 700 }}>❤️ {athleteHrData[i].bpm}</span>
+                                )}
+                                {athleteTrainerData[i] && (
+                                  <span style={{ fontSize: 11, color: "#ffd166", fontWeight: 700 }}>🚲{athleteTrainerData[i].speed != null ? ` ${(athleteTrainerData[i].speed * 0.621).toFixed(1)}mph` : ""}</span>
                                 )}
                                 {ath.dob && calcAge(ath.dob) !== null && (
                                   <span style={{ fontSize: 11, color: "#5a86a8" }}>Age {calcAge(ath.dob)}</span>
