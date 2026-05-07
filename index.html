@@ -1177,42 +1177,39 @@
             setJoinedRaces(updatedJoined);
             try { localStorage.setItem("tri-joined-races", JSON.stringify(updatedJoined)); } catch(e) {}
             rtdb.ref("users/" + uid + "/joinedRaces/" + code).set(joined).catch(console.error);
-            if (regRaceData?.status === "live") {
-              // Find athlete in existing roster by UID, or append them
-              const athListSnap = await rtdb.ref("liveRaces/" + code + "/athletes").once("value");
-              const currentAths = athListSnap.val() || [];
-              let athIdx = currentAths.findIndex(a => a.uid === uid);
-              if (athIdx === -1) {
-                athIdx = currentAths.length;
-                await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).set({
-                  uid, id: uid, name: registration.name,
-                  firstName: registration.firstName, lastName: registration.lastName,
-                  gender: registration.gender, ageGroup,
-                  dob: registration.dob, courseId: registration.courseId,
-                  splits: Array(SEGMENTS.length).fill(null),
-                  started: false, finished: false, startOffset: null, joinedAt: registration.joinedAt
-                });
-              } else {
-                await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).update({ uid, courseId: registration.courseId });
-              }
-              const raceSnap = await rtdb.ref("liveRaces/" + code).once("value");
-              const raceData = raceSnap.val();
-              if (raceData) {
-                const segs = raceData.segments || SEGMENTS;
-                if (raceData.athletes) {
-                  raceData.athletes = raceData.athletes.map(ath => ({
-                    ...ath, splits: Array.from({ length: segs.length }, (_, i) =>
-                      ath.splits?.[i] !== undefined && ath.splits?.[i] !== null ? ath.splits[i] : null)
-                  }));
-                }
-                bikeSegTriggeredRef.current = false;
-                setJoinRace({ ...raceData, code });
-                setJoinAthIdx(athIdx);
-                setJoinGpsActive(false);
-                setJoinNextSeg(0);
-              }
+            // Always go to the dashboard — even if race isn't live yet, the Firebase
+            // listener will update in real-time when the host publishes/starts.
+            const athListSnap = await rtdb.ref("liveRaces/" + code + "/athletes").once("value");
+            const currentAths = athListSnap.val() || [];
+            let athIdx = currentAths.findIndex(a => a.uid === uid);
+            if (athIdx === -1) {
+              athIdx = currentAths.length;
+              await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).set({
+                uid, id: uid, name: registration.name,
+                firstName: registration.firstName, lastName: registration.lastName,
+                gender: registration.gender, ageGroup,
+                dob: registration.dob, courseId: registration.courseId,
+                splits: Array(SEGMENTS.length).fill(null),
+                started: false, finished: false, startOffset: null, joinedAt: registration.joinedAt
+              });
             } else {
-              setRegistrationStep("waiting");
+              await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).update({ uid, courseId: registration.courseId });
+            }
+            const raceSnap = await rtdb.ref("liveRaces/" + code).once("value");
+            const raceData = raceSnap.val();
+            if (raceData) {
+              const segs = raceData.segments || SEGMENTS;
+              if (raceData.athletes) {
+                raceData.athletes = raceData.athletes.map(ath => ({
+                  ...ath, splits: Array.from({ length: segs.length }, (_, i) =>
+                    ath.splits?.[i] !== undefined && ath.splits?.[i] !== null ? ath.splits[i] : null)
+                }));
+              }
+              bikeSegTriggeredRef.current = false;
+              setJoinRace({ ...raceData, code });
+              setJoinAthIdx(athIdx);
+              setJoinGpsActive(false);
+              setJoinNextSeg(0);
             }
           } catch(e) {
             setRegError("Registration failed. Please try again.");
@@ -3689,30 +3686,20 @@
                     </div>
                   )}
 
-                  {/* Waiting for race to go live */}
-                  {registrationStep === "waiting" && !joinRace && (
-                    <div style={{ textAlign: "center", padding: "30px 0 16px" }}>
-                      <div style={{ fontSize: 48, marginBottom: 12 }}>🏁</div>
-                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 28, letterSpacing: 4, color: "#4ade80" }}>YOU'RE IN!</div>
-                      <div style={{ fontSize: 13, color: "#5a86a8", marginTop: 8, marginBottom: 20, lineHeight: 1.5 }}>
-                        Registered for <strong style={{ color: "#e8f4fb" }}>{regRaceData?.raceName || "the race"}</strong>.<br/>Waiting for the director to publish the race…
-                      </div>
-                      <div style={{ background: "rgba(0,174,239,0.06)", border: "1px solid rgba(0,174,239,0.2)", borderRadius: 8, padding: "12px 14px", marginBottom: 16, textAlign: "left", fontSize: 11, color: "#5a86a8", lineHeight: 1.6 }}>
-                        📍 GPS tracking will start automatically when the race goes live and you select your name. By participating you consent to live location tracking visible to race spectators.
-                      </div>
-                      <button onClick={() => { setRegistrationStep("code"); setRegRaceData(null); }}
-                        style={{ ...btnStyle("#5a86a8", true), padding: "8px 20px", fontSize: 12 }}>Back</button>
-                    </div>
-                  )}
-
                   {joinRace && (
                     <div>
                       <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div>
-                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 3, color: "#4ade80" }}>{joinRace.publisherName}'s Race</div>
-                          <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1 }}>CODE: {joinRace.code} · {(joinRace.athletes || []).length} athletes</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 3, color: "#4ade80", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {joinLiveData?.raceName || joinRace.raceName || joinRace.publisherName + "'s Race"}
+                          </div>
+                          <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1 }}>
+                            {joinRace.publisherName} · CODE: {joinRace.code} · {(joinLiveData?.athletes || joinRace.athletes || []).length} athletes
+                            {joinLiveData && !joinLiveData.clockStarted && <span style={{ color: "#ffd166", marginLeft: 8 }}>● WAITING TO START</span>}
+                            {joinLiveData?.clockRunning && <span style={{ color: "#4ade80", marginLeft: 8 }}>● LIVE</span>}
+                          </div>
                         </div>
-                        <button onClick={() => { setJoinRace(null); setJoinAthIdx(null); stopGpsTracking(); joinGpsTrailRef.current = []; setJoinGpsTrail([]); setJoinLiveData(null); localStorage.removeItem("tri-active-join"); try { localStorage.removeItem("tri-gps-trail"); } catch(_) {} }} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
+                        <button onClick={() => { setJoinRace(null); setJoinAthIdx(null); stopGpsTracking(); joinGpsTrailRef.current = []; setJoinGpsTrail([]); setJoinLiveData(null); localStorage.removeItem("tri-active-join"); try { localStorage.removeItem("tri-gps-trail"); } catch(_) {} }} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "5px 10px", flexShrink: 0, marginLeft: 8 }}>Leave</button>
                       </div>
 
                       {joinAthIdx === null ? (
@@ -3734,13 +3721,18 @@
                         </div>
                       ) : (
                         <div>
-                          {/* Race clock */}
-                          {joinLiveData && joinLiveData.clockStarted && (
-                            <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "10px 16px", marginBottom: 12, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
-                              <div style={{ fontSize: 9, letterSpacing: 3, color: "#5a86a8" }}>RACE CLOCK</div>
-                              <div style={{ fontFamily: "'Bebas Neue'", fontSize: 44, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(joinLiveClockMs)}</div>
+                          {/* Race clock — always visible */}
+                          <div style={{ background: "linear-gradient(135deg,#0c2240,#0d3a6e)", borderRadius: 10, padding: "10px 16px", marginBottom: 12, textAlign: "center", border: "1px solid rgba(0,174,239,0.25)" }}>
+                            <div style={{ fontSize: 9, letterSpacing: 3, color: "#5a86a8" }}>
+                              {joinLiveData?.clockStarted ? "RACE CLOCK" : joinLiveData ? "RACE NOT STARTED" : "CONNECTING…"}
                             </div>
-                          )}
+                            <div style={{ fontFamily: "'Bebas Neue'", fontSize: 44, letterSpacing: 4, color: joinLiveData?.clockStarted ? "#00aeef" : "#3a6080", lineHeight: 1 }}>
+                              {joinLiveData?.clockStarted ? formatTime(joinLiveClockMs) : "0:00:00"}
+                            </div>
+                            {joinLiveData && !joinLiveData.clockStarted && (
+                              <div style={{ fontSize: 10, color: "#5a86a8", marginTop: 2 }}>{joinLiveData.raceName || "Race"} · {joinLiveData.publisherName}</div>
+                            )}
+                          </div>
 
                           {/* GPS status bar */}
                           <div style={{ display: "flex", alignItems: "center", gap: 8, background: joinGpsActive ? "rgba(74,222,128,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${joinGpsActive ? "rgba(74,222,128,0.25)" : "rgba(255,255,255,0.06)"}`, borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
