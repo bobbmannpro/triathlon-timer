@@ -225,6 +225,10 @@
           { id: 1, name: "Sprint", swimYards: 100, bikeMiles: 6, runMiles: 1.5 }
         ]);
 
+        // Bike mode — gps = outdoor ride, trainer = smart trainer, spin = spin bike (no GPS for bike segment)
+        const [bikeType, setBikeType] = useState("gps");
+        const [bikeDistanceMi, setBikeDistanceMi] = useState("");
+
         // Age groups — fully customizable per race
         const [ageGroups, setAgeGroups] = useState(DEFAULT_AGE_GROUPS);
         const [certConfig, setCertConfig] = useState({ eventName: "Timeathon Race Event", accentColor: "#00aeef", orgName: "", customLogoB64: null });
@@ -497,6 +501,7 @@
         const joinAthMarkerRef = useRef(null);
         const joinAllMarkersRef = useRef({});
         const joinGpsMapListenerRef = useRef(null);
+        const bikeSegTriggeredRef = useRef(false);
         const joinFollowingRef = useRef(true);
         const joinCurSegRef = useRef(0);
         const wakeLockRef = useRef(null);
@@ -813,6 +818,26 @@
           joinGpsMapListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); joinGpsMapListenerRef.current = null; };
         }, [joinRace?.code, joinAthIdx, view]);
+
+        // Reset trainer trigger flag when race changes
+        useEffect(() => { bikeSegTriggeredRef.current = false; }, [joinRace?.code]);
+
+        // Auto-trigger T2 split when trainer distance reaches the bike target
+        useEffect(() => {
+          if (!joinRace?.bikeType || joinRace.bikeType === "gps") return;
+          if (bikeSegTriggeredRef.current) return;
+          const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
+          const bikeStarted = splits[1] != null;
+          const bikeEnded = splits[2] != null;
+          if (bikeEnded) { bikeSegTriggeredRef.current = true; return; }
+          if (!bikeStarted) return;
+          const targetMi = parseFloat(joinRace.bikeDistanceMi) || 0;
+          if (targetMi <= 0) return;
+          const trainer = btDevices.find(d => d.readings.trainerDistMi != null && d.readings.trainerDistMi >= targetMi);
+          if (!trainer) return;
+          bikeSegTriggeredRef.current = true;
+          triggerSplit(2, () => setJoinNextSeg(n => n + 1));
+        }, [btDevices, joinLiveData?.athletes?.[joinAthIdx]?.splits?.join(","), joinRace?.code]);
 
         // Re-acquire Wake Lock whenever the page becomes visible (lock is auto-released on hide)
         useEffect(() => {
@@ -1186,6 +1211,8 @@
             raceName: certConfig.eventName || "Race",
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, gender: a.gender, ageGroup: a.ageGroup, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
+            bikeType: bikeType || "gps",
+            bikeDistanceMi: (bikeType && bikeType !== "gps") ? (parseFloat(bikeDistanceMi) || null) : null,
             waypoints: waypoints.filter(wp => wp.lat !== null)
           };
           try {
@@ -1869,6 +1896,10 @@
             allWps.forEach((wp, wi) => {
               if (triggered.has(wi)) return;
               if (haversineM(lat, lng, wp.lat, wp.lng) >= wp.radiusM) return;
+              // Skip T2 (bike→run transition) GPS trigger when using a trainer — handled by distance
+              if (wp.action === "split" && wp.segIdx === 2 && joinRace.bikeType && joinRace.bikeType !== "gps") {
+                return;
+              }
               triggered.add(wi);
               if (wp.action === "marker") {
                 nextWpIdx = wi + 1;
@@ -1927,6 +1958,21 @@
           try { await rtdb.ref(`watchTokens/${watchToken}`).remove(); } catch(_) {}
           setWatchToken(null);
           setWatchConnected(false);
+        }
+
+        // ── Programmatic split trigger (used by trainer distance auto-complete) ─
+        async function triggerSplit(segIdx, onDone) {
+          const code = joinRaceCodeRef.current;
+          const idx = joinAthIdxRef.current;
+          if (code === null || idx === null) return;
+          try {
+            const snap = await rtdb.ref(`liveRaces/${code}`).once("value");
+            if (!snap.exists()) return;
+            const clockMs = snap.val().clockMs || 0;
+            await rtdb.ref(`liveRaces/${code}/athletes/${idx}/splits/${segIdx}`).set(clockMs);
+            if (segIdx === 4) await rtdb.ref(`liveRaces/${code}/athletes/${idx}`).update({ finished: true });
+          } catch(e) { console.error("triggerSplit failed:", e); }
+          if (onDone) onDone();
         }
 
         // ── Wake Lock helper ─────────────────────────────────────────────────
@@ -3611,19 +3657,35 @@
                             )}
                           </div>
 
-                          {/* Bike trainer panel — shown during bike segment when a CSC trainer is connected */}
-                          {joinNextSeg === 2 && (() => {
+                          {/* Bike trainer panel — shown when race uses trainer/spin bike mode and athlete is in bike segment */}
+                          {joinRace.bikeType && joinRace.bikeType !== "gps" && (() => {
+                            const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
+                            const bikeStarted = splits[1] != null;
+                            const bikeEnded = splits[2] != null;
+                            if (!bikeStarted || bikeEnded) return null;
                             const trainer = btDevices.find(d => d.readings.trainerDistMi != null);
-                            if (!trainer) return null;
+                            const targetMi = parseFloat(joinRace.bikeDistanceMi) || 0;
+                            const distMi = trainer?.readings?.trainerDistMi ?? 0;
+                            const pct = targetMi > 0 ? Math.min(100, (distMi / targetMi) * 100) : 0;
+                            const bikeLabel = joinRace.bikeType === "spin" ? "SPIN BIKE" : "BIKE TRAINER";
                             return (
-                              <div style={{ background: "#0c2240", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: "1px solid rgba(255,213,102,0.4)" }}>
-                                <div style={{ fontSize: 10, color: "#ffd166", letterSpacing: 2, marginBottom: 6 }}>🚲 BIKE TRAINER</div>
-                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 32, color: "#ffd166", lineHeight: 1 }}>
-                                  {trainer.readings.trainerDistMi.toFixed(2)} <span style={{ fontSize: 13, color: "#5a86a8" }}>mi</span>
+                              <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 12, border: "1px solid rgba(255,213,102,0.4)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                                  <div style={{ fontSize: 10, color: "#ffd166", letterSpacing: 2 }}>🚲 {bikeLabel}</div>
+                                  {targetMi > 0 && <div style={{ fontSize: 10, color: "#5a86a8" }}>{distMi.toFixed(2)} / {targetMi} mi</div>}
                                 </div>
-                                <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 4 }}>
-                                  {trainer.readings.speed != null ? `${(trainer.readings.speed * 0.621).toFixed(1)} mph` : '--'}
-                                  {trainer.readings.cadence != null ? ` · ${trainer.readings.cadence} rpm` : ''}
+                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 36, color: "#ffd166", lineHeight: 1, marginBottom: 6 }}>
+                                  {distMi.toFixed(2)} <span style={{ fontSize: 14, color: "#5a86a8" }}>mi</span>
+                                </div>
+                                {targetMi > 0 && (
+                                  <div style={{ background: "rgba(255,213,102,0.1)", borderRadius: 4, height: 6, overflow: "hidden", marginBottom: 6 }}>
+                                    <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#4ade80" : "#ffd166", borderRadius: 4, transition: "width 0.5s" }} />
+                                  </div>
+                                )}
+                                <div style={{ fontSize: 11, color: "#5a86a8" }}>
+                                  {trainer?.readings?.speed != null ? `${(trainer.readings.speed * 0.621).toFixed(1)} mph` : '--'}
+                                  {trainer?.readings?.cadence != null ? ` · ${trainer.readings.cadence} rpm` : ''}
+                                  {!trainer && <span style={{ color: "#ffd166" }}> — connect a trainer in Devices tab</span>}
                                 </div>
                               </div>
                             );
@@ -4486,6 +4548,48 @@
                         <input ref={logoInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleLogoImport} />
                       </div>
                     </div>
+                  </div>
+
+                  {/* ── Bike Mode ── */}
+                  <div style={{ marginTop: 14, background: "#0c2240", border: "1px solid rgba(255,213,102,0.3)", borderRadius: 8, padding: "14px 16px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#ffd166", marginBottom: 12 }}>🚲 Bike Mode</div>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                      {[
+                        { val: "gps",     label: "Real Bike",   desc: "GPS outdoor ride" },
+                        { val: "trainer", label: "Trainer",     desc: "Smart/dumb trainer" },
+                        { val: "spin",    label: "Spin Bike",   desc: "Stationary spin bike" },
+                      ].map(({ val, label, desc }) => (
+                        <button key={val} onClick={() => setBikeType(val)}
+                          style={{ flex: 1, padding: "10px 6px", background: bikeType === val ? "rgba(255,213,102,0.12)" : "transparent", border: `2px solid ${bikeType === val ? "#ffd166" : "rgba(255,213,102,0.2)"}`, borderRadius: 8, color: bikeType === val ? "#ffd166" : "#5a86a8", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                          {label}
+                          <div style={{ fontSize: 9, color: bikeType === val ? "#a08040" : "#3a6080", fontWeight: 400, marginTop: 2 }}>{desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                    {bikeType !== "gps" && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1, marginBottom: 6 }}>
+                          BIKE DISTANCE TARGET (miles) — T2 triggers automatically when this distance is reached
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <input type="number" min="0.1" step="0.1" value={bikeDistanceMi}
+                            onChange={e => setBikeDistanceMi(e.target.value)}
+                            placeholder={courses[0]?.bikeMiles ? String(courses[0].bikeMiles) : "e.g. 12.4"}
+                            style={{ flex: 1, background: "#071829", border: "1px solid rgba(255,213,102,0.35)", borderRadius: 6, padding: "9px 12px", color: "#ffd166", fontSize: 14, fontWeight: 700, outline: "none" }} />
+                          <span style={{ fontSize: 11, color: "#5a86a8" }}>mi</span>
+                          {courses[0]?.bikeMiles && !bikeDistanceMi && (
+                            <button onClick={() => setBikeDistanceMi(String(courses[0].bikeMiles))}
+                              style={{ ...btnStyle("#5a86a8", true), padding: "7px 12px", fontSize: 11 }}>
+                              Use course ({courses[0].bikeMiles} mi)
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#5a86a8", marginTop: 8 }}>
+                          T1 (swim→bike transition) still uses GPS. T2 fires when trainer distance is reached.
+                          The T2 GPS waypoint is optional — use it to mark the run start location on the map.
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* ── GPS Waypoints ── */}
