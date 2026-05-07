@@ -2055,6 +2055,34 @@
           return { speed: dv.getUint16(1, true) / 256, cadence: dv.getUint8(3) };
         }
 
+        // FTMS Indoor Bike Data (0x2AD2) — used by Wahoo KICKR, Tacx, etc.
+        function parseFtmsIndoorBike(dv) {
+          if (dv.byteLength < 2) return {};
+          const flags = dv.getUint16(0, true);
+          let offset = 2;
+          let speed = null, cadence = null, distanceM = null, power = null;
+          // Bit 0 = "More Data" flag; when 0, instantaneous speed is present
+          if (!(flags & 0x0001)) {
+            if (dv.byteLength >= offset + 2) { speed = dv.getUint16(offset, true) / 100 / 3.6; offset += 2; } // km/h → m/s
+          }
+          if (flags & 0x0002) offset += 2; // avg speed
+          if (flags & 0x0004) {
+            if (dv.byteLength >= offset + 2) { cadence = dv.getUint16(offset, true) / 2; offset += 2; } // 0.5rpm res
+          }
+          if (flags & 0x0008) offset += 2; // avg cadence
+          if (flags & 0x0010) {
+            if (dv.byteLength >= offset + 3) {
+              distanceM = dv.getUint8(offset) | (dv.getUint8(offset+1) << 8) | (dv.getUint8(offset+2) << 16);
+              offset += 3;
+            }
+          }
+          if (flags & 0x0020) offset += 2; // resistance
+          if (flags & 0x0040) {
+            if (dv.byteLength >= offset + 2) { power = dv.getInt16(offset, true); offset += 2; }
+          }
+          return { speed, cadence, distanceM, power };
+        }
+
         async function connectBleDevice(device) {
           const gattServer = await device.gatt.connect();
           const deviceId = device.id;
@@ -2076,6 +2104,11 @@
             {
               uuid: "00001814-0000-1000-8000-00805f9b34fb",
               chars: [{ uuid: "00002a53-0000-1000-8000-00805f9b34fb", key: "rsc", parser: (dv) => parseRscMeasurement(dv) }],
+            },
+            {
+              // FTMS — Fitness Machine Service (Wahoo KICKR, Tacx, most smart trainers)
+              uuid: "00001826-0000-1000-8000-00805f9b34fb",
+              chars: [{ uuid: "00002ad2-0000-1000-8000-00805f9b34fb", key: "ftms", parser: (dv) => parseFtmsIndoorBike(dv) }],
             },
           ];
 
@@ -2119,6 +2152,21 @@
                   } else if (key === "rsc") {
                     r.speed = +(parsed.speed * 3.6).toFixed(1);
                     r.cadence = parsed.cadence;
+                  } else if (key === "ftms") {
+                    if (parsed.speed != null) r.speed = +(parsed.speed * 3.6).toFixed(1);
+                    if (parsed.cadence != null) r.cadence = +parsed.cadence.toFixed(0);
+                    if (parsed.power != null) r.power = parsed.power;
+                    if (parsed.distanceM != null) {
+                      r.ftmsDistM = parsed.distanceM;
+                      const baseM = d.trainerBaseDistM ?? parsed.distanceM;
+                      r.trainerDistMi = +Math.max(0, (parsed.distanceM - baseM) / 1609.344).toFixed(3);
+                      const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
+                      if (code !== null && idx !== null) {
+                        rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
+                          .set({ distMi: r.trainerDistMi, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
+                      }
+                      return { ...d, readings: r, trainerBaseDistM: baseM };
+                    }
                   }
                   return { ...d, readings: r };
                 }));
@@ -2144,11 +2192,12 @@
                 { services: ["cycling_speed_and_cadence"] },
                 { services: ["cycling_power"] },
                 { services: ["running_speed_and_cadence"] },
+                { services: ["fitness_machine"] },
               ],
-              optionalServices: ["heart_rate", "cycling_speed_and_cadence", "cycling_power", "running_speed_and_cadence"],
+              optionalServices: ["heart_rate", "cycling_speed_and_cadence", "cycling_power", "running_speed_and_cadence", "fitness_machine"],
             });
             setBtDevices(prev => prev.some(d => d.id === device.id) ? prev
-              : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {}, hrHistory: [], trainerBaseRevs: null }]);
+              : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {}, hrHistory: [], trainerBaseRevs: null, trainerBaseDistM: null }]);
             await connectBleDevice(device);
           } catch (err) {
             if (err.name !== "NotFoundError") console.error("BLE scan error:", err);
@@ -3840,7 +3889,7 @@
                                       <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#ffd166", letterSpacing: 1 }}>
                                         {dev.readings.trainerDistMi.toFixed(2)}<span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>mi</span>
                                       </div>
-                                      <button onClick={() => setBtDevices(prev => prev.map(d2 => d2.id !== dev.id ? d2 : { ...d2, trainerBaseRevs: d2.readings.cscRaw?.cumWheelRevs ?? null, readings: { ...d2.readings, trainerDistMi: 0 } }))}
+                                      <button onClick={() => setBtDevices(prev => prev.map(d2 => d2.id !== dev.id ? d2 : { ...d2, trainerBaseRevs: d2.readings.cscRaw?.cumWheelRevs ?? null, trainerBaseDistM: d2.readings.ftmsDistM ?? null, readings: { ...d2.readings, trainerDistMi: 0 } }))}
                                         style={{ fontSize: 9, color: "#5a86a8", background: "none", border: "none", cursor: "pointer", marginTop: 2, padding: 0 }}>
                                         Reset
                                       </button>
