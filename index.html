@@ -1178,7 +1178,39 @@
             try { localStorage.setItem("tri-joined-races", JSON.stringify(updatedJoined)); } catch(e) {}
             rtdb.ref("users/" + uid + "/joinedRaces/" + code).set(joined).catch(console.error);
             if (regRaceData?.status === "live") {
-              await joinRaceByCode(code);
+              // Find athlete in existing roster by UID, or append them
+              const athListSnap = await rtdb.ref("liveRaces/" + code + "/athletes").once("value");
+              const currentAths = athListSnap.val() || [];
+              let athIdx = currentAths.findIndex(a => a.uid === uid);
+              if (athIdx === -1) {
+                athIdx = currentAths.length;
+                await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).set({
+                  uid, id: uid, name: registration.name,
+                  firstName: registration.firstName, lastName: registration.lastName,
+                  gender: registration.gender, ageGroup,
+                  dob: registration.dob, courseId: registration.courseId,
+                  splits: Array(SEGMENTS.length).fill(null),
+                  started: false, finished: false, startOffset: null, joinedAt: registration.joinedAt
+                });
+              } else {
+                await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).update({ uid, courseId: registration.courseId });
+              }
+              const raceSnap = await rtdb.ref("liveRaces/" + code).once("value");
+              const raceData = raceSnap.val();
+              if (raceData) {
+                const segs = raceData.segments || SEGMENTS;
+                if (raceData.athletes) {
+                  raceData.athletes = raceData.athletes.map(ath => ({
+                    ...ath, splits: Array.from({ length: segs.length }, (_, i) =>
+                      ath.splits?.[i] !== undefined && ath.splits?.[i] !== null ? ath.splits[i] : null)
+                  }));
+                }
+                bikeSegTriggeredRef.current = false;
+                setJoinRace({ ...raceData, code });
+                setJoinAthIdx(athIdx);
+                setJoinGpsActive(false);
+                setJoinNextSeg(0);
+              }
             } else {
               setRegistrationStep("waiting");
             }
@@ -2822,7 +2854,7 @@
 
             {/* NAV — always visible */}
             <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240" }}>
-              {[["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Play"],["devices","📡 Devices"]].map(([v, label]) => (
+              {[["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]].map(([v, label]) => (
                 <button key={v} onClick={() => setView(v)} style={{
                   flex: 1, padding: "11px 0", background: "none", border: "none",
                   borderBottom: view === v ? "3px solid #00aeef" : "3px solid transparent",
@@ -3514,7 +3546,7 @@
                 </div>
               )}
 
-              {/* ── PLAY (GPS Demo) ── */}
+              {/* ── JOIN ── */}
               {view === "join" && (
                 <div style={{ paddingTop: 8, maxWidth: 480, margin: "0 auto" }}>
 
@@ -3729,7 +3761,7 @@
                             const targetMi = parseFloat(myCourse?.bikeMiles) || 0;
                             const distMi = trainer?.readings?.trainerDistMi ?? 0;
                             const pct = targetMi > 0 ? Math.min(100, (distMi / targetMi) * 100) : 0;
-                            const bikeLabel = joinRace.bikeType === "spin" ? "SPIN BIKE" : "BIKE TRAINER";
+                            const bikeLabel = coursebikeType === "spin" ? "SPIN BIKE" : "BIKE TRAINER";
                             return (
                               <div style={{ background: "#0c2240", borderRadius: 8, padding: "12px 14px", marginBottom: 12, border: "1px solid rgba(255,213,102,0.4)" }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -3947,10 +3979,10 @@
                         </div>
                         <div style={{ fontSize: 11, color: "#5a86a8", marginBottom: 12, lineHeight: 1.8 }}>
                           To pair:{" "}
-                          <span style={{ color: "#e8f4fb" }}>Play tab</span> → enter race code → select your name → token appears here automatically.
+                          <span style={{ color: "#e8f4fb" }}>Join tab</span> → enter race code → select your name → token appears here automatically.
                         </div>
                         <button onClick={() => setView("join")} style={{ ...btnStyle("#00aeef", true), fontSize: 11, padding: "8px 16px" }}>
-                          Go to Play Tab →
+                          Go to Join Tab →
                         </button>
                       </div>
                     ) : !watchToken ? (
@@ -4423,7 +4455,7 @@
                       <div style={{ marginTop: 12, background: "rgba(74,222,128,0.06)", borderRadius: 6, padding: "12px 14px" }}>
                         <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1, marginBottom: 4 }}>SHARE THIS CODE WITH ATHLETES</div>
                         <div style={{ fontFamily: "'Bebas Neue'", fontSize: 40, letterSpacing: 8, color: "#4ade80" }}>{registrationCode}</div>
-                        <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 2, marginBottom: 8 }}>Athletes enter this in the Play tab to join</div>
+                        <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 2, marginBottom: 8 }}>Athletes enter this in the Join tab to join</div>
                         {athletes.filter(a => a.uid).length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                             {athletes.filter(a => a.uid).map(a => (
