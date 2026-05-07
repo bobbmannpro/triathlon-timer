@@ -701,6 +701,22 @@
           return () => { ref.off("value", fn); athleteGpsListenerRef.current = null; };
         }, [liveRaceCode]);
 
+        // Host-side auto-T2 trigger — fires when trainer distance reaches course target
+        useEffect(() => {
+          if (!liveRaceCode || !Object.keys(athleteTrainerData).length) return;
+          athletes.forEach((ath, i) => {
+            if (!ath.started || ath.finished) return;
+            if (ath.splits[1] === null || ath.splits[2] !== null) return; // T1 not done or T2 already logged
+            const athCourse = courses.find(c => c.id === ath.courseId) || courses[0];
+            if ((athCourse?.bikeType || "gps") === "gps") return;
+            const targetMi = parseFloat(athCourse?.bikeMiles) || 0;
+            if (targetMi <= 0) return;
+            const tData = athleteTrainerData[i];
+            if (!tData || tData.distMi == null || tData.distMi < targetMi) return;
+            logSplit(i, 2);
+          });
+        }, [athleteTrainerData]);
+
         // Athlete live race data listener — subscribes to Firebase when athlete joins a race
         useEffect(() => {
           if (joinLiveListenerRef.current) {
@@ -935,12 +951,14 @@
                           const restoredAthletes = (ld.athletes || []).map(a => ({
                             ...freshAthlete(a.name, a.id, a.gender, a.ageGroup),
                             uid: a.uid || null,
+                            courseId: a.courseId ?? null,
                             startOffset: a.startOffset ?? null,
                             splits: Array.from({ length: segs.length }, (_, i) => a.splits?.[i] ?? null),
                             started: a.started || false,
                             finished: a.finished || false
                           }));
                           setAthletes(restoredAthletes);
+                          if (ld.courses && ld.courses.length > 0) setCourses(ld.courses);
                           const elapsed = ld.clockRunning ? (Date.now() - (ld.updatedAt || Date.now())) : 0;
                           const restoredClockMs = (ld.clockMs || 0) + elapsed;
                           offsetRef.current = restoredClockMs;
@@ -5062,32 +5080,34 @@
                           </div>
                         )}
 
-                        {/* Trainer bike progress — host view */}
-                        {ath.started && !done && next === 2 && (() => {
+                        {/* Trainer bike progress — host view, shows whenever athlete is on a trainer course */}
+                        {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
                           if ((athCourse?.bikeType || "gps") === "gps") return null;
+                          if (next !== 2 && ath.splits[2] !== null) return null; // T2 already done — hide
                           const tData = athleteTrainerData[i];
                           const targetMi = parseFloat(athCourse?.bikeMiles) || 0;
                           const distMi = tData?.distMi ?? null;
                           const pct = targetMi > 0 && distMi != null ? Math.min(100, (distMi / targetMi) * 100) : 0;
+                          const inBike = next === 2;
                           return (
                             <div style={{ padding: "0 14px 10px" }}>
-                              <div style={{ background: "#071829", borderRadius: 6, padding: "8px 12px", border: "1px solid rgba(255,213,102,0.3)" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                                  <span style={{ fontSize: 10, color: "#ffd166", letterSpacing: 1 }}>🚲 TRAINER</span>
-                                  <span style={{ fontSize: 12, color: "#ffd166", fontWeight: 700 }}>
-                                    {distMi != null ? distMi.toFixed(2) : '--'} / {targetMi} mi
+                              <div style={{ background: "#071829", borderRadius: 6, padding: "8px 12px", border: `1px solid ${inBike ? "rgba(255,213,102,0.5)" : "rgba(255,213,102,0.2)"}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: distMi != null ? 4 : 0 }}>
+                                  <span style={{ fontSize: 10, color: "#ffd166", letterSpacing: 1 }}>🚲 {athCourse.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}</span>
+                                  <span style={{ fontFamily: "'Bebas Neue'", fontSize: 16, color: "#ffd166", letterSpacing: 1 }}>
+                                    {distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : 'No signal')}
                                   </span>
                                 </div>
-                                {targetMi > 0 && (
+                                {targetMi > 0 && distMi != null && (
                                   <div style={{ background: "rgba(255,213,102,0.1)", borderRadius: 3, height: 5, marginBottom: 4 }}>
                                     <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#4ade80" : "#ffd166", borderRadius: 3, transition: "width 0.4s" }} />
                                   </div>
                                 )}
                                 <div style={{ fontSize: 10, color: tData ? "#5a86a8" : "#f87171" }}>
                                   {tData
-                                    ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph${tData.cadence != null ? ` · ${tData.cadence} rpm` : ''}`
-                                    : 'No trainer signal — use Bike button above to advance manually'}
+                                    ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph${tData.cadence != null ? ` · ${tData.cadence} rpm` : ''}${pct >= 100 ? ' · ✓ target reached' : ''}`
+                                    : (inBike ? 'No trainer signal — use Bike button above to advance manually' : 'Waiting for trainer signal…')}
                                 </div>
                               </div>
                             </div>
