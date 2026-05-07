@@ -1547,7 +1547,7 @@
           persistRaces(updated);
           mergeAthletesToLibrary(athletes);
         }
-        function loadRace(race) {
+        async function loadRace(race) {
           setLoadedRaceId(race.id);
           if (race.code) setRegistrationCode(race.code); else setRegistrationCode(null);
           setRegistrationOpen(false);
@@ -1583,9 +1583,45 @@
             };
           }));
           archiveSessionRef.current = null;
-          resetClock();
           setEditTarget(null);
           setRaceInitialized(true);
+
+          // Check Firebase for a live session — if found, restore clock and go straight to race view
+          if (race.code && currentUser) {
+            try {
+              const liveSnap = await rtdb.ref("liveRaces/" + race.code).once("value");
+              if (liveSnap.exists()) {
+                const ld = liveSnap.val();
+                if (ld.status === "live" && ld.publishedBy === currentUser.uid) {
+                  const elapsed = ld.clockRunning ? Math.max(0, Date.now() - (ld.updatedAt || Date.now())) : 0;
+                  const restoredClockMs = (ld.clockMs || 0) + elapsed;
+                  offsetRef.current = restoredClockMs;
+                  setClockMs(restoredClockMs);
+                  setClockStarted(true);
+                  setClockRunning(ld.clockRunning || false);
+                  setLiveRaceCode(race.code);
+                  // Prefer live athlete state (has splits/started/finished) over saved race state
+                  const segs = ld.segments || SEGMENTS;
+                  const liveAthletes = (ld.athletes || []).map(a => ({
+                    ...freshAthlete(a.name, a.id, a.gender, a.ageGroup),
+                    uid: a.uid || null,
+                    courseId: a.courseId ?? null,
+                    dob: a.dob || "",
+                    startOffset: a.startOffset ?? null,
+                    splits: Array.from({ length: segs.length }, (_, idx) => a.splits?.[idx] ?? null),
+                    started: a.started || false,
+                    finished: a.finished || false
+                  }));
+                  if (liveAthletes.length > 0) setAthletes(liveAthletes);
+                  setView("race");
+                  return;
+                }
+              }
+            } catch(e) { console.error(e); }
+          }
+
+          resetClock();
+          setView("setup");
         }
 
         function deleteRace(id) {
@@ -3060,7 +3096,7 @@
                               <div style={{ fontSize: 11, color: "#3a6080" }}>{race.athletes.length} athletes · {(race.courses || []).map(c => c.name).join("/") || ""} · {race.savedAt}{race.waypoints && race.waypoints.some(w => w.lat !== null) ? <span style={{ color: "#4ade80", marginLeft: 4 }}>· 📍 {race.waypoints.filter(w => w.lat !== null).length} pts</span> : null}</div>
                             </div>
                             <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                              <button onClick={() => { loadRace(race); setView("setup"); setHomeSection(null); }} style={{ ...btnStyle("#ffd166"), padding: "5px 14px", fontSize: 11 }}>Load</button>
+                              <button onClick={() => { loadRace(race); setHomeSection(null); }} style={{ ...btnStyle("#ffd166"), padding: "5px 14px", fontSize: 11 }}>Load</button>
                               {deleteConfirm === race.id ? (
                                 <>
                                   <button onClick={() => { deleteRace(race.id); setDeleteConfirm(null); }} style={{ ...btnStyle("#f4742b"), padding: "5px 10px", fontSize: 11 }}>Delete?</button>
