@@ -3853,33 +3853,98 @@
                           })()}
 
                           {/* Garmin watch panel */}
-                          <div style={{ background: "#0c2240", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: `1px solid ${watchConnected ? "rgba(74,222,128,0.3)" : "rgba(0,174,239,0.15)"}` }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <div style={{ fontSize: 10, color: "#00aeef", letterSpacing: 2 }}>⌚ GARMIN WATCH</div>
-                              {watchConnected && <span style={{ fontSize: 10, color: "#4ade80", letterSpacing: 1 }}>● CONNECTED</span>}
-                            </div>
-                            {!watchToken ? (
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-                                <div style={{ fontSize: 11, color: "#5a86a8" }}>Not paired — enter token on watch to stream GPS</div>
-                                <button onClick={generateWatchToken} disabled={watchTokenLoading}
-                                  style={{ ...btnStyle("#00aeef", true), padding: "5px 12px", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
-                                  {watchTokenLoading ? "…" : "Pair"}
-                                </button>
-                              </div>
-                            ) : (
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-                                <div>
-                                  <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, letterSpacing: 8, color: "#00aeef", lineHeight: 1 }}>
-                                    {watchToken.slice(0, 4)} {watchToken.slice(4)}
-                                  </div>
-                                  <div style={{ fontSize: 10, color: watchConnected ? "#4ade80" : "#5a86a8" }}>
-                                    {watchConnected ? "Streaming GPS from Garmin watch" : "Enter this code on your Garmin watch"}
-                                  </div>
+                          {(() => {
+                            const gpsData = joinLiveData?.athletes?.[joinAthIdx]?.gps;
+                            const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
+                            const curSeg = (() => { const s = splits.findIndex(x => x === null); return s === -1 ? SEGMENTS.length - 1 : s; })();
+                            return (
+                              <div style={{ background: "#0c2240", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: `1px solid ${watchConnected ? "rgba(74,222,128,0.4)" : "rgba(0,174,239,0.15)"}` }}>
+                                {/* Header row */}
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: watchConnected ? 10 : 6 }}>
+                                  <div style={{ fontSize: 10, color: "#00aeef", letterSpacing: 2 }}>⌚ GARMIN WATCH</div>
+                                  {watchConnected
+                                    ? <span style={{ fontSize: 10, color: "#4ade80", letterSpacing: 1, animation: "gpsping 1.4s ease-out infinite" }}>● WORKOUT ACTIVE</span>
+                                    : watchToken && <span style={{ fontSize: 10, color: "#5a86a8" }}>Waiting for watch…</span>}
                                 </div>
-                                <button onClick={clearWatchToken} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#3a6080", fontSize: 10, cursor: "pointer", padding: "4px 8px", flexShrink: 0, marginLeft: 8 }}>Unpair</button>
+
+                                {/* Workout stats — only when watch is streaming */}
+                                {watchConnected && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+                                      {/* Distance */}
+                                      <div style={{ background: "#071829", borderRadius: 6, padding: "8px 12px", flex: 1, minWidth: 80, textAlign: "center" }}>
+                                        <div style={{ fontSize: 9, color: "#5a86a8", letterSpacing: 2 }}>DISTANCE</div>
+                                        <div style={{ fontFamily: "'Bebas Neue'", fontSize: 26, color: "#00aeef", lineHeight: 1 }}>
+                                          {gpsData?.distanceMi != null ? gpsData.distanceMi.toFixed(2) : "0.00"}
+                                          <span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>mi</span>
+                                        </div>
+                                      </div>
+                                      {/* Current segment */}
+                                      <div style={{ background: "#071829", borderRadius: 6, padding: "8px 12px", flex: 1, minWidth: 80, textAlign: "center" }}>
+                                        <div style={{ fontSize: 9, color: "#5a86a8", letterSpacing: 2 }}>SEGMENT</div>
+                                        <div style={{ fontFamily: "'Bebas Neue'", fontSize: 26, color: segColors[curSeg] || "#4ade80", lineHeight: 1 }}>
+                                          {SEGMENTS[curSeg]}
+                                        </div>
+                                      </div>
+                                      {/* GPS accuracy */}
+                                      {gpsData?.accuracy != null && (
+                                        <div style={{ background: "#071829", borderRadius: 6, padding: "8px 12px", flex: 1, minWidth: 80, textAlign: "center" }}>
+                                          <div style={{ fontSize: 9, color: "#5a86a8", letterSpacing: 2 }}>GPS ACC</div>
+                                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 26, color: gpsData.accuracy < 10 ? "#4ade80" : gpsData.accuracy < 25 ? "#ffd166" : "#f4742b", lineHeight: 1 }}>
+                                            {gpsData.accuracy.toFixed(0)}<span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>m</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                    {/* Completed splits from watch */}
+                                    {splits.some(s => s !== null) && (
+                                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                        {SEGMENTS.map((seg, si) => {
+                                          if (splits[si] == null) return null;
+                                          const myAth = joinLiveData?.athletes?.[joinAthIdx];
+                                          const segMs = si === 0
+                                            ? splits[si] - (myAth?.startOffset || 0)
+                                            : splits[si] - splits[si - 1];
+                                          return (
+                                            <div key={si} style={{ background: "#071829", borderRadius: 4, padding: "4px 8px", fontSize: 10 }}>
+                                              <span style={{ color: segColors[si] }}>{seg}</span>
+                                              <span style={{ color: "#5a86a8", marginLeft: 4 }}>{segMs > 0 ? formatElapsed(segMs) : formatElapsed(splits[si])}</span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Pair / token row */}
+                                {!watchToken ? (
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <div style={{ fontSize: 11, color: "#5a86a8" }}>Start a multisport on your Garmin to sync</div>
+                                    <button onClick={generateWatchToken} disabled={watchTokenLoading}
+                                      style={{ ...btnStyle("#00aeef", true), padding: "5px 12px", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+                                      {watchTokenLoading ? "…" : "Pair"}
+                                    </button>
+                                  </div>
+                                ) : !watchConnected ? (
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <div>
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 24, letterSpacing: 8, color: "#00aeef", lineHeight: 1 }}>
+                                        {watchToken.slice(0, 4)} {watchToken.slice(4)}
+                                      </div>
+                                      <div style={{ fontSize: 10, color: "#5a86a8" }}>Enter this code on your Garmin watch</div>
+                                    </div>
+                                    <button onClick={clearWatchToken} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#3a6080", fontSize: 10, cursor: "pointer", padding: "4px 8px", flexShrink: 0, marginLeft: 8 }}>Unpair</button>
+                                  </div>
+                                ) : (
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <div style={{ fontSize: 10, color: "#4ade80" }}>Syncing live to race · token {watchToken.slice(0, 4)} {watchToken.slice(4)}</div>
+                                    <button onClick={clearWatchToken} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#3a6080", fontSize: 10, cursor: "pointer", padding: "4px 8px", flexShrink: 0, marginLeft: 8 }}>Unpair</button>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
+                            );
+                          })()}
 
                           {/* Next checkpoint */}
                           {(() => {
