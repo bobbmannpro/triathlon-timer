@@ -506,6 +506,9 @@
         const wakeLockRef = useRef(null);
         const joinRaceCodeRef = useRef(null);
         const joinAthIdxRef = useRef(null);
+        // Host-as-athlete refs — used when the race director also has BLE devices
+        const hostRaceCodeRef = useRef(null);
+        const hostAthIdxRef = useRef(null);
 
         // Watch token GPS listener — tracks whether the Garmin watch has started sending data
         useEffect(() => {
@@ -734,6 +737,13 @@
         // Sync refs used inside BLE/GPS closures
         useEffect(() => { joinRaceCodeRef.current = joinRace?.code ?? null; }, [joinRace?.code]);
         useEffect(() => { joinAthIdxRef.current = joinAthIdx; }, [joinAthIdx]);
+        // Keep host-as-athlete refs current so BLE handlers can push even when user is the race director
+        useEffect(() => { hostRaceCodeRef.current = liveRaceCode ?? null; }, [liveRaceCode]);
+        useEffect(() => {
+          if (!liveRaceCode || !currentUser) { hostAthIdxRef.current = null; return; }
+          const idx = athletes.findIndex(a => a.uid === currentUser.uid);
+          hostAthIdxRef.current = idx >= 0 ? idx : null;
+        }, [liveRaceCode, athletes, currentUser]);
 
         // Sync joinCurSegRef and imperatively update marker/trail color when segment changes
         useEffect(() => {
@@ -2179,7 +2189,7 @@
                     if (parsed.cumWheelRevs != null) {
                       const base = d.trainerBaseRevs ?? parsed.cumWheelRevs;
                       r.trainerDistMi = +Math.max(0, (parsed.cumWheelRevs - base) * 2.1 / 1609.344).toFixed(3);
-                      const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
+                      const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
                       if (code !== null && idx !== null) {
                         rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
                           .set({ distMi: r.trainerDistMi, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
@@ -2188,7 +2198,7 @@
                     }
                   } else if (key === "hr") {
                     r.heartRate = parsed.heartRate;
-                    const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
+                    const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
                     if (code !== null && idx !== null) {
                       rtdb.ref(`liveRaces/${code}/athletes/${idx}/hr`)
                         .set({ bpm: parsed.heartRate, t: Date.now() }).catch(console.error);
@@ -2210,7 +2220,7 @@
                       r.trainerDistMi = +Math.max(0, (parsed.distanceM - baseM) / 1609.344).toFixed(3);
                     }
                     // Push on every FTMS notification — speed/cadence alone is enough to keep trainer signal alive
-                    const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
+                    const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
                     if (code !== null && idx !== null) {
                       rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
                         .set({ distMi: r.trainerDistMi ?? null, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
