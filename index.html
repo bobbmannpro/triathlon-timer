@@ -260,6 +260,8 @@
         const [spectatorClockMs, setSpectatorClockMs] = useState(0);
         const [watchSelectedAthId, setWatchSelectedAthId] = useState(null);
         const watchSelectedAthIdRef = useRef(null);
+        const watchLastGpsRef = useRef({});
+        const prevClockRunningRef = useRef(false);
 
         // Local ticker for spectator — interpolates clock forward between RTDB updates
         useEffect(() => {
@@ -274,6 +276,15 @@
           return () => clearInterval(id);
         }, [liveRace]);
 
+        // Auto-clear watch trails when race clock transitions from stopped → running
+        useEffect(() => {
+          if (!liveRace) { prevClockRunningRef.current = false; return; }
+          if (liveRace.clockRunning && !prevClockRunningRef.current) {
+            clearWatchTrails(liveRace.code);
+          }
+          prevClockRunningRef.current = !!liveRace.clockRunning;
+        }, [liveRace?.clockRunning]);
+
         // Dedicated GPS listener — updates Leaflet markers directly without React re-render
         useEffect(() => {
           if (!liveRace || view !== "watch") {
@@ -283,7 +294,8 @@
             }
             return;
           }
-          const ref = rtdb.ref(`liveRaces/${liveRace.code}/athletes`);
+          const raceCode = liveRace.code;
+          const ref = rtdb.ref(`liveRaces/${raceCode}/athletes`);
           const fn = snap => {
             try {
               const map = leafletMapRef.current;
@@ -301,6 +313,8 @@
                 const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
                 const distLabel = ath.gps.distanceMi != null ? ` · ${ath.gps.distanceMi.toFixed(2)} mi` : "";
                 const tipText = `${athName}${distLabel}`;
+                // Cache last GPS for stable display
+                watchLastGpsRef.current[ath.id || idx] = ath.gps;
                 try {
                   if (leafletMarkersRef.current[markerId]) {
                     leafletMarkersRef.current[markerId].setLatLng(pos);
@@ -316,8 +330,13 @@
                     leafletTrailPointsRef.current[markerId].push(pos);
                     if (leafletTrailsRef.current[markerId]) {
                       leafletTrailsRef.current[markerId].setLatLngs(leafletTrailPointsRef.current[markerId]);
+                      leafletTrailsRef.current[markerId].setStyle({ color: col });
                     } else {
                       leafletTrailsRef.current[markerId] = L.polyline(leafletTrailPointsRef.current[markerId], { color: col, weight: 2.5, opacity: 0.7 }).addTo(map);
+                    }
+                    // Persist trails to localStorage every 10 points
+                    if (leafletTrailPointsRef.current[markerId].length % 10 === 0) {
+                      try { localStorage.setItem(`tri-watch-trails-${raceCode}`, JSON.stringify(leafletTrailPointsRef.current)); } catch(_) {}
                     }
                   }
                   if (markerId === watchSelectedAthIdRef.current) {
@@ -359,8 +378,17 @@
           }
           wps.forEach(wp => {
             L.circleMarker([wp.lat, wp.lng], { radius: 8, color: "#4ade80", fillColor: "#4ade80", fillOpacity: 0.3, weight: 2 })
-              .bindTooltip(wp.label, { permanent: false }).addTo(map);
+              .bindTooltip(wp.label, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" }).addTo(map);
           });
+          // Restore persisted trails
+          try {
+            const savedTrails = JSON.parse(localStorage.getItem(`tri-watch-trails-${liveRace.code}`) || "{}");
+            Object.entries(savedTrails).forEach(([markerId, pts]) => {
+              if (!pts || pts.length < 2) return;
+              leafletTrailPointsRef.current[markerId] = pts;
+              leafletTrailsRef.current[markerId] = L.polyline(pts, { color: "#00aeef", weight: 2.5, opacity: 0.7 }).addTo(map);
+            });
+          } catch(_) {}
           athletes.forEach && athletes.forEach((ath, idx) => {
             if (!ath || !ath.gps) return;
             const pos = [ath.gps.lat, ath.gps.lng];
@@ -469,6 +497,11 @@
         const joinAthMarkerRef = useRef(null);
         const joinAllMarkersRef = useRef({});
         const joinGpsMapListenerRef = useRef(null);
+        const joinFollowingRef = useRef(true);
+        const joinCurSegRef = useRef(0);
+        const wakeLockRef = useRef(null);
+        const joinRaceCodeRef = useRef(null);
+        const joinAthIdxRef = useRef(null);
 
         // Watch token GPS listener — tracks whether the Garmin watch has started sending data
         useEffect(() => {
@@ -673,6 +706,26 @@
           return () => { ref.off("value", fn); joinLiveListenerRef.current = null; };
         }, [joinRace?.code]);
 
+        // Sync refs used inside BLE/GPS closures
+        useEffect(() => { joinRaceCodeRef.current = joinRace?.code ?? null; }, [joinRace?.code]);
+        useEffect(() => { joinAthIdxRef.current = joinAthIdx; }, [joinAthIdx]);
+
+        // Sync joinCurSegRef and imperatively update marker/trail color when segment changes
+        useEffect(() => {
+          if (joinAthIdx === null || !joinLiveData?.athletes?.[joinAthIdx]) return;
+          const splits = joinLiveData.athletes[joinAthIdx].splits || [];
+          const seg = splits.findIndex(s => s === null);
+          const cur = seg === -1 ? SEGMENTS.length - 1 : seg;
+          joinCurSegRef.current = cur;
+          const col = segColors[cur] || "#4ade80";
+          if (joinAthMarkerRef.current) {
+            try { joinAthMarkerRef.current.setStyle({ color: col, fillColor: col }); } catch(_) {}
+          }
+          if (joinLeafletTrailRef.current) {
+            try { joinLeafletTrailRef.current.setStyle({ color: col }); } catch(_) {}
+          }
+        }, [joinLiveData?.athletes?.[joinAthIdx]?.splits?.join(",")]);
+
         // Athlete live clock interpolation
         useEffect(() => {
           if (!joinLiveData) return;
@@ -710,11 +763,13 @@
           wps.forEach(wp => {
             const col = wp.action === "start" ? "#4ade80" : wp.action === "split" && wp.segIdx === 4 ? "#f4742b" : "#ffd166";
             L.circleMarker([wp.lat, wp.lng], { radius: 7, color: col, fillColor: col, fillOpacity: 0.85, weight: 2 })
-              .bindTooltip(wp.label, { permanent: false, direction: "top" }).addTo(map);
+              .bindTooltip(wp.label, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" }).addTo(map);
           });
           if (joinGpsTrailRef.current.length > 1) {
-            joinLeafletTrailRef.current = L.polyline(joinGpsTrailRef.current, { color: "#4ade80", weight: 3, opacity: 0.85 }).addTo(map);
+            const trailCol = segColors[joinCurSegRef.current] || "#4ade80";
+            joinLeafletTrailRef.current = L.polyline(joinGpsTrailRef.current, { color: trailCol, weight: 3, opacity: 0.85 }).addTo(map);
           }
+          map.on('dragstart', () => { joinFollowingRef.current = false; });
           joinLeafletMapRef.current = map;
           setTimeout(() => map.invalidateSize(), 200);
         }, [joinRace?.code, joinAthIdx, view]);
@@ -739,10 +794,14 @@
                 const pos = [ath.gps.lat, ath.gps.lng];
                 const markerId = `ath-${idx}`;
                 const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
+                const theirSplits = ath.splits || [];
+                const theirSeg = theirSplits.findIndex(s => s === null);
+                const theirCol = segColors[theirSeg === -1 ? SEGMENTS.length - 1 : theirSeg] || "#a78bfa";
                 if (joinAllMarkersRef.current[markerId]) {
                   joinAllMarkersRef.current[markerId].setLatLng(pos);
+                  joinAllMarkersRef.current[markerId].setStyle({ color: theirCol, fillColor: theirCol });
                 } else {
-                  joinAllMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 8, color: "#a78bfa", fillColor: "#a78bfa", fillOpacity: 0.8, weight: 2 })
+                  joinAllMarkersRef.current[markerId] = L.circleMarker(pos, { radius: 8, color: theirCol, fillColor: theirCol, fillOpacity: 0.8, weight: 2 })
                     .bindTooltip(athName, { permanent: false, direction: "top" })
                     .on("click", () => { try { joinLeafletMapRef.current?.panTo(pos, { animate: true, duration: 0.5 }); } catch(_) {} })
                     .addTo(map);
@@ -754,6 +813,13 @@
           joinGpsMapListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); joinGpsMapListenerRef.current = null; };
         }, [joinRace?.code, joinAthIdx, view]);
+
+        // Re-acquire Wake Lock whenever the page becomes visible (lock is auto-released on hide)
+        useEffect(() => {
+          const fn = () => { if (document.visibilityState === 'visible') acquireWakeLock(); };
+          document.addEventListener('visibilitychange', fn);
+          return () => document.removeEventListener('visibilitychange', fn);
+        }, []);
 
         // Persist director's live session — write only; explicit removal happens on stop/sign-out
         useEffect(() => {
@@ -1743,6 +1809,7 @@
           const allWps = (joinRace.waypoints || waypoints).filter(wp => wp.lat !== null && wp.lng !== null && wp.enabled !== false);
           setJoinGpsActive(true);
           setJoinGpsStatus("Acquiring GPS signal…");
+          acquireWakeLock();
           const triggered = new Set();
           let nextWpIdx = 0;
           let prevLat = null, prevLng = null, totalDistMi = 0;
@@ -1777,19 +1844,23 @@
                 const container = map.getContainer && map.getContainer();
                 if (container && document.body.contains(container)) {
                   const lpos = [lat, lng];
+                  const segCol = segColors[joinCurSegRef.current] || "#4ade80";
                   if (joinAthMarkerRef.current) {
                     joinAthMarkerRef.current.setLatLng(lpos);
                   } else {
                     const myName = joinRace.athletes?.[joinAthIdx]?.name || "You";
-                    joinAthMarkerRef.current = L.circleMarker(lpos, { radius: 12, color: "#4ade80", fillColor: "#4ade80", fillOpacity: 0.9, weight: 3 })
+                    joinAthMarkerRef.current = L.circleMarker(lpos, { radius: 12, color: segCol, fillColor: segCol, fillOpacity: 0.9, weight: 3 })
                       .bindTooltip(myName, { permanent: true, direction: "top", offset: [0, -14], className: "leaflet-ath-label" })
                       .addTo(map);
+                  }
+                  if (joinFollowingRef.current) {
+                    map.panTo(lpos, { animate: true, duration: 0.3 });
                   }
                   if (raceStartedForMe && joinGpsTrailRef.current.length > 1) {
                     if (joinLeafletTrailRef.current) {
                       joinLeafletTrailRef.current.setLatLngs(joinGpsTrailRef.current);
                     } else {
-                      joinLeafletTrailRef.current = L.polyline(joinGpsTrailRef.current, { color: "#4ade80", weight: 3, opacity: 0.85 }).addTo(map);
+                      joinLeafletTrailRef.current = L.polyline(joinGpsTrailRef.current, { color: segCol, weight: 3, opacity: 0.85 }).addTo(map);
                     }
                   }
                 }
@@ -1856,6 +1927,24 @@
           try { await rtdb.ref(`watchTokens/${watchToken}`).remove(); } catch(_) {}
           setWatchToken(null);
           setWatchConnected(false);
+        }
+
+        // ── Wake Lock helper ─────────────────────────────────────────────────
+        async function acquireWakeLock() {
+          if (!navigator.wakeLock) return;
+          try {
+            if (wakeLockRef.current) return;
+            wakeLockRef.current = await navigator.wakeLock.request('screen');
+            wakeLockRef.current.addEventListener('release', () => { wakeLockRef.current = null; });
+          } catch(_) {}
+        }
+
+        // ── Watch trail clear helper ──────────────────────────────────────────
+        function clearWatchTrails(raceCode) {
+          Object.values(leafletTrailsRef.current).forEach(p => { try { p.remove(); } catch(_) {} });
+          leafletTrailsRef.current = {};
+          leafletTrailPointsRef.current = {};
+          if (raceCode) { try { localStorage.removeItem(`tri-watch-trails-${raceCode}`); } catch(_) {} }
         }
 
         // ── BLE / Bluetooth helpers ──────────────────────────────────────────
@@ -1952,8 +2041,23 @@
                     r.cscRaw = { ...parsed };
                     if (parsed.speed !== null && parsed.speed !== undefined) r.speed = +(parsed.speed * 3.6).toFixed(1);
                     if (parsed.cadence !== null && parsed.cadence !== undefined) r.cadence = parsed.cadence;
+                    if (parsed.cumWheelRevs != null) {
+                      const base = d.trainerBaseRevs ?? parsed.cumWheelRevs;
+                      r.trainerDistMi = +Math.max(0, (parsed.cumWheelRevs - base) * 2.1 / 1609.344).toFixed(3);
+                      const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
+                      if (code !== null && idx !== null) {
+                        rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
+                          .set({ distMi: r.trainerDistMi, speed: r.speed ?? null, cadence: r.cadence ?? null, t: Date.now() }).catch(console.error);
+                      }
+                      return { ...d, readings: r, trainerBaseRevs: base };
+                    }
                   } else if (key === "hr") {
                     r.heartRate = parsed.heartRate;
+                    const code = joinRaceCodeRef.current, idx = joinAthIdxRef.current;
+                    if (code !== null && idx !== null) {
+                      rtdb.ref(`liveRaces/${code}/athletes/${idx}/hr`)
+                        .set({ bpm: parsed.heartRate, t: Date.now() }).catch(console.error);
+                    }
                     return { ...d, readings: r, hrHistory: [...(d.hrHistory || []), { t: Date.now(), bpm: parsed.heartRate }].slice(-7200) };
                   } else if (key === "power") {
                     r.power = parsed.power;
@@ -1972,6 +2076,7 @@
           });
 
           setBtDevices(prev => prev.map(d => d.id === deviceId ? { ...d, gattServer, connected: true } : d));
+          acquireWakeLock();
         }
 
         async function scanBluetooth() {
@@ -1988,7 +2093,7 @@
               optionalServices: ["heart_rate", "cycling_speed_and_cadence", "cycling_power", "running_speed_and_cadence"],
             });
             setBtDevices(prev => prev.some(d => d.id === device.id) ? prev
-              : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {}, hrHistory: [] }]);
+              : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {}, hrHistory: [], trainerBaseRevs: null }]);
             await connectBleDevice(device);
           } catch (err) {
             if (err.name !== "NotFoundError") console.error("BLE scan error:", err);
@@ -3478,6 +3583,7 @@
                             <div style={{ fontSize: 11, color: joinGpsActive ? "#4ade80" : "#3a6080", flex: 1 }}>
                               {joinGpsActive ? joinGpsStatus : (joinGpsStatus || "Starting GPS…")}
                             </div>
+                            {(() => { const hrDev = btDevices.find(d => d.readings.heartRate != null); return hrDev ? <span style={{ fontSize: 12, color: "#f4742b", fontWeight: 700, flexShrink: 0 }}>❤️ {hrDev.readings.heartRate}</span> : null; })()}
                             <div style={{ fontSize: 10, color: "#3a6080" }}>
                               {joinRace.athletes[joinAthIdx]?.name}
                               <button onClick={() => setJoinAthIdx(null)} style={{ fontSize: 10, color: "#3a6080", background: "none", border: "none", cursor: "pointer", padding: "0 0 0 6px" }}>change</button>
@@ -3498,12 +3604,30 @@
                               </div>
                             )}
                             {joinGpsPos && (
-                              <button onClick={() => { try { joinLeafletMapRef.current?.setView([joinGpsPos.lat, joinGpsPos.lng], 16, { animate: true }); } catch(_) {} }}
+                              <button onClick={() => { joinFollowingRef.current = true; try { joinLeafletMapRef.current?.setView([joinGpsPos.lat, joinGpsPos.lng], 16, { animate: true }); } catch(_) {} }}
                                 style={{ position: "absolute", bottom: 8, left: 8, zIndex: 1000, background: "rgba(7,24,41,0.85)", border: "1px solid rgba(0,174,239,0.4)", borderRadius: 20, padding: "4px 10px", color: "#00aeef", fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: 1 }}>
                                 ⊕ ME
                               </button>
                             )}
                           </div>
+
+                          {/* Bike trainer panel — shown during bike segment when a CSC trainer is connected */}
+                          {joinNextSeg === 2 && (() => {
+                            const trainer = btDevices.find(d => d.readings.trainerDistMi != null);
+                            if (!trainer) return null;
+                            return (
+                              <div style={{ background: "#0c2240", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: "1px solid rgba(255,213,102,0.4)" }}>
+                                <div style={{ fontSize: 10, color: "#ffd166", letterSpacing: 2, marginBottom: 6 }}>🚲 BIKE TRAINER</div>
+                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 32, color: "#ffd166", lineHeight: 1 }}>
+                                  {trainer.readings.trainerDistMi.toFixed(2)} <span style={{ fontSize: 13, color: "#5a86a8" }}>mi</span>
+                                </div>
+                                <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 4 }}>
+                                  {trainer.readings.speed != null ? `${(trainer.readings.speed * 0.621).toFixed(1)} mph` : '--'}
+                                  {trainer.readings.cadence != null ? ` · ${trainer.readings.cadence} rpm` : ''}
+                                </div>
+                              </div>
+                            );
+                          })()}
 
                           {/* Next checkpoint */}
                           {(() => {
@@ -3635,7 +3759,19 @@
                                       </div>
                                     </div>
                                   )}
-                                  {!dev.connected && Object.keys(dev.readings).filter(k => !["cscRaw"].includes(k)).length === 0 && (
+                                  {dev.readings.trainerDistMi != null && (
+                                    <div style={{ background: "#0c2240", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
+                                      <div style={{ fontSize: 9, letterSpacing: 2, color: "#5a86a8", textTransform: "uppercase" }}>Trainer Dist</div>
+                                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#ffd166", letterSpacing: 1 }}>
+                                        {dev.readings.trainerDistMi.toFixed(2)}<span style={{ fontSize: 10, color: "#5a86a8", marginLeft: 2 }}>mi</span>
+                                      </div>
+                                      <button onClick={() => setBtDevices(prev => prev.map(d2 => d2.id !== dev.id ? d2 : { ...d2, trainerBaseRevs: d2.readings.cscRaw?.cumWheelRevs ?? null, readings: { ...d2.readings, trainerDistMi: 0 } }))}
+                                        style={{ fontSize: 9, color: "#5a86a8", background: "none", border: "none", cursor: "pointer", marginTop: 2, padding: 0 }}>
+                                        Reset
+                                      </button>
+                                    </div>
+                                  )}
+                                  {!dev.connected && Object.keys(dev.readings).filter(k => !["cscRaw", "trainerDistMi"].includes(k)).length === 0 && (
                                     <div style={{ fontSize: 11, color: "#3a6080" }}>Disconnected — no data</div>
                                   )}
                                 </div>
@@ -3963,7 +4099,10 @@
                                       : <div style={{ fontFamily: "'Bebas Neue'", fontSize: 30, color: ath.finished ? "#4ade80" : ath.started ? "#00aeef" : "#2a4060", lineHeight: 1 }}>{place}</div>}
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ath.name}</div>
+                                    <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                      {ath.name}
+                                      {ath.hr && (Date.now() - (ath.hr.t||0) < 15000) && <span style={{ fontSize: 11, color: "#f4742b", marginLeft: 6, fontWeight: 400 }}>❤️ {ath.hr.bpm}</span>}
+                                    </div>
                                     <div style={{ fontSize: 11, color: "#5a86a8", marginTop: 1 }}>{ath.ageGroup}{ath.ageGroup && ath.gender ? " · " : ""}{ath.gender}</div>
                                   </div>
                                   <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -4003,15 +4142,21 @@
                                     })}
                                   </div>
                                 )}
-                                {isSelected && ath.gps && (
-                                  <div style={{ borderTop: "1px solid rgba(167,139,250,0.2)", padding: "10px 14px", background: "rgba(167,139,250,0.05)" }}>
-                                    <div style={{ fontSize: 10, color: "#a78bfa", letterSpacing: 2, marginBottom: 6 }}>📍 LIVE GPS</div>
-                                    <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#5a86a8", flexWrap: "wrap" }}>
-                                      {ath.gps.distanceMi != null && <span>Distance: <strong style={{ color: "#e8f4fb" }}>{ath.gps.distanceMi.toFixed(2)} mi</strong></span>}
-                                      {ath.gps.speed != null && ath.gps.speed > 0 && <span>Speed: <strong style={{ color: "#e8f4fb" }}>{(ath.gps.speed * 2.237).toFixed(1)} mph</strong></span>}
+                                {isSelected && (() => {
+                                  const gps = ath.gps || watchLastGpsRef.current[ath.id];
+                                  if (!gps && !ath.hr) return null;
+                                  return (
+                                    <div style={{ borderTop: "1px solid rgba(167,139,250,0.2)", padding: "10px 14px", background: "rgba(167,139,250,0.05)" }}>
+                                      <div style={{ fontSize: 10, color: "#a78bfa", letterSpacing: 2, marginBottom: 6 }}>📍 LIVE DATA</div>
+                                      <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#5a86a8", flexWrap: "wrap" }}>
+                                        {gps?.distanceMi != null && <span>Distance: <strong style={{ color: "#e8f4fb" }}>{gps.distanceMi.toFixed(2)} mi</strong></span>}
+                                        {gps?.speed != null && gps.speed > 0 && <span>Speed: <strong style={{ color: "#e8f4fb" }}>{(gps.speed * 2.237).toFixed(1)} mph</strong></span>}
+                                        {ath.hr && (Date.now() - (ath.hr.t||0) < 15000) && <span>❤️ <strong style={{ color: "#f4742b" }}>{ath.hr.bpm} bpm</strong></span>}
+                                        {ath.trainer && (Date.now() - (ath.trainer.t||0) < 15000) && <span>🚲 <strong style={{ color: "#ffd166" }}>{ath.trainer.distMi?.toFixed(2)} mi</strong></span>}
+                                      </div>
                                     </div>
-                                  </div>
-                                )}
+                                  );
+                                })()}
                               </div>
                             </div>
                           );
@@ -4022,7 +4167,10 @@
                           const hasGps = rankedWatchAthletes.some(a => a.gps);
                           return (
                             <div style={{ marginTop: 16, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(74,222,128,0.3)", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
-                              <div style={{ fontSize: 10, letterSpacing: 3, color: "#4ade80", padding: "8px 12px", background: "#0c2240" }}>📍 LIVE GPS MAP</div>
+                              <div style={{ fontSize: 10, letterSpacing: 3, color: "#4ade80", padding: "8px 12px", background: "#0c2240", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <span>📍 LIVE GPS MAP</span>
+                                {liveRaceCode && <button onClick={() => clearWatchTrails(liveRace?.code)} style={{ background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 10, cursor: "pointer", padding: "2px 8px" }}>🗑 Trails</button>}
+                              </div>
                               <div ref={watchMapContainerRef} style={{ height: 220 }} />
                               <div style={{ position: "absolute", bottom: 8, right: 8, display: "flex", alignItems: "center", gap: 5, background: "rgba(7,24,41,0.75)", borderRadius: 20, padding: "4px 8px", zIndex: 1000 }}>
                                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: hasGps ? "#4ade80" : "#3a6080", boxShadow: hasGps ? "0 0 0 0 rgba(74,222,128,0.6)" : "none", animation: hasGps ? "gpsping 1.4s ease-out infinite" : "none" }} />
