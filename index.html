@@ -205,34 +205,6 @@
         return { textAlign: "center", padding: "8px 6px", color, fontWeight: 700, letterSpacing: 1, fontSize: 10, textTransform: "uppercase", whiteSpace: "nowrap" };
       }
 
-      // ── Photo-album IndexedDB helpers ────────────────────────────────────────
-      function _idbPhotoOpen() {
-        return new Promise((res, rej) => {
-          const r = indexedDB.open("tri-photo-handles", 1);
-          r.onupgradeneeded = e => e.target.result.createObjectStore("handles");
-          r.onsuccess = e => res(e.target.result);
-          r.onerror   = () => rej(r.error);
-        });
-      }
-      async function getPhotoHandle(raceId) {
-        try {
-          const db = await _idbPhotoOpen();
-          return await new Promise(res => {
-            db.transaction("handles").objectStore("handles").get(raceId).onsuccess = e => res(e.target.result ?? null);
-          });
-        } catch { return null; }
-      }
-      async function savePhotoHandle(raceId, handle) {
-        try {
-          const db = await _idbPhotoOpen();
-          await new Promise((res, rej) => {
-            const tx = db.transaction("handles", "readwrite");
-            tx.objectStore("handles").put(handle, raceId);
-            tx.oncomplete = res; tx.onerror = () => rej(tx.error);
-          });
-        } catch { /* non-fatal */ }
-      }
-
       // ── App ──────────────────────────────────────────────────────────────────
       function App() {
         const [view, setView] = useState("home");
@@ -1669,16 +1641,31 @@
         }
 
         async function openPhotoAlbum(raceId, raceName) {
-          photoAlbumUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+          photoAlbumUrlsRef.current.forEach(function(u) { URL.revokeObjectURL(u); });
           photoAlbumUrlsRef.current = [];
-          setPhotoAlbum({ raceId, raceName, files: [], loading: true, lightboxIdx: null });
+          setPhotoAlbum({ raceId: raceId, raceName: raceName, files: [], loading: true, lightboxIdx: null });
 
-          let handle = await getPhotoHandle(raceId);
+          // Load saved directory handle from IndexedDB
+          var handle = null;
+          try {
+            var idb = await new Promise(function(res, rej) {
+              var req = indexedDB.open("tri-photo-handles", 1);
+              req.onupgradeneeded = function(e) { e.target.result.createObjectStore("handles"); };
+              req.onsuccess = function(e) { res(e.target.result); };
+              req.onerror = function() { rej(req.error); };
+            });
+            handle = await new Promise(function(res) {
+              var req2 = idb.transaction("handles").objectStore("handles").get(raceId);
+              req2.onsuccess = function(e) { res(e.target.result || null); };
+            });
+          } catch(e) { handle = null; }
+
           if (handle) {
-            let perm = "denied";
-            try { perm = await handle.requestPermission({ mode: "read" }); } catch { perm = "denied"; }
-            if (perm !== "granted") handle = null;
+            var perm = "denied";
+            try { perm = await handle.requestPermission({ mode: "read" }); } catch(e) { perm = "denied"; }
+            if (perm !== "granted") { handle = null; }
           }
+
           if (!handle) {
             if (!window.showDirectoryPicker) {
               setPhotoAlbum(null);
@@ -1686,27 +1673,43 @@
               return;
             }
             try { handle = await window.showDirectoryPicker({ mode: "read" }); }
-            catch { setPhotoAlbum(null); return; }
-            await savePhotoHandle(raceId, handle);
+            catch(e) { setPhotoAlbum(null); return; }
+            try {
+              var idb2 = await new Promise(function(res, rej) {
+                var req3 = indexedDB.open("tri-photo-handles", 1);
+                req3.onupgradeneeded = function(e) { e.target.result.createObjectStore("handles"); };
+                req3.onsuccess = function(e) { res(e.target.result); };
+                req3.onerror = function() { rej(req3.error); };
+              });
+              await new Promise(function(res, rej) {
+                var tx = idb2.transaction("handles", "readwrite");
+                tx.objectStore("handles").put(handle, raceId);
+                tx.oncomplete = res; tx.onerror = function() { rej(tx.error); };
+              });
+            } catch(e) { /* non-fatal */ }
           }
 
-          const IMAGE_EXTS = new Set(["jpg","jpeg","png","gif","webp","avif","heic","heif","bmp","tiff","tif"]);
-          const files = [];
-          const iter = handle.entries();
-          let next;
-          while (!(next = await iter.next()).done) {
-            const [name, entry] = next.value;
-            if (entry.kind !== "file") continue;
-            if (!IMAGE_EXTS.has(name.split(".").pop().toLowerCase())) continue;
+          var IMAGE_EXTS = ["jpg","jpeg","png","gif","webp","avif","heic","heif","bmp","tiff","tif"];
+          var files = [];
+          var iter = handle.entries();
+          while (true) {
+            var iterResult;
+            try { iterResult = await iter.next(); } catch(e) { break; }
+            if (iterResult.done) { break; }
+            var entryName = iterResult.value[0];
+            var entryHandle = iterResult.value[1];
+            if (entryHandle.kind !== "file") { continue; }
+            var ext = entryName.split(".").pop().toLowerCase();
+            if (IMAGE_EXTS.indexOf(ext) < 0) { continue; }
             try {
-              const file = await entry.getFile();
-              const url = URL.createObjectURL(file);
+              var imgFile = await entryHandle.getFile();
+              var url = URL.createObjectURL(imgFile);
               photoAlbumUrlsRef.current.push(url);
-              files.push({ name, url });
+              files.push({ name: entryName, url: url });
             } catch(e) { /* skip unreadable */ }
           }
-          files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-          setPhotoAlbum(prev => prev ? { ...prev, files, loading: false } : null);
+          files.sort(function(a, b) { return a.name.localeCompare(b.name, undefined, { numeric: true }); });
+          setPhotoAlbum(function(prev) { return prev ? Object.assign({}, prev, { files: files, loading: false }) : null; });
         }
 
         function closePhotoAlbum() {
