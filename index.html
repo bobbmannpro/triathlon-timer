@@ -18,6 +18,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
@@ -61,6 +62,7 @@
       firebase.initializeApp(firebaseConfig);
       var auth = firebase.auth();
       var rtdb = firebase.database();
+      var storage = firebase.storage();
     </script>
     <script type="text/babel" data-presets="react">
       const { useState, useEffect, useRef, useCallback } = React;
@@ -626,8 +628,11 @@
         const [archiveOpenAthId, setArchiveOpenAthId] = useState(null);
         const archiveSessionRef = useRef(null);
         const [archiveDeleteConfirm, setArchiveDeleteConfirm] = useState(null);
-        const [photoAlbum, setPhotoAlbum] = useState(null); // { raceId, raceName, files:[{name,url}], loading, lightboxIdx }
+        const [photoAlbum, setPhotoAlbum] = useState(null); // { raceId, raceName, files:[{name,url,file}], loading, lightboxIdx, shareCode, uploading, uploadProgress:{done,total} }
         const photoAlbumUrlsRef = useRef([]);
+        const [photoCodeInput, setPhotoCodeInput] = useState("");
+        const [photoCodeSection, setPhotoCodeSection] = useState(false);
+        const [viewPhotoAlbum, setViewPhotoAlbum] = useState(null); // participant view: { code, raceName, photos:[{name,url}], lightboxIdx, loading, error }
 
         // Manual Race Entry state
         const [manualRaceName, setManualRaceName] = useState("My Race");
@@ -1643,7 +1648,7 @@
         async function openPhotoAlbum(raceId, raceName) {
           photoAlbumUrlsRef.current.forEach(function(u) { URL.revokeObjectURL(u); });
           photoAlbumUrlsRef.current = [];
-          setPhotoAlbum({ raceId: raceId, raceName: raceName, files: [], loading: true, lightboxIdx: null });
+          setPhotoAlbum({ raceId: raceId, raceName: raceName, files: [], loading: true, lightboxIdx: null, shareCode: null, uploading: false, uploadProgress: { done: 0, total: 0 } });
 
           // Load saved directory handle from IndexedDB
           var handle = null;
@@ -1705,7 +1710,7 @@
               var imgFile = await entryHandle.getFile();
               var url = URL.createObjectURL(imgFile);
               photoAlbumUrlsRef.current.push(url);
-              files.push({ name: entryName, url: url });
+              files.push({ name: entryName, url: url, file: imgFile });
             } catch(e) { /* skip unreadable */ }
           }
           files.sort(function(a, b) { return a.name.localeCompare(b.name, undefined, { numeric: true }); });
@@ -1717,6 +1722,58 @@
           photoAlbumUrlsRef.current = [];
           setPhotoAlbum(null);
         }
+
+        async function uploadAndSharePhotos() {
+          if (!photoAlbum || photoAlbum.uploading) return;
+          var files = photoAlbum.files;
+          if (!files || files.length === 0) return;
+          var code = photoAlbum.shareCode || Math.random().toString(36).substring(2, 8).toUpperCase();
+          setPhotoAlbum(function(p) { return p ? Object.assign({}, p, { uploading: true, uploadProgress: { done: 0, total: files.length }, shareCode: code }) : p; });
+          var cloudPhotos = [];
+          for (var i = 0; i < files.length; i++) {
+            var f = files[i];
+            try {
+              var storageRef = storage.ref("racePhotos/" + code + "/" + f.name);
+              await storageRef.put(f.file);
+              var downloadUrl = await storageRef.getDownloadURL();
+              cloudPhotos.push({ name: f.name, url: downloadUrl });
+            } catch(uploadErr) { /* skip failed */ }
+            var done = i + 1;
+            (function(d) { setPhotoAlbum(function(p) { return p ? Object.assign({}, p, { uploadProgress: { done: d, total: files.length } }) : p; }); })(done);
+          }
+          try {
+            await rtdb.ref("photoAlbums/" + code).set({ raceName: photoAlbum.raceName, uploadedAt: Date.now(), count: cloudPhotos.length, photos: cloudPhotos });
+          } catch(e) { /* ignore */ }
+          setPhotoAlbum(function(p) { return p ? Object.assign({}, p, { uploading: false, shareCode: code }) : p; });
+        }
+
+        async function loadPhotosByCode(code) {
+          if (!code) return;
+          var trimmedCode = code.trim().toUpperCase();
+          setViewPhotoAlbum({ code: trimmedCode, raceName: "", photos: [], lightboxIdx: null, loading: true, error: null });
+          try {
+            var snap = await rtdb.ref("photoAlbums/" + trimmedCode).once("value");
+            if (!snap.exists()) {
+              setViewPhotoAlbum(function(p) { return p ? Object.assign({}, p, { loading: false, error: "No photos found for code \"" + trimmedCode + "\". Check the code and try again." }) : p; });
+              return;
+            }
+            var data = snap.val();
+            setViewPhotoAlbum({ code: trimmedCode, raceName: data.raceName || trimmedCode, photos: data.photos || [], lightboxIdx: null, loading: false, error: null });
+          } catch(e) {
+            setViewPhotoAlbum(function(p) { return p ? Object.assign({}, p, { loading: false, error: "Could not load photos. Check your connection and try again." }) : p; });
+          }
+        }
+
+        useEffect(() => {
+          if (!viewPhotoAlbum || viewPhotoAlbum.lightboxIdx === null) return;
+          const onKey = e => {
+            if (e.key === "ArrowRight") setViewPhotoAlbum(p => p && p.lightboxIdx < p.photos.length - 1 ? { ...p, lightboxIdx: p.lightboxIdx + 1 } : p);
+            if (e.key === "ArrowLeft")  setViewPhotoAlbum(p => p && p.lightboxIdx > 0 ? { ...p, lightboxIdx: p.lightboxIdx - 1 } : p);
+            if (e.key === "Escape")     setViewPhotoAlbum(p => p ? { ...p, lightboxIdx: null } : p);
+          };
+          window.addEventListener("keydown", onKey);
+          return () => window.removeEventListener("keydown", onKey);
+        }, [viewPhotoAlbum?.lightboxIdx]);
 
         useEffect(() => {
           if (!photoAlbum || photoAlbum.lightboxIdx === null) return;
@@ -3254,6 +3311,31 @@
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#a78bfa" }}>&#8594;</div>
                     </button>
+
+                    {/* Race Photos */}
+                    <div style={{ background: "linear-gradient(135deg,#0c2240,#1a0f2e)", border: "2px solid #e879f9", borderRadius: 12, overflow: "hidden" }}>
+                      <button onClick={() => setPhotoCodeSection(s => !s)} style={{ width: "100%", background: "none", border: "none", padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                        <div style={{ fontSize: 40, lineHeight: 1 }}>📷</div>
+                        <div>
+                          <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 26, letterSpacing: 3, color: "#e879f9" }}>Race Photos</div>
+                          <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 2 }}>View shared photos with a race code</div>
+                        </div>
+                        <div style={{ marginLeft: "auto", fontSize: 22, color: "#e879f9" }}>{photoCodeSection ? "▲" : "▼"}</div>
+                      </button>
+                      {photoCodeSection && (
+                        <div style={{ padding: "0 24px 20px", borderTop: "1px solid rgba(232,121,249,0.2)" }}>
+                          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                            <input value={photoCodeInput}
+                              onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
+                              placeholder="Enter race code"
+                              onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) { loadPhotosByCode(photoCodeInput); setPhotoCodeSection(false); } }}
+                              style={{ flex: 1, background: "#071829", border: "1px solid rgba(232,121,249,0.4)", borderRadius: 6, padding: "10px 14px", color: "#e8f4fb", fontSize: 15, fontFamily: "'Bebas Neue',sans-serif", letterSpacing: 2, outline: "none" }} />
+                            <button onClick={() => { if (photoCodeInput.trim()) { loadPhotosByCode(photoCodeInput); setPhotoCodeSection(false); } }}
+                              style={{ ...btnStyle("#e879f9"), padding: "10px 20px", fontSize: 13 }}>View</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
                   </div>
                 </div>
@@ -5684,6 +5766,33 @@
                 )}
               </div>
 
+              {/* Upload & Share bar */}
+              {!photoAlbum.loading && (
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", padding: "12px 16px", flexShrink: 0, background: "#040f1e" }}>
+                  {photoAlbum.uploading ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ flex: 1, background: "rgba(0,174,239,0.12)", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                        <div style={{ background: "#00aeef", height: "100%", width: `${photoAlbum.uploadProgress.total ? Math.round((photoAlbum.uploadProgress.done / photoAlbum.uploadProgress.total) * 100) : 0}%`, transition: "width 0.3s" }} />
+                      </div>
+                      <div style={{ fontSize: 12, color: "#5a86a8", flexShrink: 0 }}>Uploading {photoAlbum.uploadProgress.done}/{photoAlbum.uploadProgress.total}…</div>
+                    </div>
+                  ) : photoAlbum.shareCode ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 11, color: "#5a86a8" }}>Share code:</div>
+                      <div style={{ fontFamily: "'Bebas Neue'", fontSize: 28, color: "#00aeef", letterSpacing: 4 }}>{photoAlbum.shareCode}</div>
+                      <button onClick={() => navigator.clipboard.writeText(photoAlbum.shareCode)} style={{ ...btnStyle("#00aeef", true), padding: "4px 12px", fontSize: 11 }}>Copy</button>
+                      <div style={{ fontSize: 11, color: "#3a6080" }}>Participants enter this code in the Race Photos section of the app.</div>
+                      <button onClick={uploadAndSharePhotos} style={{ ...btnStyle("#5a86a8", true), padding: "4px 12px", fontSize: 11, marginLeft: "auto" }}>Re-upload</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <button onClick={uploadAndSharePhotos} disabled={photoAlbum.files.length === 0} style={{ ...btnStyle("#00aeef"), padding: "8px 18px", fontSize: 13, opacity: photoAlbum.files.length === 0 ? 0.5 : 1, cursor: photoAlbum.files.length === 0 ? "default" : "pointer" }}>&#9729; Upload &amp; Share</button>
+                      <div style={{ fontSize: 11, color: "#3a6080" }}>Upload to cloud &amp; get a code participants can use to download photos.</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Lightbox */}
               {photoAlbum.lightboxIdx !== null && (() => {
                 const f = photoAlbum.files[photoAlbum.lightboxIdx];
@@ -5695,15 +5804,86 @@
                     <div style={{ position: "absolute", top: 16, left: 16, fontSize: 12, color: "#3a6080" }}>{photoAlbum.lightboxIdx + 1} / {photoAlbum.files.length}</div>
                     {photoAlbum.lightboxIdx > 0 && (
                       <button onClick={e => { e.stopPropagation(); setPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx - 1 })); }}
-                        style={{ position: "absolute", left: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+                        style={{ position: "absolute", left: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>&#8249;</button>
                     )}
                     {photoAlbum.lightboxIdx < photoAlbum.files.length - 1 && (
                       <button onClick={e => { e.stopPropagation(); setPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx + 1 })); }}
-                        style={{ position: "absolute", right: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+                        style={{ position: "absolute", right: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>&#8250;</button>
                     )}
                     <img src={f.url} alt={f.name} onClick={e => e.stopPropagation()}
                       style={{ maxWidth: "90vw", maxHeight: "88vh", objectFit: "contain", borderRadius: 4 }} />
                     <div style={{ position: "absolute", bottom: 14, color: "#3a6080", fontSize: 11, maxWidth: "80vw", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                  </div>
+                );
+              })()}
+            </div>
+            )}
+
+            {/* ── PARTICIPANT PHOTO VIEW OVERLAY ──────────────────────────────── */}
+            {viewPhotoAlbum && (
+            <div style={{ position: "fixed", inset: 0, background: "#040f1e", zIndex: 3000, display: "flex", flexDirection: "column" }}>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#e879f9", letterSpacing: 1 }}>&#128247; {viewPhotoAlbum.raceName || viewPhotoAlbum.code}</div>
+                  <div style={{ fontSize: 11, color: "#3a6080" }}>
+                    {viewPhotoAlbum.loading ? "Loading…" : viewPhotoAlbum.error ? "Not found" : `${viewPhotoAlbum.photos.length} photo${viewPhotoAlbum.photos.length !== 1 ? "s" : ""} · Code: ${viewPhotoAlbum.code}`}
+                  </div>
+                </div>
+                <button onClick={() => setViewPhotoAlbum(null)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 28, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>&times;</button>
+              </div>
+
+              {/* Grid */}
+              <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+                {viewPhotoAlbum.loading ? (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: "#3a6080", fontSize: 14 }}>Loading photos…</div>
+                ) : viewPhotoAlbum.error ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 260, gap: 12 }}>
+                    <div style={{ fontSize: 44 }}>&#128269;</div>
+                    <div style={{ color: "#f87171", fontSize: 13, textAlign: "center", maxWidth: 320 }}>{viewPhotoAlbum.error}</div>
+                    <button onClick={() => setViewPhotoAlbum(null)} style={{ ...btnStyle("#5a86a8", true), padding: "8px 22px", fontSize: 13 }}>Close</button>
+                  </div>
+                ) : viewPhotoAlbum.photos.length === 0 ? (
+                  <div style={{ textAlign: "center", color: "#3a6080", padding: 40, fontSize: 14 }}>No photos in this album.</div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+                    {viewPhotoAlbum.photos.map((f, idx) => (
+                      <div key={f.name} style={{ position: "relative" }}>
+                        <div onClick={() => setViewPhotoAlbum(p => ({ ...p, lightboxIdx: idx }))}
+                          style={{ aspectRatio: "1", borderRadius: 6, overflow: "hidden", cursor: "pointer", background: "#0c2240" }}>
+                          <img src={f.url} alt={f.name} loading="lazy"
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        </div>
+                        <a href={f.url} download={f.name} target="_blank" rel="noreferrer"
+                          style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(0,0,0,0.75)", borderRadius: 4, color: "#e8f4fb", fontSize: 14, padding: "2px 7px", textDecoration: "none", lineHeight: "1.6" }} title="Download">&#8595;</a>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Lightbox */}
+              {viewPhotoAlbum.lightboxIdx !== null && (() => {
+                const vf = viewPhotoAlbum.photos[viewPhotoAlbum.lightboxIdx];
+                return (
+                  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.96)", zIndex: 3100, display: "flex", alignItems: "center", justifyContent: "center" }}
+                    onClick={() => setViewPhotoAlbum(p => ({ ...p, lightboxIdx: null }))}>
+                    <div style={{ position: "absolute", top: 14, right: 16, color: "#5a86a8", fontSize: 30, cursor: "pointer", lineHeight: 1, padding: 4 }}
+                      onClick={e => { e.stopPropagation(); setViewPhotoAlbum(p => ({ ...p, lightboxIdx: null })); }}>&times;</div>
+                    <div style={{ position: "absolute", top: 16, left: 16, fontSize: 12, color: "#3a6080" }}>{viewPhotoAlbum.lightboxIdx + 1} / {viewPhotoAlbum.photos.length}</div>
+                    {viewPhotoAlbum.lightboxIdx > 0 && (
+                      <button onClick={e => { e.stopPropagation(); setViewPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx - 1 })); }}
+                        style={{ position: "absolute", left: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>&#8249;</button>
+                    )}
+                    {viewPhotoAlbum.lightboxIdx < viewPhotoAlbum.photos.length - 1 && (
+                      <button onClick={e => { e.stopPropagation(); setViewPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx + 1 })); }}
+                        style={{ position: "absolute", right: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>&#8250;</button>
+                    )}
+                    <a href={vf.url} download={vf.name} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                      style={{ position: "absolute", bottom: 14, right: 14, background: "rgba(0,174,239,0.15)", border: "1px solid rgba(0,174,239,0.4)", borderRadius: 6, color: "#00aeef", fontSize: 12, padding: "6px 14px", textDecoration: "none" }}>Download</a>
+                    <img src={vf.url} alt={vf.name} onClick={e => e.stopPropagation()}
+                      style={{ maxWidth: "90vw", maxHeight: "88vh", objectFit: "contain", borderRadius: 4 }} />
+                    <div style={{ position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", color: "#3a6080", fontSize: 11, maxWidth: "60vw", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vf.name}</div>
                   </div>
                 );
               })()}
