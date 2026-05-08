@@ -205,6 +205,34 @@
         return { textAlign: "center", padding: "8px 6px", color, fontWeight: 700, letterSpacing: 1, fontSize: 10, textTransform: "uppercase", whiteSpace: "nowrap" };
       }
 
+      // ── Photo-album IndexedDB helpers ────────────────────────────────────────
+      function _idbPhotoOpen() {
+        return new Promise((res, rej) => {
+          const r = indexedDB.open("tri-photo-handles", 1);
+          r.onupgradeneeded = e => e.target.result.createObjectStore("handles");
+          r.onsuccess = e => res(e.target.result);
+          r.onerror   = () => rej(r.error);
+        });
+      }
+      async function getPhotoHandle(raceId) {
+        try {
+          const db = await _idbPhotoOpen();
+          return await new Promise(res => {
+            db.transaction("handles").objectStore("handles").get(raceId).onsuccess = e => res(e.target.result ?? null);
+          });
+        } catch { return null; }
+      }
+      async function savePhotoHandle(raceId, handle) {
+        try {
+          const db = await _idbPhotoOpen();
+          await new Promise((res, rej) => {
+            const tx = db.transaction("handles", "readwrite");
+            tx.objectStore("handles").put(handle, raceId);
+            tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+          });
+        } catch { /* non-fatal */ }
+      }
+
       // ── App ──────────────────────────────────────────────────────────────────
       function App() {
         const [view, setView] = useState("home");
@@ -626,6 +654,8 @@
         const [archiveOpenAthId, setArchiveOpenAthId] = useState(null);
         const archiveSessionRef = useRef(null);
         const [archiveDeleteConfirm, setArchiveDeleteConfirm] = useState(null);
+        const [photoAlbum, setPhotoAlbum] = useState(null); // { raceId, raceName, files:[{name,url}], loading, lightboxIdx }
+        const photoAlbumUrlsRef = useRef([]);
 
         // Manual Race Entry state
         const [manualRaceName, setManualRaceName] = useState("My Race");
@@ -1637,6 +1667,61 @@
           persistRaces(savedRaces.filter(r => r.id !== id));
           setDeleteConfirm(null);
         }
+
+        async function openPhotoAlbum(raceId, raceName) {
+          photoAlbumUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+          photoAlbumUrlsRef.current = [];
+          setPhotoAlbum({ raceId, raceName, files: [], loading: true, lightboxIdx: null });
+
+          let handle = await getPhotoHandle(raceId);
+          if (handle) {
+            let perm = "denied";
+            try { perm = await handle.requestPermission({ mode: "read" }); } catch { perm = "denied"; }
+            if (perm !== "granted") handle = null;
+          }
+          if (!handle) {
+            if (!window.showDirectoryPicker) {
+              setPhotoAlbum(null);
+              alert("Photo folders require Chrome or Edge (File System Access API).");
+              return;
+            }
+            try { handle = await window.showDirectoryPicker({ mode: "read" }); }
+            catch { setPhotoAlbum(null); return; }
+            await savePhotoHandle(raceId, handle);
+          }
+
+          const IMAGE_EXTS = new Set(["jpg","jpeg","png","gif","webp","avif","heic","heif","bmp","tiff","tif"]);
+          const files = [];
+          for await (const [name, entry] of handle.entries()) {
+            if (entry.kind !== "file") continue;
+            if (!IMAGE_EXTS.has(name.split(".").pop().toLowerCase())) continue;
+            try {
+              const file = await entry.getFile();
+              const url = URL.createObjectURL(file);
+              photoAlbumUrlsRef.current.push(url);
+              files.push({ name, url });
+            } catch { /* skip unreadable */ }
+          }
+          files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+          setPhotoAlbum(prev => prev ? { ...prev, files, loading: false } : null);
+        }
+
+        function closePhotoAlbum() {
+          photoAlbumUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+          photoAlbumUrlsRef.current = [];
+          setPhotoAlbum(null);
+        }
+
+        useEffect(() => {
+          if (!photoAlbum || photoAlbum.lightboxIdx === null) return;
+          const onKey = e => {
+            if (e.key === "ArrowRight") setPhotoAlbum(p => p && p.lightboxIdx < p.files.length - 1 ? { ...p, lightboxIdx: p.lightboxIdx + 1 } : p);
+            if (e.key === "ArrowLeft")  setPhotoAlbum(p => p && p.lightboxIdx > 0 ? { ...p, lightboxIdx: p.lightboxIdx - 1 } : p);
+            if (e.key === "Escape")     setPhotoAlbum(p => p ? { ...p, lightboxIdx: null } : p);
+          };
+          window.addEventListener("keydown", onKey);
+          return () => window.removeEventListener("keydown", onKey);
+        }, [photoAlbum?.lightboxIdx]);
 
         function persistSavedAthletes(list) {
           setSavedAthletes(list);
@@ -3567,6 +3652,7 @@
                                 <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb" }}>{race.name}</div>
                                 <div style={{ fontSize: 11, color: "#3a6080", marginTop: 2 }}>{race.date} · {race.finishedCount}/{race.totalCount} finished</div>
                               </div>
+                              <button onClick={() => openPhotoAlbum(race.id, race.name)} style={{ ...btnStyle("#00aeef", true), padding: "4px 10px", fontSize: 11, flexShrink: 0 }}>📷 Photos</button>
                               <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#ffd166", true), padding: "4px 10px", fontSize: 11, flexShrink: 0 }}>🏆 Certs</button>
                               <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 4px" }}>{isOpen ? "▲" : "▼"}</button>
                               {archiveDeleteConfirm === race.id ? (
@@ -5550,6 +5636,73 @@
               )}
 
             </div>
+
+            {/* ── PHOTO ALBUM OVERLAY ─────────────────────────────────────────── */}
+            {photoAlbum && (
+            <div style={{ position: "fixed", inset: 0, background: "#040f1e", zIndex: 3000, display: "flex", flexDirection: "column" }}>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: "#00aeef", letterSpacing: 1 }}>📷 {photoAlbum.raceName}</div>
+                  <div style={{ fontSize: 11, color: "#3a6080" }}>
+                    {photoAlbum.loading ? "Loading photos…" : `${photoAlbum.files.length} photo${photoAlbum.files.length !== 1 ? "s" : ""}`}
+                  </div>
+                </div>
+                <button onClick={() => openPhotoAlbum(photoAlbum.raceId, photoAlbum.raceName)} style={{ ...btnStyle("#5a86a8", true), padding: "6px 14px", fontSize: 12, flexShrink: 0 }}>Change Folder</button>
+                <button onClick={closePhotoAlbum} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 28, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>&times;</button>
+              </div>
+
+              {/* Grid */}
+              <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+                {photoAlbum.loading ? (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: "#3a6080", fontSize: 14 }}>Loading photos…</div>
+                ) : photoAlbum.files.length === 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 260, gap: 12 }}>
+                    <div style={{ fontSize: 44 }}>📂</div>
+                    <div style={{ color: "#3a6080", fontSize: 14 }}>No photos found in this folder.</div>
+                    <div style={{ color: "#3a6080", fontSize: 12 }}>Supported: JPG, PNG, GIF, WEBP, AVIF, BMP</div>
+                    <button onClick={() => openPhotoAlbum(photoAlbum.raceId, photoAlbum.raceName)} style={{ ...btnStyle("#00aeef"), padding: "8px 22px", fontSize: 13, marginTop: 8 }}>Choose Different Folder</button>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+                    {photoAlbum.files.map((f, idx) => (
+                      <div key={f.name} onClick={() => setPhotoAlbum(p => ({ ...p, lightboxIdx: idx }))}
+                        style={{ aspectRatio: "1", borderRadius: 6, overflow: "hidden", cursor: "pointer", background: "#0c2240", flexShrink: 0 }}>
+                        <img src={f.url} alt={f.name} loading="lazy"
+                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transition: "transform 0.12s" }}
+                          onMouseEnter={e => e.currentTarget.style.transform = "scale(1.05)"}
+                          onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Lightbox */}
+              {photoAlbum.lightboxIdx !== null && (() => {
+                const f = photoAlbum.files[photoAlbum.lightboxIdx];
+                return (
+                  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.96)", zIndex: 3100, display: "flex", alignItems: "center", justifyContent: "center" }}
+                    onClick={() => setPhotoAlbum(p => ({ ...p, lightboxIdx: null }))}>
+                    <div style={{ position: "absolute", top: 14, right: 16, color: "#5a86a8", fontSize: 30, cursor: "pointer", lineHeight: 1, padding: 4 }}
+                      onClick={e => { e.stopPropagation(); setPhotoAlbum(p => ({ ...p, lightboxIdx: null })); }}>&times;</div>
+                    <div style={{ position: "absolute", top: 16, left: 16, fontSize: 12, color: "#3a6080" }}>{photoAlbum.lightboxIdx + 1} / {photoAlbum.files.length}</div>
+                    {photoAlbum.lightboxIdx > 0 && (
+                      <button onClick={e => { e.stopPropagation(); setPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx - 1 })); }}
+                        style={{ position: "absolute", left: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+                    )}
+                    {photoAlbum.lightboxIdx < photoAlbum.files.length - 1 && (
+                      <button onClick={e => { e.stopPropagation(); setPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx + 1 })); }}
+                        style={{ position: "absolute", right: 12, background: "rgba(255,255,255,0.08)", border: "none", color: "#e8f4fb", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+                    )}
+                    <img src={f.url} alt={f.name} onClick={e => e.stopPropagation()}
+                      style={{ maxWidth: "90vw", maxHeight: "88vh", objectFit: "contain", borderRadius: 4 }} />
+                    <div style={{ position: "absolute", bottom: 14, color: "#3a6080", fontSize: 11, maxWidth: "80vw", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                  </div>
+                );
+              })()}
+            </div>
+            )}
           </div>
         );
       }
