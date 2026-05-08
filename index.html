@@ -1692,7 +1692,10 @@
 
           const IMAGE_EXTS = new Set(["jpg","jpeg","png","gif","webp","avif","heic","heif","bmp","tiff","tif"]);
           const files = [];
-          for await (const [name, entry] of handle.entries()) {
+          const iter = handle.entries();
+          let next;
+          while (!(next = await iter.next()).done) {
+            const [name, entry] = next.value;
             if (entry.kind !== "file") continue;
             if (!IMAGE_EXTS.has(name.split(".").pop().toLowerCase())) continue;
             try {
@@ -1700,7 +1703,7 @@
               const url = URL.createObjectURL(file);
               photoAlbumUrlsRef.current.push(url);
               files.push({ name, url });
-            } catch { /* skip unreadable */ }
+            } catch(e) { /* skip unreadable */ }
           }
           files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
           setPhotoAlbum(prev => prev ? { ...prev, files, loading: false } : null);
