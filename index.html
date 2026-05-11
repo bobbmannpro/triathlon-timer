@@ -1645,10 +1645,10 @@
           setDeleteConfirm(null);
         }
 
-        async function openPhotoAlbum(raceId, raceName) {
+        async function openPhotoAlbum(raceId, raceName, existingCode) {
           photoAlbumUrlsRef.current.forEach(function(u) { URL.revokeObjectURL(u); });
           photoAlbumUrlsRef.current = [];
-          setPhotoAlbum({ raceId: raceId, raceName: raceName, files: [], loading: true, lightboxIdx: null, shareCode: null, uploading: false, uploadProgress: { done: 0, total: 0 } });
+          setPhotoAlbum({ raceId: raceId, raceName: raceName, files: [], loading: true, lightboxIdx: null, shareCode: existingCode || null, uploading: false, uploadProgress: { done: 0, total: 0 } });
 
           // Load saved directory handle from IndexedDB
           var handle = null;
@@ -1723,6 +1723,20 @@
           setPhotoAlbum(null);
         }
 
+        function persistArchiveUpdate(updated) {
+          setSavedArchive(updated);
+          try { localStorage.setItem("tri-archive", JSON.stringify(updated)); } catch(e) {}
+          if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
+        }
+
+        function assignPhotoCode(raceId) {
+          var existing = savedArchive.find(function(r) { return r.id === raceId; });
+          if (existing && existing.photoCode) return existing.photoCode;
+          var code = Math.random().toString(36).substring(2, 8).toUpperCase();
+          persistArchiveUpdate(savedArchive.map(function(r) { return r.id === raceId ? Object.assign({}, r, { photoCode: code }) : r; }));
+          return code;
+        }
+
         async function uploadAndSharePhotos() {
           if (!photoAlbum || photoAlbum.uploading) return;
           var files = photoAlbum.files;
@@ -1744,6 +1758,10 @@
           try {
             await rtdb.ref("photoAlbums/" + code).set({ raceName: photoAlbum.raceName, uploadedAt: Date.now(), count: cloudPhotos.length, photos: cloudPhotos });
           } catch(e) { /* ignore */ }
+          // Persist the code back to the archive entry so it's always visible on the card
+          if (photoAlbum.raceId) {
+            persistArchiveUpdate(savedArchive.map(function(r) { return r.id === photoAlbum.raceId ? Object.assign({}, r, { photoCode: code }) : r; }));
+          }
           setPhotoAlbum(function(p) { return p ? Object.assign({}, p, { uploading: false, shareCode: code }) : p; });
         }
 
@@ -3769,8 +3787,17 @@
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb" }}>{race.name}</div>
                                 <div style={{ fontSize: 11, color: "#3a6080", marginTop: 2 }}>{race.date} · {race.finishedCount}/{race.totalCount} finished</div>
+                                {race.photoCode ? (
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                                    <span style={{ fontSize: 10, color: "#5a86a8" }}>Photo code:</span>
+                                    <span style={{ fontFamily: "'Bebas Neue'", fontSize: 16, color: "#e879f9", letterSpacing: 2 }}>{race.photoCode}</span>
+                                    <button onClick={() => navigator.clipboard.writeText(race.photoCode)} style={{ background: "none", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 3, color: "#e879f9", fontSize: 9, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => assignPhotoCode(race.id)} style={{ marginTop: 4, background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 3, color: "#5a86a8", fontSize: 10, padding: "2px 8px", cursor: "pointer" }}>+ Assign photo code</button>
+                                )}
                               </div>
-                              <button onClick={() => openPhotoAlbum(race.id, race.name)} style={{ ...btnStyle("#00aeef", true), padding: "4px 10px", fontSize: 11, flexShrink: 0 }}>📷 Photos</button>
+                              <button onClick={() => openPhotoAlbum(race.id, race.name, race.photoCode)} style={{ ...btnStyle("#00aeef", true), padding: "4px 10px", fontSize: 11, flexShrink: 0 }}>📷 Photos</button>
                               <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#ffd166", true), padding: "4px 10px", fontSize: 11, flexShrink: 0 }}>🏆 Certs</button>
                               <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 18, cursor: "pointer", padding: "0 4px" }}>{isOpen ? "▲" : "▼"}</button>
                               {archiveDeleteConfirm === race.id ? (
@@ -5766,7 +5793,7 @@
                     {photoAlbum.loading ? "Loading photos…" : `${photoAlbum.files.length} photo${photoAlbum.files.length !== 1 ? "s" : ""}`}
                   </div>
                 </div>
-                <button onClick={() => openPhotoAlbum(photoAlbum.raceId, photoAlbum.raceName)} style={{ ...btnStyle("#5a86a8", true), padding: "6px 14px", fontSize: 12, flexShrink: 0 }}>Change Folder</button>
+                <button onClick={() => openPhotoAlbum(photoAlbum.raceId, photoAlbum.raceName, photoAlbum.shareCode)} style={{ ...btnStyle("#5a86a8", true), padding: "6px 14px", fontSize: 12, flexShrink: 0 }}>Change Folder</button>
                 <button onClick={closePhotoAlbum} style={{ background: "none", border: "none", color: "#5a86a8", fontSize: 28, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>&times;</button>
               </div>
 
@@ -5779,7 +5806,7 @@
                     <div style={{ fontSize: 44 }}>📂</div>
                     <div style={{ color: "#3a6080", fontSize: 14 }}>No photos found in this folder.</div>
                     <div style={{ color: "#3a6080", fontSize: 12 }}>Supported: JPG, PNG, GIF, WEBP, AVIF, BMP</div>
-                    <button onClick={() => openPhotoAlbum(photoAlbum.raceId, photoAlbum.raceName)} style={{ ...btnStyle("#00aeef"), padding: "8px 22px", fontSize: 13, marginTop: 8 }}>Choose Different Folder</button>
+                    <button onClick={() => openPhotoAlbum(photoAlbum.raceId, photoAlbum.raceName, photoAlbum.shareCode)} style={{ ...btnStyle("#00aeef"), padding: "8px 22px", fontSize: 13, marginTop: 8 }}>Choose Different Folder</button>
                   </div>
                 ) : (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
