@@ -4751,6 +4751,26 @@
                           {liveRaceLoading ? "Connecting…" : "Watch Race"}
                         </button>
                         {liveRaceError && <div style={{ marginTop: 12, fontSize: 13, color: "#f87171", textAlign: "center" }}>{liveRaceError}</div>}
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "28px 0 20px" }}>
+                          <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
+                          <div style={{ fontSize: 10, letterSpacing: 2, color: "#3a6080", textTransform: "uppercase" }}>or</div>
+                          <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
+                        </div>
+
+                        <div style={{ textAlign: "center", marginBottom: 16 }}>
+                          <div style={{ fontSize: 28, marginBottom: 6 }}>📷</div>
+                          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: "#e879f9" }}>View Race Photos</div>
+                          <div style={{ fontSize: 12, color: "#5a86a8", marginTop: 3 }}>Enter the photo code from the race organizer</div>
+                        </div>
+                        <input value={photoCodeInput} onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
+                          onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                          placeholder="PHOTO CODE"
+                          style={{ width: "100%", boxSizing: "border-box", background: "#0c2240", border: "2px solid rgba(232,121,249,0.4)", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#e879f9", fontSize: 28, fontFamily: "'Bebas Neue'", letterSpacing: 8, outline: "none", textAlign: "center", display: "block" }} />
+                        <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                          style={{ width: "100%", background: "#e879f9", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#071829", cursor: "pointer", letterSpacing: 1 }}>
+                          View Photos
+                        </button>
                       </div>
                     ) : (
                       <div>
