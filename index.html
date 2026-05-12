@@ -164,7 +164,7 @@
         const parts = name.trim().split(" ");
         const firstName = parts[0] || "";
         const lastName = parts.slice(1).join(" ") || "";
-        return { id, name: name.trim(), firstName, lastName, gender, ageGroup, courseId, dob: "", startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
+        return { id, name: name.trim(), firstName, lastName, gender, ageGroup, courseId, dob: "", raceNumber: null, startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
       }
       function athleteName(ath) {
         if (ath.firstName || ath.lastName) return `${ath.firstName || ""} ${ath.lastName || ""}`.trim();
@@ -253,7 +253,7 @@
         const [authLastName, setAuthLastName] = useState("");
         const [authBirthday, setAuthBirthday] = useState("");
         const [authGender, setAuthGender] = useState("");
-        const [authRole, setAuthRole] = useState("participant");
+        const [authRole, setAuthRole] = useState("athlete");
         const [authError, setAuthError] = useState("");
         const [authWorking, setAuthWorking] = useState(false);
         const [userProfile, setUserProfile] = useState(null);
@@ -439,7 +439,7 @@
         const [liveRaceCode, setLiveRaceCode] = useState(null);
         const [livePublishError, setLivePublishError] = useState("");
         const [livePublishing, setLivePublishing] = useState(false);
-        const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", birthday: "", gender: "", role: "participant" });
+        const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", birthday: "", gender: "", role: "athlete" });
         const [profileSaving, setProfileSaving] = useState(false);
         const [profileSaved, setProfileSaved] = useState(false);
         const [profileError, setProfileError] = useState("");
@@ -973,10 +973,14 @@
                 // Profile: RTDB → localStorage fallback
                 if (data.profile) {
                   setUserProfile(data.profile);
-                  setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "participant" });
+                  setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "athlete" });
                   localStorage.setItem("tri-user-profile", JSON.stringify(data.profile));
+                  const role = data.profile.role || "athlete";
+                  if (role === "host") setView("home");
+                  else if (role === "spectator") setView("watch");
+                  else setView("join");
                 } else {
-                  try { const c = localStorage.getItem("tri-user-profile"); if (c) { const p = JSON.parse(c); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "participant" }); } } catch(_) {}
+                  try { const c = localStorage.getItem("tri-user-profile"); if (c) { const p = JSON.parse(c); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "athlete" }); const role = p.role || "athlete"; if (role === "host") setView("home"); else if (role === "spectator") setView("watch"); else setView("join"); } } catch(_) {}
                 }
 
                 // Races: RTDB → localStorage fallback, then push local up to RTDB if missing
@@ -1276,11 +1280,14 @@
             let athIdx = currentAths.findIndex(a => a.uid === uid);
             if (athIdx === -1) {
               athIdx = currentAths.length;
+              const bibTx = await rtdb.ref("liveRaces/" + code + "/nextBib").transaction(cur => (cur || 0) + 1);
+              const raceNumber = bibTx.snapshot.val();
               await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).set({
                 uid, id: uid, name: registration.name,
                 firstName: registration.firstName, lastName: registration.lastName,
                 gender: registration.gender, ageGroup,
                 dob: registration.dob, courseId: registration.courseId,
+                raceNumber,
                 splits: Array(SEGMENTS.length).fill(null),
                 started: false, finished: false, startOffset: null, joinedAt: registration.joinedAt
               });
@@ -1338,7 +1345,7 @@
             publisherName: userProfile?.displayName || userProfile?.firstName || currentUser.email,
             startedAt: Date.now(), clockMs, clockRunning: false, clockStarted: false, status: "live",
             raceName: certConfig.eventName || "Race",
-            athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
+            athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
             courses,
             waypoints: waypoints.filter(wp => wp.lat !== null)
@@ -1372,6 +1379,7 @@
             updates[`athletes/${i}/ageGroup`]    = ath.ageGroup;
             updates[`athletes/${i}/courseId`]    = ath.courseId  || null;
             updates[`athletes/${i}/dob`]         = ath.dob       || null;
+            updates[`athletes/${i}/raceNumber`]  = ath.raceNumber ?? null;
             updates[`athletes/${i}/started`]     = ath.started;
             updates[`athletes/${i}/finished`]    = ath.finished;
             updates[`athletes/${i}/startOffset`] = ath.startOffset;
@@ -1419,7 +1427,7 @@
           const entry = {
             id: sessionId, name: certConfig.eventName || "Race", date: new Date().toLocaleDateString(),
             savedAt: Date.now(), segments: SEGMENTS, courses, units, certConfig,
-            athletes: athletes.map(a => ({ id: a.id, name: athleteName(a) || a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, splits: [...a.splits], startOffset: a.startOffset, finished: a.finished, finishMs: totalChipTime(a) })),
+            athletes: athletes.map(a => ({ id: a.id, name: athleteName(a) || a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, raceNumber: a.raceNumber ?? null, splits: [...a.splits], startOffset: a.startOffset, finished: a.finished, finishMs: totalChipTime(a) })),
             finishedCount: athletes.filter(a => a.finished).length, totalCount: athletes.length,
           };
           const idx = savedArchive.findIndex(r => r.id === sessionId);
@@ -1453,7 +1461,7 @@
             const agp = archiveAgPlace(race.athletes, ath);
             const ac = raceCourses.find(c => c.id === ath.courseId) || raceCourses[0] || { name: "Race" };
             const segTimes = segs.map((_, si) => { const d = archiveSegDur(ath, si); return d !== null ? formatElapsed(d) : "--"; });
-            return `<tr><td>${place + 1}</td><td>${ath.name}</td><td>${ath.gender}</td><td>${ath.ageGroup}</td><td>${agp !== null ? agp : "--"}</td><td>${ac.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`;
+            return `<tr><td>${place + 1}</td><td>${ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td><td>${ath.name}</td><td>${ath.gender}</td><td>${ath.ageGroup}</td><td>${agp !== null ? agp : "--"}</td><td>${ac.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`;
           }).join("");
           const agGroups = {};
           (race.athletes || []).filter(a => a.finished).forEach(a => { const key = `${a.gender} ${a.ageGroup}`; if (!agGroups[key]) agGroups[key] = []; agGroups[key].push(a); });
@@ -1463,7 +1471,7 @@
             return `<div class="ag-section"><div class="ag-label">${label}</div><table><thead><tr><th>#</th><th>Athlete</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${rows}</tbody></table></div>`;
           }).join("");
           const win = window.open("", "_blank");
-          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${cfg.eventName}</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'DM Sans',Arial,sans-serif;color:#071829;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Bebas Neue',sans-serif;font-size:32px;letter-spacing:4px;color:#071829;}.subtitle{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;}.dist{font-size:10px;color:#aac4d8;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:12px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#071829;color:#e8f4fb;font-size:9px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(2){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:1px solid #eef2f6;}td:nth-child(2){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#00aeef;margin-bottom:4px;border-left:3px solid #00aeef;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${cfg.eventName || "Timeathon Results"}</div><div class="subtitle">Swim &middot; Bike &middot; Run</div></div></div><div class="dist">${raceCourses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${cfg.eventName}</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'DM Sans',Arial,sans-serif;color:#071829;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Bebas Neue',sans-serif;font-size:32px;letter-spacing:4px;color:#071829;}.subtitle{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;}.dist{font-size:10px;color:#aac4d8;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:12px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#071829;color:#e8f4fb;font-size:9px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(3){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:1px solid #eef2f6;}td:nth-child(3){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#00aeef;margin-bottom:4px;border-left:3px solid #00aeef;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${cfg.eventName || "Timeathon Results"}</div><div class="subtitle">Swim &middot; Bike &middot; Run</div></div></div><div class="dist">${raceCourses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
           win.document.close();
         }
 
@@ -1484,10 +1492,10 @@
             const medal = place >= 0 && place < 3 ? medalEmoji[place] : "🏅";
             const agp = archiveAgPlace(race.athletes, ath);
             const segPills = segs.map((seg, si) => { const dur = archiveSegDur(ath, si); return dur !== null ? `<div class="seg"><div class="seg-name">${seg}</div><div class="seg-time">${formatElapsed(dur)}</div></div>` : ""; }).join("");
-            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">Chip Time</div><div class="time-val">${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div></div>`;
+            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">Chip Time</div><div class="time-val">${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div></div>`;
           }).join("");
           const win = window.open("", "_blank");
-          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:landscape;margin:0;}body{background:#fff;font-family:'DM Sans',Arial,sans-serif;}.cert{width:100vw;height:100vh;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:5px solid #00aeef;background:linear-gradient(150deg,#f0f8ff 0%,#ffffff 55%,#e8f4fb 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:52px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00aeef,transparent);}.event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;text-align:center;}.org{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#00aeef;text-align:center;margin-top:-4px;}.medal-emoji{font-size:48px;line-height:1;}.place{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:4px;}.ag-place{font-size:12px;letter-spacing:2px;color:#0d3a6e;font-weight:700;text-align:center;}.name{font-family:'Bebas Neue',sans-serif;font-size:68px;letter-spacing:5px;color:#071829;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}.time-val{font-family:'Bebas Neue',sans-serif;font-size:38px;letter-spacing:3px;color:#071829;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}.seg-time{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#0d3a6e;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:11px;color:#5a86a8;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,174,239,.3);border-radius:20px;padding:3px 12px;}</style></head><body>${certHTML}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:landscape;margin:0;}body{background:#fff;font-family:'DM Sans',Arial,sans-serif;}.cert{width:100vw;height:100vh;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:5px solid #00aeef;background:linear-gradient(150deg,#f0f8ff 0%,#ffffff 55%,#e8f4fb 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:52px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00aeef,transparent);}.event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;text-align:center;}.org{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#00aeef;text-align:center;margin-top:-4px;}.medal-emoji{font-size:48px;line-height:1;}.place{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:4px;}.ag-place{font-size:12px;letter-spacing:2px;color:#0d3a6e;font-weight:700;text-align:center;}.name{font-family:'Bebas Neue',sans-serif;font-size:68px;letter-spacing:5px;color:#071829;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}.time-val{font-family:'Bebas Neue',sans-serif;font-size:38px;letter-spacing:3px;color:#071829;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}.seg-time{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#0d3a6e;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:11px;color:#5a86a8;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,174,239,.3);border-radius:20px;padding:3px 12px;}.bib-num{font-size:12px;letter-spacing:3px;color:#a855f7;font-weight:700;text-transform:uppercase;margin-top:-4px;}</style></head><body>${certHTML}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
           win.document.close();
         }
 
@@ -1595,7 +1603,8 @@
               gender: a.gender || "Male",
               ageGroup: a.ageGroup || loadedAgeGroups[0] || "9-10",
               dob: a.dob || "",
-              courseId: a.courseId || loadedCourses[0].id
+              courseId: a.courseId || loadedCourses[0].id,
+              raceNumber: a.raceNumber ?? null
             };
           }));
           archiveSessionRef.current = null;
@@ -1623,6 +1632,7 @@
                     uid: a.uid || null,
                     courseId: a.courseId ?? null,
                     dob: a.dob || "",
+                    raceNumber: a.raceNumber ?? null,
                     startOffset: a.startOffset ?? null,
                     splits: Array.from({ length: segs.length }, (_, idx) => a.splits?.[idx] ?? null),
                     started: a.started || false,
@@ -1957,7 +1967,7 @@
           setView("setup");
         }
 
-        function addAthlete()           { setAthletes(a => [...a, freshAthlete("", Date.now(), "Male", "9-10", courses[0]?.id || null)]); }
+        function addAthlete()           { setAthletes(a => { const nextBib = Math.max(0, ...a.map(x => x.raceNumber || 0)) + 1; const ath = freshAthlete("", Date.now(), "Male", "9-10", courses[0]?.id || null); ath.raceNumber = nextBib; return [...a, ath]; }); }
 
         function allRaceAthletes() {
           const seen = new Map();
@@ -1978,7 +1988,7 @@
 
         function addAthleteFromPicker(picked) {
           const base = freshAthlete(picked.name, Date.now(), picked.gender, picked.ageGroup);
-          setAthletes(a => [...a, { ...base, dob: picked.dob || "", courseId: courses[0]?.id || null }]);
+          setAthletes(a => { const nextBib = Math.max(0, ...a.map(x => x.raceNumber || 0)) + 1; return [...a, { ...base, dob: picked.dob || "", courseId: courses[0]?.id || null, raceNumber: nextBib }]; });
           setShowAthletePicker(false);
           setAthletePickerSearch("");
         }
@@ -2005,6 +2015,7 @@
           return courses.find(c => c.id === ath.courseId) || courses[0];
         }
         function updateName(i, v)       { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, name: v } : ath)); }
+        function updateRaceNumber(i, v) { const n = parseInt(v, 10); setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, raceNumber: isNaN(n) ? null : n } : ath)); }
         function updateFirstName(i, v)  { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, firstName: v, name: `${v} ${ath.lastName || ""}`.trim() } : ath)); }
         function updateLastName(i, v)   { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, lastName: v, name: `${ath.firstName || ""} ${v}`.trim() } : ath)); }
         function updateGender(i, v)     { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, gender: v } : ath)); }
@@ -2678,7 +2689,7 @@
         }
 
         function exportCSV() {
-          const headers = ["Place","Athlete","Gender","Age Group","Ag Place","Course",...SEGMENTS.map(s => s+" Time"),"Chip Time","Gun Time","Swim Pace (/100y)","Bike Speed (mph)","Run Pace (/mi)"];
+          const headers = ["Place","Bib","Athlete","Gender","Age Group","Ag Place","Course",...SEGMENTS.map(s => s+" Time"),"Chip Time","Gun Time","Swim Pace (/100y)","Bike Speed (mph)","Run Pace (/mi)"];
           const rows = sorted.map((ath, place) => {
             const chip = totalChipTime(ath);
             const gt   = gunTime(ath);
@@ -2688,7 +2699,7 @@
             const agp = ageGroupPlace(ath);
             const ac = athleteCourse(ath);
             return [
-              place + 1, ath.name, ath.gender, ath.ageGroup, agp !== null ? agp : "", ac.name,
+              place + 1, ath.raceNumber != null ? ath.raceNumber : "", ath.name, ath.gender, ath.ageGroup, agp !== null ? agp : "", ac.name,
               ...SEGMENTS.map((_, si) => { const d = segmentDuration(ath, si); return d !== null ? formatElapsed(d) : ""; }),
               chip !== null ? formatElapsed(chip) : "",
               gt   !== null ? formatElapsed(gt)   : "",
@@ -2735,6 +2746,7 @@
                 <div class="medal-emoji">${medal}</div>
                 <div class="place" style="color:${pColor}">${placeSuffix(place+1)} Place Overall</div>
                 <div class="name">${ath.name}</div>
+                ${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}
                 ${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}
                 <div class="time-row">
                   <div class="time-block"><div class="time-label">Chip Time</div><div class="time-val">${chip !== null ? formatElapsed(chip) : "--"}</div></div>
@@ -2790,6 +2802,7 @@
               .paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}
               .paces span{font-size:11px;color:#5a86a8;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,174,239,.3);border-radius:20px;padding:3px 12px;}
               .dist-note{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#aac4d8;}
+              .bib-num{font-size:12px;letter-spacing:3px;color:#a855f7;font-weight:700;text-transform:uppercase;margin-top:-4px;}
               @media print{.cert{break-after:page;}}
             </style>
           </head><body>${certHTML}<script>window.onload=()=>window.print();<\/script></body></html>`);
@@ -2805,6 +2818,7 @@
             const segs = SEGMENTS.map((_, si) => { const d = segmentDuration(ath, si); return d !== null ? formatElapsed(d) : "--"; });
             return `<tr>
               <td>${place + 1}</td>
+              <td>${ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
               <td>${ath.name}</td>
               <td>${ath.gender}</td>
               <td>${ath.ageGroup}</td>
@@ -2853,9 +2867,9 @@
               h2{font-size:12px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;margin:20px 0 6px;}
               table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;}
               th{text-align:center;padding:5px 4px;background:#071829;color:#e8f4fb;font-size:9px;text-transform:uppercase;letter-spacing:1px;}
-              th:nth-child(2){text-align:left;}
+              th:nth-child(3){text-align:left;}
               td{padding:5px 4px;text-align:center;border-bottom:1px solid #eef2f6;}
-              td:nth-child(2){text-align:left;font-weight:700;}
+              td:nth-child(3){text-align:left;font-weight:700;}
               .ag-section{margin-bottom:20px;}
               .ag-label{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#00aeef;margin-bottom:4px;border-left:3px solid #00aeef;padding-left:6px;}
               @media print{.ag-section{break-inside:avoid;}}
@@ -2871,7 +2885,7 @@
             <div class="dist">${courses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div>
             <h2>Overall Standings</h2>
             <table>
-              <thead><tr><th>#</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${SEGMENTS.map(s=>`<th>${s}</th>`).join("")}<th>Chip</th><th>Gun</th></tr></thead>
+              <thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${SEGMENTS.map(s=>`<th>${s}</th>`).join("")}<th>Chip</th><th>Gun</th></tr></thead>
               <tbody>${overallRows}</tbody>
             </table>
             <h2>Age Group Breakdown</h2>
@@ -2920,6 +2934,19 @@
           background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4,
           padding: "8px 10px", color: "#e8f4fb", fontSize: 14, width: 80, outline: "none", textAlign: "center",
         };
+
+        // Role booleans — computed early for hook ordering (before any conditional returns)
+        const effectiveRole = (!userProfile?.role || userProfile.role === "participant") ? "athlete" : userProfile.role;
+        const isHost      = effectiveRole === "host";
+        const isAthlete   = effectiveRole === "athlete";
+        const isSpectator = effectiveRole === "spectator";
+
+        // View guard — redirect non-hosts away from host-only views
+        useEffect(() => {
+          if (currentUser && !isHost && ["home","setup","race","results","devices","manual","athletes"].includes(view)) {
+            setView(isSpectator ? "watch" : "join");
+          }
+        }, [currentUser, isHost, isAthlete, isSpectator, view]);
 
         // Auth loading screen
         if (authLoading) return (
@@ -2979,12 +3006,12 @@
                     <div>
                       <div style={{ fontSize: 10, color: "#5a86a8", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>I am a…</div>
                       <div style={{ display: "flex", gap: 8 }}>
-                        {[["participant","🏊 Participant","I race"],["spectator","👀 Spectator","I watch"]].map(([role, label, sub]) => (
+                        {[["host","🎯","Host","I run races"],["athlete","🏊","Athlete","I race"],["spectator","👀","Spectator","I watch"]].map(([role, icon, title, sub]) => (
                           <button key={role} onClick={() => setAuthRole(role)}
-                            style={{ flex: 1, padding: "10px 8px", background: authRole === role ? "rgba(0,174,239,0.12)" : "transparent", border: `2px solid ${authRole === role ? "#00aeef" : "rgba(0,174,239,0.2)"}`, borderRadius: 8, color: authRole === role ? "#00aeef" : "#5a86a8", cursor: "pointer", textAlign: "center" }}>
-                            <div style={{ fontSize: 16, marginBottom: 2 }}>{label.split(" ")[0]}</div>
-                            <div style={{ fontSize: 12, fontWeight: 700 }}>{label.split(" ")[1]}</div>
-                            <div style={{ fontSize: 10, color: "#3a6080", marginTop: 2 }}>{sub}</div>
+                            style={{ flex: 1, padding: "10px 6px", background: authRole === role ? "rgba(0,174,239,0.12)" : "transparent", border: `2px solid ${authRole === role ? "#00aeef" : "rgba(0,174,239,0.2)"}`, borderRadius: 8, color: authRole === role ? "#00aeef" : "#5a86a8", cursor: "pointer", textAlign: "center" }}>
+                            <div style={{ fontSize: 18, marginBottom: 2 }}>{icon}</div>
+                            <div style={{ fontSize: 11, fontWeight: 700 }}>{title}</div>
+                            <div style={{ fontSize: 9, color: "#3a6080", marginTop: 2 }}>{sub}</div>
                           </button>
                         ))}
                       </div>
@@ -3019,8 +3046,7 @@
           </div>
         );
 
-        // Spectator view
-        const isSpectator = userProfile?.role === "spectator";
+        // Spectator-only early return (minimal watch+profile UI)
         if (isSpectator) {
           const liveSegs = liveRace ? (liveRace.segments || SEGMENTS) : SEGMENTS;
 
@@ -3198,10 +3224,8 @@
 
             {/* HEADER */}
             <div style={{ background: "linear-gradient(135deg,#071829,#0d3a6e)", borderBottom: "3px solid #00aeef", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
-              {view !== "home" && (
-                <button onClick={() => setView("home")} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
-              )}
-              <div onClick={() => setView("home")} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff", cursor: "pointer" }}>
+              {(() => { const homeView = isHost ? "home" : "join"; return view !== homeView && <button onClick={() => setView(homeView)} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>; })()}
+              <div onClick={() => setView(isHost ? "home" : "join")} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff", cursor: "pointer" }}>
                 <span style={{ color: "#00aeef" }}>Time</span>athon
               </div>
               <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4 }}>
@@ -3212,20 +3236,27 @@
               </button>
             </div>
 
-            {/* NAV — always visible */}
-            <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240" }}>
-              {[["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]].map(([v, label]) => (
-                <button key={v} onClick={() => setView(v)} style={{
-                  flex: 1, padding: "11px 0", background: "none", border: "none",
-                  borderBottom: view === v ? "3px solid #00aeef" : "3px solid transparent",
-                  color: view === v ? "#00aeef" : "#5a86a8",
-                  fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: 2,
-                  textTransform: "uppercase", cursor: "pointer",
-                }}>
-                  {label}
-                </button>
-              ))}
-            </div>
+            {/* NAV — conditional per role */}
+            {(() => {
+              const navTabs = isHost
+                ? [["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]]
+                : [["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]];
+              return (
+                <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240" }}>
+                  {navTabs.map(([v, label]) => (
+                    <button key={v} onClick={() => setView(v)} style={{
+                      flex: 1, padding: "11px 0", background: "none", border: "none",
+                      borderBottom: view === v ? "3px solid #00aeef" : "3px solid transparent",
+                      color: view === v ? "#00aeef" : "#5a86a8",
+                      fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: 2,
+                      textTransform: "uppercase", cursor: "pointer",
+                    }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
 
             <div style={{ maxWidth: 640, margin: "0 auto", padding: "16px 16px 60px" }}>
 
@@ -4647,9 +4678,9 @@
                       <div>
                         <div style={{ fontSize: 10, color: "#5a86a8", marginBottom: 6 }}>Role</div>
                         <div style={{ display: "flex", gap: 8 }}>
-                          {[["participant","🏊 Participant"],["spectator","👀 Spectator"]].map(([role, label]) => (
+                          {[["host","🎯 Host"],["athlete","🏊 Athlete"],["spectator","👀 Spectator"]].map(([role, label]) => (
                             <button key={role} onClick={() => setEditProfile(p => ({ ...p, role }))}
-                              style={{ flex: 1, padding: "9px 8px", background: editProfile.role === role ? "rgba(0,174,239,0.12)" : "transparent", border: `2px solid ${editProfile.role === role ? "#00aeef" : "rgba(0,174,239,0.15)"}`, borderRadius: 8, color: editProfile.role === role ? "#00aeef" : "#5a86a8", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                              style={{ flex: 1, padding: "9px 6px", background: (editProfile.role === role || (role === "athlete" && editProfile.role === "participant")) ? "rgba(0,174,239,0.12)" : "transparent", border: `2px solid ${(editProfile.role === role || (role === "athlete" && editProfile.role === "participant")) ? "#00aeef" : "rgba(0,174,239,0.15)"}`, borderRadius: 8, color: (editProfile.role === role || (role === "athlete" && editProfile.role === "participant")) ? "#00aeef" : "#5a86a8", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                               {label}
                             </button>
                           ))}
@@ -4788,6 +4819,62 @@
                           <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", marginBottom: 2 }}>RACE CLOCK</div>
                           <div style={{ fontFamily: "'Bebas Neue'", fontSize: 52, letterSpacing: 4, color: "#00aeef", lineHeight: 1 }}>{formatTime(spectatorClockMs || liveRace.clockMs || 0)}</div>
                         </div>
+                        {/* Athlete personal dashboard */}
+                        {isAthlete && (() => {
+                          const myAth = rankedWatchAthletes.find(a => a.uid === currentUser?.uid);
+                          if (!myAth || (!myAth.started && !myAth.finished)) return null;
+                          const clock = spectatorClockMs || liveRace.clockMs || 0;
+                          const myChipMs = myAth.started && myAth.startOffset !== null ? clock - myAth.startOffset : null;
+                          let myCurSeg = null;
+                          if (myAth.started && !myAth.finished && myAth.splits) {
+                            for (let i = 0; i < myAth.splits.length; i++) {
+                              if (myAth.splits[i] === null) { myCurSeg = i; break; }
+                            }
+                          }
+                          const myFinishMs = myAth.finished && myAth.startOffset !== null && myAth.splits
+                            ? myAth.splits[myAth.splits.length - 1] - myAth.startOffset : null;
+                          const mySplitDurs = (myAth.splits || []).map((s, si) => {
+                            if (s === null) return null;
+                            const prev = si === 0 ? myAth.startOffset : myAth.splits[si - 1];
+                            return prev !== null ? s - prev : null;
+                          });
+                          return (
+                            <div style={{ background: "linear-gradient(135deg,#0c2240,#0a1e38)", border: "2px solid rgba(74,222,128,0.4)", borderRadius: 12, padding: "14px 16px", marginBottom: 18 }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, color: "#4ade80" }}>YOUR RACE</div>
+                                  {myAth.raceNumber != null && <span style={{ background: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.4)", borderRadius: 4, padding: "1px 7px", fontSize: 11, fontFamily: "'Bebas Neue'", letterSpacing: 2, color: "#4ade80" }}>#{myAth.raceNumber}</span>}
+                                </div>
+                                <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, letterSpacing: 3, color: myAth.finished ? "#4ade80" : "#00aeef" }}>
+                                  {myAth.finished ? formatElapsed(myFinishMs) : myChipMs !== null ? formatElapsed(myChipMs) : "—"}
+                                </div>
+                              </div>
+                              <div style={{ fontWeight: 700, fontSize: 15, color: "#e8f4fb", marginBottom: 4 }}>{myAth.name}</div>
+                              {myCurSeg !== null && (
+                                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: segColors[myCurSeg % segColors.length], background: `${segColors[myCurSeg % segColors.length]}18`, borderRadius: 3, padding: "2px 8px", display: "inline-block", marginBottom: 8 }}>
+                                  {watchSegs[myCurSeg]} — IN PROGRESS
+                                </div>
+                              )}
+                              {myAth.finished && <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: "#4ade80", marginBottom: 8 }}>✓ FINISHED</div>}
+                              <div style={{ display: "flex", gap: 4 }}>
+                                {watchSegs.map((seg, si) => {
+                                  const done = mySplitDurs[si] !== null && mySplitDurs[si] !== undefined;
+                                  const isCur = myCurSeg === si;
+                                  const col = segColors[si % segColors.length];
+                                  const curSegMs = isCur && myAth.startOffset !== null ? (si === 0 ? clock - myAth.startOffset : clock - myAth.splits[si - 1]) : null;
+                                  return (
+                                    <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCur ? `${col}10` : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCur ? col + "40" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "5px 4px 6px", textAlign: "center" }}>
+                                      <div style={{ fontSize: 8, color: done ? col : isCur ? col : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                      <div style={{ fontSize: 11, color: done ? "#e8f4fb" : isCur ? col : "#1a3050", fontFamily: (done || isCur) ? "'Bebas Neue'" : "inherit", letterSpacing: (done || isCur) ? 1 : 0 }}>
+                                        {done ? formatElapsed(mySplitDurs[si]) : isCur && curSegMs !== null ? formatElapsed(curSegMs) : "—"}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
                         <div style={{ fontSize: 10, letterSpacing: 3, color: "#5a86a8", textAlign: "center", marginBottom: 12 }}>LEADERBOARD</div>
                         {rankedWatchAthletes.length === 0 && <div style={{ textAlign: "center", color: "#3a6080", padding: "30px 0" }}>Waiting for athletes…</div>}
                         {rankedWatchAthletes.map((ath, idx) => {
@@ -4962,6 +5049,8 @@
                           style={{ display: "flex", alignItems: "center", justifyContent: "center", cursor: "grab", color: "#3a6080", fontSize: 20, flexShrink: 0, padding: "0 3px", userSelect: "none", touchAction: "none" }}
                           title="Drag to reorder">⠿</div>
                         <div style={{ background: "#0c2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue'", fontSize: 18, color: "#00aeef", flexShrink: 0 }}>{i + 1}</div>
+                        <input value={ath.raceNumber != null ? ath.raceNumber : ""} onChange={e => updateRaceNumber(i, e.target.value)} placeholder="#" title="Bib #"
+                          style={{ width: 40, flexShrink: 0, background: "#0c2240", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 4, padding: "8px 4px", color: "#e879f9", fontSize: 13, fontFamily: "'Bebas Neue'", letterSpacing: 1, outline: "none", textAlign: "center" }} />
                         <input value={ath.firstName || ""} onChange={e => updateFirstName(i, e.target.value)} placeholder="First"
                           style={{ flex: 1, minWidth: 0, background: "#0c2240", border: "1px solid rgba(0,174,239,0.25)", borderRadius: 4, padding: "8px 8px", color: "#e8f4fb", fontSize: 14, outline: "none" }} />
                         <input value={ath.lastName || ""} onChange={e => updateLastName(i, e.target.value)} placeholder="Last"
@@ -5502,6 +5591,7 @@
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{ fontFamily: "'Bebas Neue'", fontSize: 22, color: done ? "#4ade80" : "#00aeef", lineHeight: 1, minWidth: 24 }}>{i + 1}</div>
+                            {ath.raceNumber != null && <span style={{ background: "rgba(232,121,249,0.12)", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 4, padding: "1px 7px", fontSize: 12, fontFamily: "'Bebas Neue'", letterSpacing: 1, color: "#e879f9", flexShrink: 0 }}>#{ath.raceNumber}</span>}
                             <div>
                               <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                                 <span style={{ fontWeight: 700, fontSize: 14, color: "#e8f4fb" }}>{ath.name}</span>
@@ -5709,6 +5799,7 @@
                         <thead>
                           <tr style={{ borderBottom: "2px solid rgba(255,255,255,0.1)" }}>
                             <th style={thStyle("#5a86a8")}>#</th>
+                            <th style={{ ...thStyle("#e879f9") }}>Bib</th>
                             <th style={{ ...thStyle("#5a86a8"), textAlign: "left" }}>Athlete</th>
                             <th style={thStyle("#5a86a8")}>Gender</th>
                             <th style={thStyle("#48cae4")}>Age Grp</th>
@@ -5738,6 +5829,7 @@
                             return (
                               <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: place === 0 && chip !== null ? "rgba(74,222,128,0.04)" : "transparent" }}>
                                 <td style={{ padding: "10px 8px", fontFamily: "'Bebas Neue'", fontSize: 20, color: placeColor }}>{place + 1}</td>
+                                <td style={{ padding: "10px 6px", textAlign: "center", color: "#e879f9", fontFamily: "'Bebas Neue'", fontSize: 14, whiteSpace: "nowrap" }}>{ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
                                 <td style={{ padding: "10px 8px", fontWeight: 700, color: "#e8f4fb", whiteSpace: "nowrap" }}>{ath.name}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: ath.gender === "Female" ? "#f472b6" : "#48cae4", fontSize: 11, whiteSpace: "nowrap" }}>{ath.gender}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#48cae4", fontSize: 11, whiteSpace: "nowrap" }}>{ath.ageGroup}</td>
