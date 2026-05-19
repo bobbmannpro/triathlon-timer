@@ -6190,7 +6190,8 @@
                 async function importMeetFile(file) {
                   const text = await file.text();
                   let parsed;
-                  if (file.name.toLowerCase().endsWith(".hy3")) {
+                  const lower = file.name.toLowerCase();
+                  if (lower.endsWith(".hy3") || lower.endsWith(".cl2")) {
                     parsed = parseHy3(text);
                   } else {
                     parsed = parseSwimCsv(text);
@@ -6274,13 +6275,13 @@
                         {/* Import */}
                         <div style={S.card}>
                           <div style={S.label}>Import Meet File</div>
-                          <input ref={swimFileInputRef} type="file" accept=".hy3,.HY3,.csv" style={{ display:"none" }}
+                          <input ref={swimFileInputRef} type="file" accept=".hy3,.HY3,.cl2,.CL2,.csv" style={{ display:"none" }}
                             onChange={e => { if (e.target.files[0]) importMeetFile(e.target.files[0]); e.target.value = ""; }} />
                           <button onClick={() => swimFileInputRef.current && swimFileInputRef.current.click()}
                             style={{ ...btnStyle("#48cae4"), fontSize:13, width:"100%", marginBottom:4 }}>
                             📂 Import Meet File (.hy3 or .csv)
                           </button>
-                          <div style={{ fontSize:11, color:"#3a6080" }}>Supports Hy-Tek Meet Manager .hy3 and CSV exports.</div>
+                          <div style={{ fontSize:11, color:"#3a6080" }}>Supports Hy-Tek .hy3, .cl2 (Team Manager), and CSV exports.</div>
                         </div>
 
                         {/* Event tree */}
