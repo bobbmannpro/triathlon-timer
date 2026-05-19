@@ -188,6 +188,176 @@
         return null;
       }
 
+      // ── Swim meet helpers ─────────────────────────────────────────────────────
+      function formatSwimTime(ms) {
+        if (ms == null) return "--:--.--";
+        const totalSec = Math.floor(ms / 1000);
+        const mins = Math.floor(totalSec / 60);
+        const secs = totalSec % 60;
+        const hh   = Math.floor((ms % 1000) / 10);
+        if (mins > 0) return `${mins}:${String(secs).padStart(2,"0")}.${String(hh).padStart(2,"0")}`;
+        return `:${String(secs).padStart(2,"0")}.${String(hh).padStart(2,"0")}`;
+      }
+
+      function parseSeedTime(str) {
+        if (!str || str === "NT" || str === "") return null;
+        const clean = str.trim().replace(/^:/, "0:");
+        const m1 = clean.match(/^(\d+):(\d{2})\.(\d{2})$/);
+        if (m1) return (parseInt(m1[1])*60 + parseInt(m1[2]))*1000 + parseInt(m1[3])*10;
+        const m2 = clean.match(/^(\d{1,2})\.(\d{2})$/);
+        if (m2) return parseInt(m2[1])*1000 + parseInt(m2[2])*10;
+        return null;
+      }
+
+      function genderLabel(g) {
+        if (g === "F" || g === "f") return "Girls";
+        if (g === "M" || g === "m") return "Boys";
+        return "Mixed";
+      }
+
+      function ageGroupLabel(min, max) {
+        if (max <= 8) return "8 & Under";
+        if (min >= 9 && max <= 10) return "9-10";
+        if (min >= 11 && max <= 12) return "11-12";
+        if (min >= 13 && max <= 14) return "13-14";
+        if (min >= 15 && max <= 18) return "15-18";
+        return "Open";
+      }
+
+      function strokeLabel(s) {
+        const map = { "1":"Freestyle","F":"Freestyle","2":"Backstroke","B":"Backstroke",
+          "3":"Breaststroke","R":"Breaststroke","4":"Butterfly","Y":"Butterfly",
+          "5":"IM","I":"IM","6":"Medley Relay","M":"Medley Relay" };
+        return map[s] || s || "Freestyle";
+      }
+
+      function courseLabel(c) {
+        if (c === "Y" || c === "y") return "25y";
+        if (c === "S" || c === "s") return "25m";
+        if (c === "M" || c === "m") return "50m";
+        return c || "25y";
+      }
+
+      function parseHy3(text) {
+        const lines = text.split(/\r?\n/);
+        let meetName = "";
+        const events = {};
+        for (const line of lines) {
+          if (line.length < 2) continue;
+          const rec = line.substring(0, 2);
+          if (rec === "A0") {
+            meetName = line.substring(2, 32).trim();
+          } else if (rec === "B1") {
+            const eventNum  = parseInt(line.substring(2, 6).trim(), 10);
+            const gender    = line.substring(6, 7);
+            const minAge    = parseInt(line.substring(7, 9).trim() || "0", 10);
+            const maxAge    = parseInt(line.substring(9, 11).trim() || "99", 10);
+            const distance  = parseInt(line.substring(11, 15).trim(), 10);
+            const course    = line.substring(15, 16);
+            const strokeCode = line.substring(16, 17);
+            if (!isNaN(eventNum)) {
+              events[eventNum] = {
+                eventNum, gender: genderLabel(gender),
+                ageGroup: ageGroupLabel(minAge, maxAge),
+                distance: isNaN(distance) ? 100 : distance,
+                course: courseLabel(course),
+                stroke: strokeLabel(strokeCode),
+                heats: {}
+              };
+            }
+          } else if (rec === "C1") {
+            const lastName  = line.substring(2, 22).trim();
+            const firstName = line.substring(22, 37).trim();
+            const age       = parseInt(line.substring(38, 40).trim() || "0", 10);
+            const team      = line.substring(40, 62).trim();
+            const eventNum  = parseInt(line.substring(62, 66).trim(), 10);
+            const heatNum   = parseInt(line.substring(66, 68).trim(), 10);
+            const lane      = parseInt(line.substring(68, 70).trim(), 10);
+            const seedRaw   = line.substring(70, 78).trim();
+            const seedMs    = seedRaw ? parseInt(seedRaw, 10) * 10 : null;
+            const seedTime  = seedMs ? formatSwimTime(seedMs) : "NT";
+            if (!events[eventNum]) continue;
+            if (!events[eventNum].heats[heatNum]) events[eventNum].heats[heatNum] = { heatNum, lanes: [] };
+            events[eventNum].heats[heatNum].lanes.push({
+              lane: isNaN(lane) ? 1 : lane, lastName, firstName,
+              name: `${firstName} ${lastName}`.trim(),
+              age: isNaN(age) ? 0 : age,
+              team, seedTime, seedMs, finalMs: null, dq: false, scratch: false
+            });
+          }
+        }
+        return {
+          meetName,
+          events: Object.values(events).map(ev => ({
+            ...ev,
+            heats: Object.values(ev.heats).sort((a,b) => a.heatNum - b.heatNum)
+          })).sort((a,b) => a.eventNum - b.eventNum)
+        };
+      }
+
+      function parseSwimCsv(text) {
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) return { meetName: "Imported Meet", events: [] };
+        const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+        const idx = (name) => headers.indexOf(name.toLowerCase());
+        const events = {};
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(",").map(c => c.trim());
+          const get = (name) => { const j = idx(name); return j >= 0 ? cols[j] || "" : ""; };
+          const eventNum = parseInt(get("eventnum"), 10) || i;
+          const heatNum  = parseInt(get("heatnum"), 10) || 1;
+          const lane     = parseInt(get("lane"), 10) || 1;
+          const seedTimeStr = get("seedtime");
+          const seedMs = parseSeedTime(seedTimeStr);
+          if (!events[eventNum]) {
+            events[eventNum] = {
+              eventNum,
+              gender: get("gender") || "Mixed",
+              ageGroup: get("agegroup") || "Open",
+              distance: parseInt(get("distance"), 10) || 100,
+              stroke: get("stroke") || "Freestyle",
+              course: get("course") || "25y",
+              heats: {}
+            };
+          }
+          if (!events[eventNum].heats[heatNum]) events[eventNum].heats[heatNum] = { heatNum, lanes: [] };
+          const lastName  = get("lastname");
+          const firstName = get("firstname");
+          events[eventNum].heats[heatNum].lanes.push({
+            lane, lastName, firstName,
+            name: `${firstName} ${lastName}`.trim(),
+            age: parseInt(get("age"), 10) || 0,
+            team: get("team"),
+            seedTime: seedMs ? formatSwimTime(seedMs) : (seedTimeStr || "NT"),
+            seedMs, finalMs: null, dq: false, scratch: false
+          });
+        }
+        return {
+          meetName: "Imported Meet",
+          events: Object.values(events).map(ev => ({
+            ...ev,
+            heats: Object.values(ev.heats).sort((a,b) => a.heatNum - b.heatNum)
+          })).sort((a,b) => a.eventNum - b.eventNum)
+        };
+      }
+
+      function computeTeamScores(events) {
+        const scores = {};
+        const pts = [6, 4, 3, 2, 1];
+        for (const ev of events) {
+          const allSwimmers = ev.heats.flatMap(h => h.lanes);
+          const finishers = allSwimmers
+            .filter(s => s.finalMs != null && !s.dq && !s.scratch)
+            .sort((a,b) => a.finalMs - b.finalMs);
+          finishers.forEach((s, i) => {
+            if (i < pts.length) {
+              scores[s.team] = (scores[s.team] || 0) + pts[i];
+            }
+          });
+        }
+        return Object.entries(scores).sort((a,b) => b[1] - a[1]);
+      }
+
       // ── Style helpers ────────────────────────────────────────────────────────
       function btnStyle(color, outline = false) {
         return {
@@ -648,6 +818,27 @@
         const [manualAthletePickerSearch, setManualAthletePickerSearch] = useState("");
         const manualLogoInputRef = useRef(null);
 
+        // Swim meet state
+        const [swimMeet, setSwimMeet] = useState({ meetName: "", pool: "25y", events: [] });
+        const [swimView, setSwimView] = useState("setup");
+        const [swimActiveEvent, setSwimActiveEvent] = useState(null);
+        const [swimActiveHeat, setSwimActiveHeat]   = useState(null);
+        const [swimClockMs, setSwimClockMs]         = useState(0);
+        const [swimClockRunning, setSwimClockRunning] = useState(false);
+        const [swimClockStarted, setSwimClockStarted] = useState(false);
+        const swimOffsetRef   = useRef(0);
+        const swimClockRef    = useRef(null);
+        const swimStartRef    = useRef(null);
+        const [swimArchive, setSwimArchive] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("swim-archive") || "[]"); } catch { return []; }
+        });
+        const swimFileInputRef = useRef(null);
+        const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
+        const [swimResultsEvent, setSwimResultsEvent] = useState(null);
+        const [swimResultsTab, setSwimResultsTab] = useState("results"); // "results" | "scores"
+        const [swimAddEventOpen, setSwimAddEventOpen] = useState(false);
+        const [swimNewEvent, setSwimNewEvent] = useState({ gender:"Girls", ageGroup:"Open", distance:100, stroke:"Freestyle", heats:1, lanes:8 });
+
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
         const offsetRef    = useRef(0);
@@ -664,6 +855,20 @@
           }
           return () => clearInterval(clockRef.current);
         }, [clockRunning]);
+
+        // Swim meet clock — 10ms interval for hundredths precision
+        useEffect(() => {
+          if (swimClockRunning) {
+            swimStartRef.current = Date.now() - swimOffsetRef.current;
+            swimClockRef.current = setInterval(() => {
+              setSwimClockMs(Date.now() - swimStartRef.current);
+            }, 10);
+          } else {
+            clearInterval(swimClockRef.current);
+            swimOffsetRef.current = swimClockMs;
+          }
+          return () => clearInterval(swimClockRef.current);
+        }, [swimClockRunning]);
 
         useEffect(() => {
           if (!liveRaceCode || !athletes.some(a => a.started)) return;
@@ -1496,6 +1701,39 @@
           }).join("");
           const win = window.open("", "_blank");
           win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=Bebas+Neue&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:landscape;margin:0;}body{background:#fff;font-family:'DM Sans',Arial,sans-serif;}.cert{width:100vw;height:100vh;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:5px solid #00aeef;background:linear-gradient(150deg,#f0f8ff 0%,#ffffff 55%,#e8f4fb 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:52px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00aeef,transparent);}.event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#5a86a8;text-align:center;}.org{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#00aeef;text-align:center;margin-top:-4px;}.medal-emoji{font-size:48px;line-height:1;}.place{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:4px;}.ag-place{font-size:12px;letter-spacing:2px;color:#0d3a6e;font-weight:700;text-align:center;}.name{font-family:'Bebas Neue',sans-serif;font-size:68px;letter-spacing:5px;color:#071829;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}.time-val{font-family:'Bebas Neue',sans-serif;font-size:38px;letter-spacing:3px;color:#071829;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#5a86a8;font-weight:700;}.seg-time{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#0d3a6e;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:11px;color:#5a86a8;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,174,239,.3);border-radius:20px;padding:3px 12px;}.bib-num{font-size:12px;letter-spacing:3px;color:#a855f7;font-weight:700;text-transform:uppercase;margin-top:-4px;}</style></head><body>${certHTML}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
+          win.document.close();
+        }
+
+        function printSwimResults(ev, meetName) {
+          if (!ev) return;
+          const allSwimmers = ev.heats.flatMap(h => h.lanes.map(sw => ({...sw, heatNum: h.heatNum})));
+          const finishers = allSwimmers.filter(s => s.finalMs != null && !s.dq && !s.scratch).sort((a,b) => a.finalMs - b.finalMs);
+          const dqs = allSwimmers.filter(s => s.dq);
+          const pts = [6,4,3,2,1];
+          const heatRows = ev.heats.map(ht => {
+            const sorted = ht.lanes.slice().sort((a,b) => {
+              if (a.finalMs != null && b.finalMs != null) return a.finalMs - b.finalMs;
+              if (a.finalMs != null) return -1; return 1;
+            });
+            const rows = sorted.map(sw => `<tr><td style="text-align:center">${sw.lane}</td><td>${sw.name||''}</td><td style="text-align:center">${sw.age||''}</td><td>${sw.team||''}</td><td>${sw.seedTime||'NT'}</td><td style="font-weight:700;color:${sw.dq?'#c00':sw.finalMs!=null?'#0070c0':'#999'}">${sw.dq?'DQ':sw.scratch?'SCR':sw.finalMs!=null?formatSwimTime(sw.finalMs):'--'}</td></tr>`).join('');
+            return `<h4 style="margin:16px 0 6px;color:#333">Heat ${ht.heatNum}</h4><table><thead><tr><th>Ln</th><th>Name</th><th>Age</th><th>Team</th><th>Seed</th><th>Final</th></tr></thead><tbody>${rows}</tbody></table>`;
+          }).join('');
+          const standingRows = finishers.map((sw, i) => `<tr><td style="text-align:center;font-weight:700">${i+1}</td><td>${sw.name||''}</td><td style="text-align:center">${sw.age||''}</td><td>${sw.team||''}</td><td>${sw.seedTime||'NT'}</td><td style="font-weight:700;color:#0070c0">${formatSwimTime(sw.finalMs)}</td><td style="text-align:center;font-weight:700">${i<pts.length?pts[i]:''}</td></tr>`).join('') +
+            dqs.map(sw => `<tr><td style="text-align:center;color:#c00">DQ</td><td colspan="5" style="color:#c00">${sw.name} — ${sw.team}</td><td></td></tr>`).join('');
+          const win = window.open("","_blank");
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${meetName||'Meet Results'}</title><style>body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:20px}h1{font-size:16px;margin:0 0 4px}h2{font-size:13px;color:#555;font-weight:400;margin:0 0 16px}h3{font-size:14px;margin:20px 0 6px;border-bottom:2px solid #0070c0;padding-bottom:4px;color:#0070c0}h4{font-size:12px;margin:12px 0 4px;color:#333}table{width:100%;border-collapse:collapse;margin-bottom:8px}th,td{padding:5px 8px;border-bottom:1px solid #ddd;text-align:left}th{background:#f0f0f0;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px}@media print{button{display:none}}</style></head><body><h1>${meetName||'Meet Results'}</h1><h2>${ev.gender} ${ev.ageGroup} ${ev.distance} ${ev.stroke} — ${ev.course}</h2><h3>Heat-by-Heat Results</h3>${heatRows}<h3>Overall Event Standings</h3><table><thead><tr><th>Pl</th><th>Name</th><th>Age</th><th>Team</th><th>Seed</th><th>Final</th><th>Pts</th></tr></thead><tbody>${standingRows}</tbody></table><button onclick="window.print()" style="margin-top:16px;padding:8px 20px;cursor:pointer">Print</button><script>window.onload=()=>{window.print();}<\/script></body></html>`);
+          win.document.close();
+        }
+
+        function printRibbonLabels(ev, meetName) {
+          if (!ev) return;
+          const allSwimmers = ev.heats.flatMap(h => h.lanes.map(sw => ({...sw, heatNum: h.heatNum})));
+          const finishers = allSwimmers.filter(s => s.finalMs != null && !s.dq && !s.scratch).sort((a,b) => a.finalMs - b.finalMs).slice(0, 8);
+          const places = ["1st","2nd","3rd","4th","5th","6th","7th","8th"];
+          const placeColors = ["#d4a017","#8a9ba8","#b87333","#555","#555","#555","#555","#555"];
+          const labels = finishers.map((sw, i) => `<div class="label"><div class="place" style="color:${placeColors[i]}">${places[i]} Place</div><div class="name">${sw.name||''}</div><div class="detail">${ev.distance} ${ev.stroke} &mdash; ${ev.gender} ${ev.ageGroup}</div><div class="detail">${sw.team||''} &middot; Heat ${sw.heatNum} &middot; Lane ${sw.lane}</div><div class="time">${formatSwimTime(sw.finalMs)}</div></div>`).join('');
+          const win = window.open("","_blank");
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ribbon Labels</title><style>*{box-sizing:border-box;margin:0;padding:0}@page{size:landscape;margin:10mm}body{font-family:Arial,sans-serif;background:#fff}.grid{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,auto);gap:8px;padding:4px}.label{border:2px solid #ccc;border-radius:6px;padding:10px 14px;height:90px;display:flex;flex-direction:column;justify-content:center;gap:2px;page-break-inside:avoid}.place{font-size:18px;font-weight:900;letter-spacing:2px;text-transform:uppercase}.name{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.detail{font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.time{font-size:13px;font-weight:700;color:#0070c0;margin-top:2px}@media print{button{display:none}}</style></head><body><div class="grid">${labels}</div><button onclick="window.print()" style="display:block;margin:16px auto;padding:8px 20px;cursor:pointer">Print Labels</button><script>window.onload=()=>{window.print();}<\/script></body></html>`);
           win.document.close();
         }
 
@@ -2944,7 +3182,7 @@
         // View guard — redirect non-hosts away from host-only views; spectators also can't join
         useEffect(() => {
           if (!currentUser) return;
-          if (!isHost && ["home","setup","race","results","devices","manual","athletes"].includes(view)) {
+          if (!isHost && ["home","setup","race","results","devices","manual","athletes","swim"].includes(view)) {
             setView(isSpectator ? "watch" : "join");
           } else if (isSpectator && view === "join") {
             setView("watch");
@@ -3070,7 +3308,7 @@
             {/* NAV — conditional per role */}
             {(() => {
               const navTabs = isHost
-                ? [["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]]
+                ? [["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"],["swim","🏊 Meet"]]
                 : isAthlete
                   ? [["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
                   : [["watch","👀 Watch"],["profile","👤 Profile"]];
@@ -5891,6 +6129,614 @@
                     <img src={vf.url} alt={vf.name} onClick={e => e.stopPropagation()}
                       style={{ maxWidth: "90vw", maxHeight: "88vh", objectFit: "contain", borderRadius: 4 }} />
                     <div style={{ position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", color: "#3a6080", fontSize: 11, maxWidth: "60vw", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vf.name}</div>
+                  </div>
+                );
+              })()}
+
+              {/* ── SWIM MEET TIMER ── */}
+              {view === "swim" && (() => {
+
+                function recordFinish(eventNum, heatNum, lane) {
+                  const t = swimClockMs;
+                  setSwimMeet(m => ({
+                    ...m,
+                    events: m.events.map(ev => ev.eventNum !== eventNum ? ev : {
+                      ...ev,
+                      heats: ev.heats.map(h => h.heatNum !== heatNum ? h : {
+                        ...h,
+                        lanes: h.lanes.map(sw => sw.lane !== lane ? sw : { ...sw, finalMs: t })
+                      })
+                    })
+                  }));
+                }
+
+                function toggleDq(eventNum, heatNum, lane) {
+                  setSwimMeet(m => ({
+                    ...m,
+                    events: m.events.map(ev => ev.eventNum !== eventNum ? ev : {
+                      ...ev,
+                      heats: ev.heats.map(h => h.heatNum !== heatNum ? h : {
+                        ...h,
+                        lanes: h.lanes.map(sw => sw.lane !== lane ? sw : { ...sw, dq: !sw.dq, finalMs: sw.dq ? sw.finalMs : null })
+                      })
+                    })
+                  }));
+                }
+
+                function resetSwimClock() {
+                  setSwimClockRunning(false);
+                  setSwimClockStarted(false);
+                  setSwimClockMs(0);
+                  swimOffsetRef.current = 0;
+                }
+
+                function persistSwimArchive(updatedMeet) {
+                  const entry = {
+                    id: `swim_${Date.now()}`,
+                    meetName: updatedMeet.meetName || "Unnamed Meet",
+                    pool: updatedMeet.pool,
+                    date: new Date().toLocaleDateString(),
+                    savedAt: Date.now(),
+                    events: updatedMeet.events
+                  };
+                  const updated = [entry, ...swimArchive];
+                  setSwimArchive(updated);
+                  try { localStorage.setItem("swim-archive", JSON.stringify(updated)); } catch(e) {}
+                  if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimArchive").set(updated).catch(console.error);
+                }
+
+                async function importMeetFile(file) {
+                  const text = await file.text();
+                  let parsed;
+                  if (file.name.toLowerCase().endsWith(".hy3")) {
+                    parsed = parseHy3(text);
+                  } else {
+                    parsed = parseSwimCsv(text);
+                  }
+                  setSwimMeet(m => ({
+                    ...parsed,
+                    pool: m.pool
+                  }));
+                  setSwimExpandedEvents({});
+                }
+
+                function saveAndAdvance() {
+                  const ev = swimMeet.events.find(e => e.eventNum === swimActiveEvent);
+                  if (!ev) return;
+                  const hIdx = ev.heats.findIndex(h => h.heatNum === swimActiveHeat);
+                  resetSwimClock();
+                  if (hIdx < ev.heats.length - 1) {
+                    setSwimActiveHeat(ev.heats[hIdx + 1].heatNum);
+                  } else {
+                    const eIdx = swimMeet.events.findIndex(e => e.eventNum === swimActiveEvent);
+                    if (eIdx < swimMeet.events.length - 1) {
+                      const nextEv = swimMeet.events[eIdx + 1];
+                      setSwimActiveEvent(nextEv.eventNum);
+                      setSwimActiveHeat(nextEv.heats[0] ? nextEv.heats[0].heatNum : 1);
+                    } else {
+                      setSwimView("results");
+                      return;
+                    }
+                  }
+                }
+
+                const activeEv = swimMeet.events.find(e => e.eventNum === swimActiveEvent);
+                const activeHt = activeEv && activeEv.heats.find(h => h.heatNum === swimActiveHeat);
+                const totalHeats = activeEv ? activeEv.heats.length : 0;
+                const heatIndex  = activeEv ? activeEv.heats.findIndex(h => h.heatNum === swimActiveHeat) : -1;
+
+                const S = { // shared styles
+                  card: { background:"#0c2240", border:"1px solid rgba(0,174,239,0.2)", borderRadius:8, padding:"14px 16px", marginBottom:12 },
+                  label: { fontSize:11, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#5a86a8", marginBottom:4 },
+                  input: { background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"8px 12px", color:"#e8f4fb", fontSize:13, outline:"none", width:"100%", boxSizing:"border-box" },
+                  row: { display:"flex", gap:8, alignItems:"center" }
+                };
+
+                const swimTabStyle = (active) => ({
+                  padding:"8px 16px", fontSize:12, fontWeight:700, letterSpacing:1, textTransform:"uppercase",
+                  background: active ? "rgba(0,174,239,0.15)" : "transparent",
+                  border: active ? "1px solid rgba(0,174,239,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                  borderRadius:6, color: active ? "#00aeef" : "#5a86a8", cursor:"pointer"
+                });
+
+                return (
+                  <div style={{ paddingTop: 8, maxWidth: 600, margin: "0 auto" }}>
+
+                    {/* Sub-nav */}
+                    <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+                      {[["setup","Setup"],["race","Race"],["results","Results"],["archive","Archive"]].map(([v,label]) => (
+                        <button key={v} style={swimTabStyle(swimView === v)} onClick={() => setSwimView(v)}>{label}</button>
+                      ))}
+                    </div>
+
+                    {/* ── SETUP ── */}
+                    {swimView === "setup" && (
+                      <div>
+                        {/* Meet header */}
+                        <div style={S.card}>
+                          <div style={S.label}>Meet Name</div>
+                          <input style={S.input} value={swimMeet.meetName}
+                            onChange={e => setSwimMeet(m => ({...m, meetName: e.target.value}))}
+                            placeholder="e.g. Summer Invitational 2025" />
+                          <div style={{...S.label, marginTop:12}}>Pool / Course</div>
+                          <div style={{ display:"flex", gap:8 }}>
+                            {["25y","25m","50m"].map(p => (
+                              <button key={p} onClick={() => setSwimMeet(m => ({...m, pool: p}))}
+                                style={{ padding:"6px 16px", borderRadius:4, fontSize:12, fontWeight:700, border:"1px solid rgba(0,174,239,0.4)", background: swimMeet.pool === p ? "rgba(0,174,239,0.2)" : "transparent", color: swimMeet.pool === p ? "#00aeef" : "#5a86a8", cursor:"pointer" }}>
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Import */}
+                        <div style={S.card}>
+                          <div style={S.label}>Import Meet File</div>
+                          <input ref={swimFileInputRef} type="file" accept=".hy3,.HY3,.csv" style={{ display:"none" }}
+                            onChange={e => { if (e.target.files[0]) importMeetFile(e.target.files[0]); e.target.value = ""; }} />
+                          <button onClick={() => swimFileInputRef.current && swimFileInputRef.current.click()}
+                            style={{ ...btnStyle("#48cae4"), fontSize:13, width:"100%", marginBottom:4 }}>
+                            📂 Import Meet File (.hy3 or .csv)
+                          </button>
+                          <div style={{ fontSize:11, color:"#3a6080" }}>Supports Hy-Tek Meet Manager .hy3 and CSV exports.</div>
+                        </div>
+
+                        {/* Event tree */}
+                        {swimMeet.events.length > 0 && (
+                          <div style={S.card}>
+                            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                              <div style={S.label}>Events ({swimMeet.events.length})</div>
+                              <button onClick={() => { const all = {}; swimMeet.events.forEach(ev => { all[ev.eventNum] = true; }); setSwimExpandedEvents(all); }}
+                                style={{ fontSize:11, color:"#5a86a8", background:"none", border:"none", cursor:"pointer" }}>Expand All</button>
+                            </div>
+                            {swimMeet.events.map(ev => {
+                              const expanded = !!swimExpandedEvents[ev.eventNum];
+                              return (
+                                <div key={ev.eventNum} style={{ background:"#071829", borderRadius:6, marginBottom:6, overflow:"hidden", border:"1px solid rgba(0,174,239,0.1)" }}>
+                                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", cursor:"pointer" }}
+                                    onClick={() => setSwimExpandedEvents(x => ({...x, [ev.eventNum]: !x[ev.eventNum]}))}>
+                                    <div>
+                                      <span style={{ color:"#00aeef", fontWeight:700, marginRight:8, fontSize:12 }}>Event {ev.eventNum}</span>
+                                      <span style={{ color:"#e8f4fb", fontSize:13 }}>{ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</span>
+                                      <span style={{ color:"#5a86a8", fontSize:11, marginLeft:8 }}>{ev.heats.length} heat{ev.heats.length !== 1 ? "s" : ""}</span>
+                                    </div>
+                                    <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                                      <button onClick={e => { e.stopPropagation(); setSwimActiveEvent(ev.eventNum); setSwimActiveHeat(ev.heats[0] ? ev.heats[0].heatNum : 1); setSwimView("race"); }}
+                                        style={{ fontSize:11, padding:"4px 10px", borderRadius:4, background:"rgba(0,174,239,0.15)", border:"1px solid rgba(0,174,239,0.3)", color:"#00aeef", cursor:"pointer", fontWeight:700 }}>
+                                        ▶ Start
+                                      </button>
+                                      <span style={{ color:"#5a86a8", fontSize:14 }}>{expanded ? "▲" : "▼"}</span>
+                                    </div>
+                                  </div>
+                                  {expanded && ev.heats.map(ht => (
+                                    <div key={ht.heatNum} style={{ padding:"6px 16px", borderTop:"1px solid rgba(0,174,239,0.08)" }}>
+                                      <div style={{ fontSize:11, color:"#48cae4", fontWeight:700, marginBottom:4 }}>Heat {ht.heatNum}</div>
+                                      {ht.lanes.map(sw => (
+                                        <div key={sw.lane} style={{ display:"flex", gap:8, fontSize:12, color:"#e8f4fb", padding:"2px 0" }}>
+                                          <span style={{ color:"#5a86a8", width:50 }}>Lane {sw.lane}</span>
+                                          <span style={{ flex:1 }}>{sw.name || "(empty)"}</span>
+                                          <span style={{ color:"#5a86a8" }}>{sw.team}</span>
+                                          <span style={{ color:"#3a6080", width:60, textAlign:"right" }}>{sw.seedTime}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Add event manually */}
+                        <div style={S.card}>
+                          <button onClick={() => setSwimAddEventOpen(o => !o)}
+                            style={{ ...btnStyle("#48cae4", true), fontSize:12, width:"100%" }}>
+                            {swimAddEventOpen ? "✕ Cancel" : "+ Add Event Manually"}
+                          </button>
+                          {swimAddEventOpen && (
+                            <div style={{ marginTop:12, display:"flex", flexDirection:"column", gap:8 }}>
+                              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                                <div style={{ flex:1, minWidth:120 }}>
+                                  <div style={S.label}>Gender</div>
+                                  <select value={swimNewEvent.gender} onChange={e => setSwimNewEvent(x => ({...x, gender:e.target.value}))}
+                                    style={{...S.input}}>
+                                    {["Girls","Boys","Mixed"].map(g => <option key={g} value={g}>{g}</option>)}
+                                  </select>
+                                </div>
+                                <div style={{ flex:1, minWidth:120 }}>
+                                  <div style={S.label}>Age Group</div>
+                                  <select value={swimNewEvent.ageGroup} onChange={e => setSwimNewEvent(x => ({...x, ageGroup:e.target.value}))}
+                                    style={{...S.input}}>
+                                    {["8 & Under","9-10","11-12","13-14","15-18","Open"].map(g => <option key={g} value={g}>{g}</option>)}
+                                  </select>
+                                </div>
+                                <div style={{ flex:1, minWidth:100 }}>
+                                  <div style={S.label}>Distance</div>
+                                  <select value={swimNewEvent.distance} onChange={e => setSwimNewEvent(x => ({...x, distance:parseInt(e.target.value)}))}
+                                    style={{...S.input}}>
+                                    {[25,50,100,200,400,500,800,1000,1500,1650].map(d => <option key={d} value={d}>{d}</option>)}
+                                  </select>
+                                </div>
+                              </div>
+                              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                                <div style={{ flex:2, minWidth:150 }}>
+                                  <div style={S.label}>Stroke</div>
+                                  <select value={swimNewEvent.stroke} onChange={e => setSwimNewEvent(x => ({...x, stroke:e.target.value}))}
+                                    style={{...S.input}}>
+                                    {["Freestyle","Backstroke","Breaststroke","Butterfly","IM","Freestyle Relay","Medley Relay"].map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                </div>
+                                <div style={{ flex:1, minWidth:80 }}>
+                                  <div style={S.label}>Heats</div>
+                                  <input type="number" min={1} max={99} value={swimNewEvent.heats}
+                                    onChange={e => setSwimNewEvent(x => ({...x, heats:parseInt(e.target.value)||1}))}
+                                    style={{...S.input}} />
+                                </div>
+                                <div style={{ flex:1, minWidth:80 }}>
+                                  <div style={S.label}>Lanes</div>
+                                  <input type="number" min={1} max={10} value={swimNewEvent.lanes}
+                                    onChange={e => setSwimNewEvent(x => ({...x, lanes:parseInt(e.target.value)||8}))}
+                                    style={{...S.input}} />
+                                </div>
+                              </div>
+                              <button style={{ ...btnStyle("#00aeef"), fontSize:13 }}
+                                onClick={() => {
+                                  const nextNum = swimMeet.events.length > 0 ? Math.max(...swimMeet.events.map(e => e.eventNum)) + 1 : 1;
+                                  const heats = Array.from({length: swimNewEvent.heats}, (_, hi) => ({
+                                    heatNum: hi + 1,
+                                    lanes: Array.from({length: swimNewEvent.lanes}, (_, li) => ({
+                                      lane: li + 1, lastName:"", firstName:"", name:"", age:0, team:"", seedTime:"NT", seedMs:null, finalMs:null, dq:false, scratch:false
+                                    }))
+                                  }));
+                                  setSwimMeet(m => ({...m, events: [...m.events, { eventNum:nextNum, gender:swimNewEvent.gender, ageGroup:swimNewEvent.ageGroup, distance:swimNewEvent.distance, stroke:swimNewEvent.stroke, course:m.pool, heats }]}));
+                                  setSwimAddEventOpen(false);
+                                }}>
+                                Add Event
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Save meet to archive */}
+                        {swimMeet.events.length > 0 && (
+                          <button style={{ ...btnStyle("#ffd166"), width:"100%", marginTop:4 }}
+                            onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>
+                            💾 Save Meet to Archive
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── RACE ── */}
+                    {swimView === "race" && (
+                      <div>
+                        {!activeEv || !activeHt ? (
+                          <div style={{ textAlign:"center", padding:"40px 0" }}>
+                            <div style={{ color:"#5a86a8", marginBottom:16 }}>No heat selected. Go to Setup to start a heat.</div>
+                            <button style={btnStyle("#48cae4")} onClick={() => setSwimView("setup")}>← Back to Setup</button>
+                          </div>
+                        ) : (
+                          <div>
+                            {/* Event / heat header */}
+                            <div style={{ ...S.card, marginBottom:10 }}>
+                              <div style={{ fontSize:11, color:"#5a86a8", fontWeight:700, letterSpacing:2, textTransform:"uppercase" }}>
+                                Event {activeEv.eventNum} &mdash; {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
+                              </div>
+                              <div style={{ fontSize:13, color:"#48cae4", marginTop:2 }}>
+                                Heat {heatIndex + 1} of {totalHeats}
+                              </div>
+                            </div>
+
+                            {/* Clock */}
+                            <div style={{ background:"#071829", border:"2px solid rgba(0,174,239,0.4)", borderRadius:12, padding:"20px 16px", textAlign:"center", marginBottom:14 }}>
+                              <div style={{ fontSize:52, fontWeight:700, letterSpacing:2, color: swimClockRunning ? "#00aeef" : "#e8f4fb", fontVariantNumeric:"tabular-nums" }}>
+                                {formatSwimTime(swimClockMs)}
+                              </div>
+                              <div style={{ display:"flex", gap:10, justifyContent:"center", marginTop:12 }}>
+                                {!swimClockStarted ? (
+                                  <button onClick={() => { setSwimClockStarted(true); setSwimClockRunning(true); }}
+                                    style={{ ...btnStyle("#00aeef"), fontSize:16, padding:"12px 40px", letterSpacing:2 }}>
+                                    ▶ START ALL
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button onClick={() => setSwimClockRunning(r => !r)}
+                                      style={{ ...btnStyle(swimClockRunning ? "#ffd166" : "#00aeef"), fontSize:13, padding:"8px 20px" }}>
+                                      {swimClockRunning ? "⏸ Pause" : "▶ Resume"}
+                                    </button>
+                                    <button onClick={resetSwimClock}
+                                      style={{ ...btnStyle("#f87171", true), fontSize:13, padding:"8px 16px" }}>
+                                      ↺ Reset
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Lane cards */}
+                            {activeHt.lanes.sort((a,b) => a.lane - b.lane).map(sw => {
+                              const finished = sw.finalMs != null;
+                              const isDq = sw.dq;
+                              return (
+                                <div key={sw.lane} style={{ background: finished ? "rgba(0,174,239,0.07)" : "#0c2240", border: `1px solid ${finished ? "rgba(0,174,239,0.4)" : isDq ? "rgba(248,113,113,0.3)" : "rgba(0,174,239,0.15)"}`, borderRadius:8, padding:"12px 14px", marginBottom:8 }}>
+                                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                                    <div style={{ background:"rgba(0,174,239,0.15)", borderRadius:4, padding:"4px 10px", fontSize:12, fontWeight:700, color:"#48cae4" }}>
+                                      Lane {sw.lane}
+                                    </div>
+                                    <div style={{ flex:1 }}>
+                                      <div style={{ fontSize:14, fontWeight:600, color: isDq ? "#f87171" : "#e8f4fb" }}>
+                                        {sw.name || "(Empty Lane)"} {isDq && <span style={{ fontSize:11, color:"#f87171" }}>DQ</span>}
+                                      </div>
+                                      <div style={{ fontSize:11, color:"#5a86a8" }}>{sw.team}{sw.age ? ` · Age ${sw.age}` : ""}{sw.seedTime && sw.seedTime !== "NT" ? ` · Seed: ${sw.seedTime}` : ""}</div>
+                                    </div>
+                                    <div style={{ fontSize:20, fontWeight:700, fontVariantNumeric:"tabular-nums", color: finished ? "#00aeef" : "#3a6080" }}>
+                                      {finished ? formatSwimTime(sw.finalMs) : "--:--.--"}
+                                    </div>
+                                  </div>
+                                  <div style={{ display:"flex", gap:8 }}>
+                                    <button
+                                      onClick={() => { if (!sw.scratch) recordFinish(activeEv.eventNum, activeHt.heatNum, sw.lane); }}
+                                      disabled={sw.scratch || isDq}
+                                      style={{ flex:1, padding:"10px", fontSize:13, fontWeight:700, letterSpacing:1, borderRadius:6, cursor: sw.scratch || isDq ? "default" : "pointer", background: finished ? "rgba(0,174,239,0.2)" : "rgba(0,174,239,0.1)", border: `2px solid ${finished ? "#00aeef" : "rgba(0,174,239,0.3)"}`, color: finished ? "#00aeef" : "#e8f4fb", opacity: sw.scratch || isDq ? 0.4 : 1 }}>
+                                      {finished ? `✓ ${formatSwimTime(sw.finalMs)}` : "FINISH"}
+                                    </button>
+                                    <button onClick={() => toggleDq(activeEv.eventNum, activeHt.heatNum, sw.lane)}
+                                      style={{ padding:"10px 14px", fontSize:12, fontWeight:700, borderRadius:6, cursor:"pointer", background: isDq ? "rgba(248,113,113,0.2)" : "transparent", border:`1px solid ${isDq ? "#f87171" : "rgba(248,113,113,0.3)"}`, color: isDq ? "#f87171" : "#5a86a8" }}>
+                                      DQ
+                                    </button>
+                                    <button onClick={() => setSwimMeet(m => ({...m, events: m.events.map(ev => ev.eventNum !== activeEv.eventNum ? ev : { ...ev, heats: ev.heats.map(h => h.heatNum !== activeHt.heatNum ? h : { ...h, lanes: h.lanes.map(s => s.lane !== sw.lane ? s : {...s, scratch: !s.scratch, finalMs: null}) }) }) }))}
+                                      style={{ padding:"10px 10px", fontSize:11, fontWeight:700, borderRadius:6, cursor:"pointer", background: sw.scratch ? "rgba(255,209,102,0.15)" : "transparent", border:`1px solid ${sw.scratch ? "rgba(255,209,102,0.5)" : "rgba(255,255,255,0.1)"}`, color: sw.scratch ? "#ffd166" : "#5a86a8" }}>
+                                      SCR
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                            {/* Footer buttons */}
+                            <div style={{ display:"flex", gap:10, marginTop:16 }}>
+                              <button onClick={() => { setSwimView("setup"); }}
+                                style={{ ...btnStyle("#48cae4", true), flex:1, fontSize:12 }}>
+                                ← Back to Setup
+                              </button>
+                              <button onClick={saveAndAdvance}
+                                style={{ ...btnStyle("#00aeef"), flex:2, fontSize:13 }}>
+                                Save &amp; Next Heat →
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── RESULTS ── */}
+                    {swimView === "results" && (
+                      <div>
+                        {swimMeet.events.length === 0 ? (
+                          <div style={{ textAlign:"center", padding:"40px 0", color:"#5a86a8" }}>No events. Import or create events in Setup.</div>
+                        ) : (
+                          <div>
+                            {/* Event selector */}
+                            <div style={S.card}>
+                              <div style={S.label}>Select Event</div>
+                              <select value={swimResultsEvent || ""} onChange={e => setSwimResultsEvent(parseInt(e.target.value))}
+                                style={{...S.input}}>
+                                <option value="">-- choose event --</option>
+                                {swimMeet.events.map(ev => (
+                                  <option key={ev.eventNum} value={ev.eventNum}>
+                                    Event {ev.eventNum} — {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Results tabs */}
+                            <div style={{ display:"flex", gap:6, marginBottom:12 }}>
+                              <button style={swimTabStyle(swimResultsTab === "results")} onClick={() => setSwimResultsTab("results")}>Event Results</button>
+                              <button style={swimTabStyle(swimResultsTab === "scores")} onClick={() => setSwimResultsTab("scores")}>Team Scores</button>
+                            </div>
+
+                            {swimResultsTab === "results" && (() => {
+                              const selEv = swimMeet.events.find(e => e.eventNum === swimResultsEvent);
+                              if (!selEv) return <div style={{ color:"#5a86a8", textAlign:"center", padding:24 }}>Select an event above to view results.</div>;
+
+                              const allSwimmers = selEv.heats.flatMap(h => h.lanes.map(sw => ({...sw, heatNum: h.heatNum})));
+                              const finishers = allSwimmers.filter(s => s.finalMs != null && !s.dq && !s.scratch).sort((a,b) => a.finalMs - b.finalMs);
+                              const dqs = allSwimmers.filter(s => s.dq);
+                              const scratches = allSwimmers.filter(s => s.scratch && !s.dq);
+                              const dnf = allSwimmers.filter(s => s.finalMs == null && !s.dq && !s.scratch);
+                              const pts = [6,4,3,2,1];
+
+                              return (
+                                <div>
+                                  {/* Heat breakdown */}
+                                  {selEv.heats.map(ht => {
+                                    const heatSwimmers = ht.lanes.slice().sort((a,b) => {
+                                      if (a.finalMs != null && b.finalMs != null) return a.finalMs - b.finalMs;
+                                      if (a.finalMs != null) return -1;
+                                      return 1;
+                                    });
+                                    return (
+                                      <div key={ht.heatNum} style={{ ...S.card, marginBottom:8 }}>
+                                        <div style={{ fontSize:12, fontWeight:700, color:"#48cae4", marginBottom:8 }}>Heat {ht.heatNum}</div>
+                                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                                          <thead>
+                                            <tr>
+                                              {["Ln","Name","Age","Team","Seed","Final"].map(h => (
+                                                <th key={h} style={{ textAlign: h === "Ln" || h === "Age" ? "center" : "left", padding:"4px 6px", color:"#5a86a8", fontSize:10, fontWeight:700, letterSpacing:1, textTransform:"uppercase", borderBottom:"1px solid rgba(0,174,239,0.12)" }}>{h}</th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {heatSwimmers.map(sw => (
+                                              <tr key={sw.lane}>
+                                                <td style={{ textAlign:"center", padding:"5px 6px", color:"#48cae4" }}>{sw.lane}</td>
+                                                <td style={{ padding:"5px 6px", color: sw.dq ? "#f87171" : "#e8f4fb" }}>{sw.name || "—"}{sw.dq ? " DQ" : sw.scratch ? " SCR" : ""}</td>
+                                                <td style={{ textAlign:"center", padding:"5px 6px", color:"#5a86a8" }}>{sw.age || ""}</td>
+                                                <td style={{ padding:"5px 6px", color:"#5a86a8" }}>{sw.team}</td>
+                                                <td style={{ padding:"5px 6px", color:"#3a6080" }}>{sw.seedTime || "NT"}</td>
+                                                <td style={{ padding:"5px 6px", fontWeight: sw.finalMs != null && !sw.dq ? 700 : 400, color: sw.dq ? "#f87171" : sw.finalMs != null ? "#00aeef" : "#3a6080" }}>
+                                                  {sw.dq ? "DQ" : sw.scratch ? "SCR" : sw.finalMs != null ? formatSwimTime(sw.finalMs) : "--"}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    );
+                                  })}
+
+                                  {/* Overall standings */}
+                                  <div style={{ ...S.card }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:"#ffd166", marginBottom:8 }}>Overall Event Standings</div>
+                                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                                      <thead>
+                                        <tr>
+                                          {["Pl","Name","Age","Team","Seed","Final","Pts"].map(h => (
+                                            <th key={h} style={{ textAlign: ["Pl","Age","Pts"].includes(h) ? "center" : "left", padding:"4px 6px", color:"#5a86a8", fontSize:10, fontWeight:700, letterSpacing:1, textTransform:"uppercase", borderBottom:"1px solid rgba(0,174,239,0.12)" }}>{h}</th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {finishers.map((sw, i) => (
+                                          <tr key={`${sw.heatNum}-${sw.lane}`} style={{ background: i % 2 === 0 ? "transparent" : "rgba(0,174,239,0.03)" }}>
+                                            <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:700, color: i === 0 ? "#ffd166" : i === 1 ? "#c0c0c0" : i === 2 ? "#cd7f32" : "#e8f4fb" }}>{i+1}</td>
+                                            <td style={{ padding:"5px 6px", color:"#e8f4fb" }}>{sw.name}</td>
+                                            <td style={{ textAlign:"center", padding:"5px 6px", color:"#5a86a8" }}>{sw.age}</td>
+                                            <td style={{ padding:"5px 6px", color:"#5a86a8" }}>{sw.team}</td>
+                                            <td style={{ padding:"5px 6px", color:"#3a6080" }}>{sw.seedTime || "NT"}</td>
+                                            <td style={{ padding:"5px 6px", fontWeight:700, color:"#00aeef" }}>{formatSwimTime(sw.finalMs)}</td>
+                                            <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:700, color:"#ffd166" }}>{i < pts.length ? pts[i] : ""}</td>
+                                          </tr>
+                                        ))}
+                                        {dqs.map(sw => (
+                                          <tr key={`dq-${sw.heatNum}-${sw.lane}`}>
+                                            <td style={{ textAlign:"center", padding:"5px 6px", color:"#f87171" }}>DQ</td>
+                                            <td colSpan={5} style={{ padding:"5px 6px", color:"#f87171" }}>{sw.name} — {sw.team}</td>
+                                            <td></td>
+                                          </tr>
+                                        ))}
+                                        {scratches.map(sw => (
+                                          <tr key={`scr-${sw.heatNum}-${sw.lane}`}>
+                                            <td style={{ textAlign:"center", padding:"5px 6px", color:"#5a86a8" }}>SCR</td>
+                                            <td colSpan={5} style={{ padding:"5px 6px", color:"#5a86a8" }}>{sw.name} — {sw.team}</td>
+                                            <td></td>
+                                          </tr>
+                                        ))}
+                                        {dnf.map(sw => (
+                                          <tr key={`dnf-${sw.heatNum}-${sw.lane}`}>
+                                            <td style={{ textAlign:"center", padding:"5px 6px", color:"#3a6080" }}>—</td>
+                                            <td colSpan={5} style={{ padding:"5px 6px", color:"#3a6080" }}>{sw.name} — {sw.team}</td>
+                                            <td></td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+
+                                  {/* Print buttons */}
+                                  <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                                    <button style={{ ...btnStyle("#5a86a8", true), flex:1, fontSize:12 }}
+                                      onClick={() => printSwimResults(selEv, swimMeet.meetName)}>
+                                      🖨 Print Results
+                                    </button>
+                                    <button style={{ ...btnStyle("#ffd166", true), flex:1, fontSize:12 }}
+                                      onClick={() => printRibbonLabels(selEv, swimMeet.meetName)}>
+                                      🏷 Print Ribbon Labels
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {swimResultsTab === "scores" && (() => {
+                              const teamScores = computeTeamScores(swimMeet.events);
+                              return (
+                                <div style={S.card}>
+                                  <div style={{ fontSize:12, fontWeight:700, color:"#ffd166", marginBottom:12 }}>Team Scores — All Events</div>
+                                  {teamScores.length === 0 ? (
+                                    <div style={{ color:"#3a6080", fontSize:12 }}>No results recorded yet.</div>
+                                  ) : (
+                                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+                                      <thead>
+                                        <tr>
+                                          <th style={{ textAlign:"left", padding:"6px 8px", color:"#5a86a8", fontSize:10, fontWeight:700, letterSpacing:1, textTransform:"uppercase", borderBottom:"1px solid rgba(0,174,239,0.12)" }}>Team</th>
+                                          <th style={{ textAlign:"right", padding:"6px 8px", color:"#5a86a8", fontSize:10, fontWeight:700, letterSpacing:1, textTransform:"uppercase", borderBottom:"1px solid rgba(0,174,239,0.12)" }}>Points</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {teamScores.map(([team, pts], i) => (
+                                          <tr key={team} style={{ background: i === 0 ? "rgba(255,209,102,0.05)" : "transparent" }}>
+                                            <td style={{ padding:"8px 8px", color: i === 0 ? "#ffd166" : "#e8f4fb", fontWeight: i === 0 ? 700 : 400 }}>
+                                              {i === 0 ? "🏆 " : `${i+1}. `}{team}
+                                            </td>
+                                            <td style={{ padding:"8px 8px", textAlign:"right", fontWeight:700, color: i === 0 ? "#ffd166" : "#e8f4fb" }}>{pts}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            <button style={{ ...btnStyle("#ffd166"), width:"100%", marginTop:8 }}
+                              onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>
+                              💾 Save Meet to Archive
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── ARCHIVE ── */}
+                    {swimView === "archive" && (
+                      <div>
+                        <div style={{ fontSize:11, color:"#5a86a8", fontWeight:700, letterSpacing:3, textTransform:"uppercase", marginBottom:12 }}>
+                          Past Meets ({swimArchive.length})
+                        </div>
+                        {swimArchive.length === 0 ? (
+                          <div style={{ ...S.card, textAlign:"center", color:"#5a86a8" }}>No archived meets yet. Save a meet from Setup or Results.</div>
+                        ) : swimArchive.map(entry => (
+                          <div key={entry.id} style={S.card}>
+                            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between" }}>
+                              <div>
+                                <div style={{ fontWeight:700, color:"#e8f4fb", fontSize:14 }}>{entry.meetName || "Unnamed Meet"}</div>
+                                <div style={{ fontSize:11, color:"#5a86a8", marginTop:2 }}>
+                                  {entry.date} &middot; {entry.pool} &middot; {entry.events.length} event{entry.events.length !== 1 ? "s" : ""}
+                                </div>
+                              </div>
+                              <div style={{ display:"flex", gap:6 }}>
+                                <button
+                                  onClick={() => {
+                                    if (entry.events.length > 0) {
+                                      const ev = entry.events[0];
+                                      const allSwimmers = ev.heats.flatMap(h => h.lanes.map(sw => ({...sw, heatNum: h.heatNum})));
+                                      printSwimResults(ev, entry.meetName, allSwimmers);
+                                    }
+                                  }}
+                                  style={{ fontSize:11, padding:"5px 10px", borderRadius:4, background:"transparent", border:"1px solid rgba(0,174,239,0.3)", color:"#00aeef", cursor:"pointer" }}>
+                                  🖨 View
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`Delete "${entry.meetName}"?`)) {
+                                      const updated = swimArchive.filter(a => a.id !== entry.id);
+                                      setSwimArchive(updated);
+                                      try { localStorage.setItem("swim-archive", JSON.stringify(updated)); } catch(e) {}
+                                      if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimArchive").set(updated).catch(console.error);
+                                    }
+                                  }}
+                                  style={{ fontSize:11, padding:"5px 10px", borderRadius:4, background:"transparent", border:"1px solid rgba(248,113,113,0.3)", color:"#f87171", cursor:"pointer" }}>
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                   </div>
                 );
               })()}
