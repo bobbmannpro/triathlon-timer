@@ -6132,9 +6132,11 @@
                   </div>
                 );
               })()}
+            </div>
+            )}
 
-              {/* ── SWIM MEET TIMER ── */}
-              {view === "swim" && (() => {
+            {/* ── SWIM MEET TIMER ── */}
+            {view === "swim" && (() => {
 
                 function recordFinish(eventNum, heatNum, lane) {
                   const t = swimClockMs;
@@ -6740,8 +6742,6 @@
                   </div>
                 );
               })()}
-            </div>
-            )}
           </div>
         );
       }
