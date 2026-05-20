@@ -870,6 +870,7 @@
         const [swimLaneSession, setSwimLaneSession] = useState(null);
         const [swimLaneFinished, setSwimLaneFinished] = useState(false);
         const [swimLaneError, setSwimLaneError] = useState("");
+        const [swimLaneConnecting, setSwimLaneConnecting] = useState(false);
         const [swimClickerKey, setSwimClickerKey] = useState(" ");
         const [swimClickerDetecting, setSwimClickerDetecting] = useState(false);
         const swimLaneClockRef = useRef(null);
@@ -1015,6 +1016,8 @@
             }
             setSwimLaneSession(null);
             setSwimLaneFinished(false);
+            setSwimLaneConnecting(false);
+            setSwimLaneError("");
           }
         }, [view]);
 
@@ -3599,7 +3602,7 @@
             {(() => {
               const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
               const navTabs = (appMode === "swim" && isHost)
-                ? [["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimarchive","🗂 Archive"]]
+                ? [["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
                 : (appMode === "swim")
                 ? [["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
                 : isHost
@@ -7193,14 +7196,18 @@
             {view === "swimlane" && (() => {
               function joinLaneTimer() {
                 const code = swimLaneCode.trim().toUpperCase();
-                if (!code || !swimLaneNum) return;
+                if (!code) { setSwimLaneError("Enter a meet code."); return; }
+                if (!swimLaneNum || swimLaneNum < 1) { setSwimLaneError("Enter a lane number."); return; }
                 if (swimLaneListenerRef.current) {
                   swimLaneListenerRef.current.ref.off("value", swimLaneListenerRef.current.fn);
+                  swimLaneListenerRef.current = null;
                 }
                 setSwimLaneError("");
                 setSwimLaneSession(null);
+                setSwimLaneConnecting(true);
                 const ref = rtdb.ref(`swimLive/${code}`);
                 const fn = snap => {
+                  setSwimLaneConnecting(false);
                   if (!snap.exists()) {
                     setSwimLaneSession(null);
                     setSwimLaneError("Code not found. Check with the host.");
@@ -7209,7 +7216,11 @@
                   setSwimLaneError("");
                   setSwimLaneSession(snap.val());
                 };
-                ref.on("value", fn);
+                const errFn = err => {
+                  setSwimLaneConnecting(false);
+                  setSwimLaneError("Connection error: " + err.message);
+                };
+                ref.on("value", fn, errFn);
                 swimLaneListenerRef.current = { ref, fn };
                 setSwimLaneCode(code);
               }
@@ -7247,12 +7258,12 @@
                           />
                         </div>
                         <div>
-                          <button style={{ ...btnStyle("#00aeef"), padding:"9px 20px", fontSize:13 }} onClick={joinLaneTimer}>
-                            Join
+                          <button style={{ ...btnStyle("#00aeef"), padding:"9px 20px", fontSize:13, opacity: swimLaneConnecting ? 0.6 : 1 }} onClick={joinLaneTimer} disabled={swimLaneConnecting}>
+                            {swimLaneConnecting ? "Connecting…" : "Join"}
                           </button>
                         </div>
                       </div>
-                      {swimLaneError && <div style={{ marginTop:8, fontSize:12, color:"#f87171" }}>{swimLaneError}</div>}
+                      {swimLaneError && <div style={{ marginTop:8, fontSize:13, color:"#f87171", fontWeight:600 }}>{swimLaneError}</div>}
                     </div>
                   )}
 
