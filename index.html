@@ -3589,9 +3589,8 @@
               }} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff", cursor: "pointer" }}>
                 <span style={{ color: "#00aeef" }}>Time</span>athon
               </div>
-              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4 }}>
                 {appMode === "swim" ? "Swim Meet Timer" : "Swim · Bike · Run"}
-                <button onClick={() => selectMode(null)} title="Switch timer" style={{ fontSize:9, color:"#3a6080", background:"none", border:"1px solid rgba(90,134,168,0.2)", borderRadius:3, padding:"1px 6px", cursor:"pointer", letterSpacing:0.5, fontFamily:"sans-serif" }}>⇄</button>
               </div>
               <button onClick={() => setView("profile")} title="Profile" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "4px 8px", letterSpacing: 1 }}>
                 &#128100; {currentUser?.displayName ? currentUser.displayName.split(" ")[0] : currentUser?.email?.split("@")[0]}
@@ -3602,27 +3601,28 @@
             {(() => {
               const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
               const navTabs = (appMode === "swim" && isHost)
-                ? [["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
+                ? [["__home__","⌂"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
                 : (appMode === "swim")
-                ? [["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
+                ? [["__home__","⌂"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
                 : isHost
-                ? [["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]]
+                ? [["__home__","⌂"],["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]]
                 : isAthlete
-                  ? [["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
-                  : [["watch","👀 Watch"],["profile","👤 Profile"]];
+                  ? [["__home__","⌂"],["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
+                  : [["__home__","⌂"],["watch","👀 Watch"],["profile","👤 Profile"]];
               return (
                 <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240", overflowX: "auto" }}>
                   {navTabs.map(([v, label]) => {
                     const isActive = v === view || (v in swimNavMap && view === "swim" && swimView === swimNavMap[v]);
                     return (
                       <button key={v} onClick={() => {
-                        if (v in swimNavMap) { setView("swim"); setSwimView(swimNavMap[v]); }
+                        if (v === "__home__") { selectMode(null); }
+                        else if (v in swimNavMap) { setView("swim"); setSwimView(swimNavMap[v]); }
                         else { setView(v); }
                       }} style={{
-                        flex: 1, padding: "11px 4px", background: "none", border: "none",
+                        flex: v === "__home__" ? "0 0 auto" : 1, padding: "11px 10px", background: "none", border: "none",
                         borderBottom: isActive ? "3px solid #00aeef" : "3px solid transparent",
-                        color: isActive ? "#00aeef" : "#5a86a8",
-                        fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, letterSpacing: 1,
+                        color: v === "__home__" ? "#3a6080" : isActive ? "#00aeef" : "#5a86a8",
+                        fontFamily: "'Bebas Neue', sans-serif", fontSize: v === "__home__" ? 16 : 13, letterSpacing: 1,
                         textTransform: "uppercase", cursor: "pointer", whiteSpace: "nowrap", minWidth: 56,
                       }}>
                         {label}
