@@ -876,6 +876,11 @@
         const [swimLaneClockMs, setSwimLaneClockMs] = useState(0);
         const swimLanePrevStatusRef = useRef(null);
 
+        // Host clicker state
+        const [swimHostClickers, setSwimHostClickers] = useState([]);
+        const [swimHostClickerDetecting, setSwimHostClickerDetecting] = useState(null);
+        const swimClockMsRef = useRef(0);
+
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
         const offsetRef    = useRef(0);
@@ -998,6 +1003,64 @@
             setSwimLaneFinished(false);
           }
         }, [view]);
+
+        // Keep swimClockMsRef current for use in keydown event handlers
+        useEffect(() => { swimClockMsRef.current = swimClockMs; }, [swimClockMs]);
+
+        // Host clicker detect mode — captures next keydown and assigns to lane
+        useEffect(() => {
+          if (swimHostClickerDetecting === null) return;
+          const detect = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.key !== "Escape") {
+              setSwimHostClickers(cs => {
+                const filtered = cs.filter(c => c.key !== e.key && c.lane !== swimHostClickerDetecting);
+                return [...filtered, { lane: swimHostClickerDetecting, key: e.key }];
+              });
+            }
+            setSwimHostClickerDetecting(null);
+            window.removeEventListener("keydown", detect, true);
+          };
+          window.addEventListener("keydown", detect, true);
+          return () => window.removeEventListener("keydown", detect, true);
+        }, [swimHostClickerDetecting]);
+
+        // Host clicker trigger — fires finish for assigned lane during active race
+        useEffect(() => {
+          if (view !== "swim" || swimView !== "race" || !swimClockStarted || swimHostClickers.length === 0) return;
+          const handler = (e) => {
+            if (swimHostClickerDetecting !== null) return;
+            const clicker = swimHostClickers.find(c => c.key === e.key);
+            if (!clicker) return;
+            e.preventDefault();
+            const t = swimClockMsRef.current;
+            const { lane } = clicker;
+            setSwimMeet(m => {
+              const ev = m.events.find(ev2 => ev2.eventNum === swimActiveEvent);
+              if (!ev) return m;
+              const ht = ev.heats.find(h => h.heatNum === swimActiveHeat);
+              if (!ht) return m;
+              const sw = ht.lanes.find(s => s.lane === lane);
+              if (!sw || sw.finalMs != null || sw.scratch || sw.dq) return m;
+              return {
+                ...m,
+                events: m.events.map(ev2 => ev2.eventNum !== swimActiveEvent ? ev2 : {
+                  ...ev2,
+                  heats: ev2.heats.map(h => h.heatNum !== swimActiveHeat ? h : {
+                    ...h,
+                    lanes: h.lanes.map(s => s.lane !== lane ? s : { ...s, finalMs: t })
+                  })
+                })
+              };
+            });
+            if (swimLiveCode) {
+              rtdb.ref(`swimLive/${swimLiveCode}/results/${lane}`).set({ finalMs: t, dq: false }).catch(console.error);
+            }
+          };
+          window.addEventListener("keydown", handler);
+          return () => window.removeEventListener("keydown", handler);
+        }, [view, swimView, swimClockStarted, swimHostClickers, swimHostClickerDetecting, swimActiveEvent, swimActiveHeat, swimLiveCode]);
 
         useEffect(() => {
           if (!liveRaceCode || !athletes.some(a => a.started)) return;
@@ -6643,7 +6706,7 @@
                               const finished = sw.finalMs != null;
                               const isDq = sw.dq;
                               return (
-                                <div key={sw.lane} style={{ background: finished ? "rgba(0,174,239,0.07)" : "#0c2240", border: `1px solid ${finished ? "rgba(0,174,239,0.4)" : isDq ? "rgba(248,113,113,0.3)" : "rgba(0,174,239,0.15)"}`, borderRadius:8, padding:"12px 14px", marginBottom:8 }}>
+                                <div key={sw.lane} style={{ background: finished ? "rgba(0,174,239,0.07)" : "#0c2240", border: `1px solid ${swimHostClickerDetecting === sw.lane ? "#ffd166" : finished ? "rgba(0,174,239,0.4)" : isDq ? "rgba(248,113,113,0.3)" : "rgba(0,174,239,0.15)"}`, borderRadius:8, padding:"12px 14px", marginBottom:8 }}>
                                   <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
                                     <div style={{ background:"rgba(0,174,239,0.15)", borderRadius:4, padding:"4px 10px", fontSize:12, fontWeight:700, color:"#48cae4" }}>
                                       Lane {sw.lane}
@@ -6654,6 +6717,28 @@
                                       </div>
                                       <div style={{ fontSize:11, color:"#5a86a8" }}>{sw.team}{sw.age ? ` · Age ${sw.age}` : ""}{sw.seedTime && sw.seedTime !== "NT" ? ` · Seed: ${sw.seedTime}` : ""}</div>
                                     </div>
+                                    {(() => {
+                                      const assigned = swimHostClickers.find(c => c.lane === sw.lane);
+                                      const detecting = swimHostClickerDetecting === sw.lane;
+                                      if (detecting) return (
+                                        <div style={{ fontSize:11, color:"#ffd166", fontWeight:700, whiteSpace:"nowrap" }}>⏳ Press clicker… (Esc to cancel)</div>
+                                      );
+                                      if (assigned) return (
+                                        <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                                          <span style={{ background:"rgba(0,174,239,0.15)", border:"1px solid rgba(0,174,239,0.4)", borderRadius:4, padding:"2px 8px", fontSize:11, color:"#48cae4", fontFamily:"monospace" }}>
+                                            🎯 {assigned.key === " " ? "Space" : assigned.key}
+                                          </span>
+                                          <button onClick={() => setSwimHostClickers(cs => cs.filter(c => c.lane !== sw.lane))}
+                                            style={{ background:"none", border:"none", color:"#5a86a8", cursor:"pointer", fontSize:14, lineHeight:1, padding:"0 2px" }}>×</button>
+                                        </div>
+                                      );
+                                      return (
+                                        <button onClick={() => setSwimHostClickerDetecting(sw.lane)}
+                                          style={{ background:"none", border:"1px dashed rgba(0,174,239,0.3)", borderRadius:4, padding:"2px 8px", fontSize:11, color:"#5a86a8", cursor:"pointer", whiteSpace:"nowrap" }}>
+                                          🎯 +
+                                        </button>
+                                      );
+                                    })()}
                                     <div style={{ fontSize:20, fontWeight:700, fontVariantNumeric:"tabular-nums", color: finished ? "#00aeef" : "#3a6080" }}>
                                       {finished ? formatSwimTime(sw.finalMs) : "--:--.--"}
                                     </div>
