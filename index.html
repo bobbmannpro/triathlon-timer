@@ -1018,14 +1018,6 @@
           }
         }, [view]);
 
-        // Redirect to correct landing when in swim mode
-        useEffect(() => {
-          if (appMode === "swim" && view === "home") {
-            setView(isHost ? "swim" : "swimwatch");
-            if (isHost) setSwimView("setup");
-          }
-        }, [appMode, view, isHost]);
-
         // Cleanup swimwatch Firebase listener on view change
         useEffect(() => {
           if (view !== "swimwatch") {
@@ -3442,6 +3434,14 @@
             setView("watch");
           }
         }, [currentUser, isHost, isAthlete, isSpectator, view, appMode]);
+
+        // Redirect to correct landing when in swim mode
+        useEffect(() => {
+          if (appMode === "swim" && view === "home") {
+            setView(isHost ? "swim" : "swimwatch");
+            if (isHost) setSwimView("setup");
+          }
+        }, [appMode, view, isHost]);
 
         // Auth loading screen
         if (authLoading) return (
