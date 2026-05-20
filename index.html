@@ -881,6 +881,20 @@
         const [swimHostClickerDetecting, setSwimHostClickerDetecting] = useState(null);
         const swimClockMsRef = useRef(0);
 
+        // App mode — null shows mode selector, "triathlon" or "swim" sets the experience
+        const [appMode, setAppMode] = useState(() => localStorage.getItem("tri-appmode") || null);
+
+        // Swim meet viewer state (for view === "swimwatch")
+        const [swimWatchCode, setSwimWatchCode] = useState("");
+        const [swimWatchSession, setSwimWatchSession] = useState(null);
+        const [swimWatchError, setSwimWatchError] = useState("");
+        const swimWatchListenerRef = useRef(null);
+        const [swimWatchCheering, setSwimWatchCheering] = useState(null);
+        const [swimWatchClockMs, setSwimWatchClockMs] = useState(0);
+        const swimWatchClockRef = useRef(null);
+        const swimWatchPrevStatusRef = useRef(null);
+        const [swimWatchChooserOpen, setSwimWatchChooserOpen] = useState(false);
+
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
         const offsetRef    = useRef(0);
@@ -1003,6 +1017,41 @@
             setSwimLaneFinished(false);
           }
         }, [view]);
+
+        // Redirect to correct landing when in swim mode
+        useEffect(() => {
+          if (appMode === "swim" && view === "home") {
+            setView(isHost ? "swim" : "swimwatch");
+            if (isHost) setSwimView("setup");
+          }
+        }, [appMode, view, isHost]);
+
+        // Cleanup swimwatch Firebase listener on view change
+        useEffect(() => {
+          if (view !== "swimwatch") {
+            if (swimWatchListenerRef.current) {
+              swimWatchListenerRef.current.ref.off("value", swimWatchListenerRef.current.fn);
+              swimWatchListenerRef.current = null;
+            }
+            setSwimWatchSession(null);
+            setSwimWatchCheering(null);
+            setSwimWatchChooserOpen(false);
+          }
+        }, [view]);
+
+        // swimwatch local clock driven by Firebase startedAt
+        useEffect(() => {
+          clearInterval(swimWatchClockRef.current);
+          if (swimWatchSession?.status === "racing" && swimWatchSession?.startedAt) {
+            setSwimWatchClockMs(Date.now() - swimWatchSession.startedAt);
+            swimWatchClockRef.current = setInterval(() => {
+              setSwimWatchClockMs(Date.now() - swimWatchSession.startedAt);
+            }, 100);
+          } else {
+            setSwimWatchClockMs(0);
+          }
+          return () => clearInterval(swimWatchClockRef.current);
+        }, [swimWatchSession?.status, swimWatchSession?.startedAt]);
 
         // Keep swimClockMsRef current for use in keydown event handlers
         useEffect(() => { swimClockMsRef.current = swimClockMs; }, [swimClockMs]);
@@ -3371,15 +3420,28 @@
         const isAthlete   = effectiveRole === "athlete";
         const isSpectator = effectiveRole === "spectator";
 
-        // View guard — redirect non-hosts away from host-only views; spectators also can't join
+        function selectMode(mode) {
+          if (!mode) {
+            setAppMode(null);
+            localStorage.removeItem("tri-appmode");
+            setView(isHost ? "home" : "join");
+            return;
+          }
+          setAppMode(mode);
+          localStorage.setItem("tri-appmode", mode);
+          if (mode === "swim") { setView("swim"); setSwimView("setup"); }
+          else { setView(isHost ? "home" : "join"); }
+        }
+
+        // View guard — redirect non-hosts away from host-only views
         useEffect(() => {
           if (!currentUser) return;
           if (!isHost && ["home","setup","race","results","devices","manual","athletes","swim"].includes(view)) {
-            setView(isSpectator ? "watch" : "join");
+            setView(appMode === "swim" ? "swimwatch" : (isSpectator ? "watch" : "join"));
           } else if (isSpectator && view === "join") {
             setView("watch");
           }
-        }, [currentUser, isHost, isAthlete, isSpectator, view]);
+        }, [currentUser, isHost, isAthlete, isSpectator, view, appMode]);
 
         // Auth loading screen
         if (authLoading) return (
@@ -3480,43 +3542,90 @@
         );
 
 
+        // Mode selector — shown to all roles when no mode is selected
+        if (currentUser && !appMode) {
+          return (
+            <div style={{ background:"#071829", minHeight:"100vh", fontFamily:"'DM Sans',Arial,sans-serif", color:"#e8f4fb", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:48, letterSpacing:6, color:"#f0f6ff", marginBottom:6, textAlign:"center" }}>
+                <span style={{ color:"#00aeef" }}>Time</span>athon
+              </div>
+              <div style={{ color:"#5a86a8", marginBottom:52, fontSize:11, letterSpacing:3, textTransform:"uppercase" }}>Choose your timer</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:16, width:"100%", maxWidth:380 }}>
+                <div onClick={() => selectMode("triathlon")} style={{ background:"linear-gradient(135deg,#0d3a6e,#1a5a9e)", border:"2px solid rgba(0,174,239,0.4)", borderRadius:16, padding:"28px 24px", cursor:"pointer", transition:"border-color 0.15s" }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>🏊‍♂️🚴‍♂️🏃‍♂️</div>
+                  <div style={{ fontSize:22, fontWeight:700, color:"#e8f4fb", letterSpacing:0.5 }}>Triathlon Timer</div>
+                  <div style={{ fontSize:13, color:"#5a86a8", marginTop:5 }}>Swim · Bike · Run · Live GPS tracking</div>
+                </div>
+                <div onClick={() => selectMode("swim")} style={{ background:"linear-gradient(135deg,#071829,#0a3a50)", border:"2px solid rgba(72,202,228,0.45)", borderRadius:16, padding:"28px 24px", cursor:"pointer" }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>🏊‍♀️🏊‍♂️</div>
+                  <div style={{ fontSize:22, fontWeight:700, color:"#e8f4fb", letterSpacing:0.5 }}>Swim Meet Timer</div>
+                  <div style={{ fontSize:13, color:"#5a86a8", marginTop:5 }}>Multi-lane · Live results · Team scoring</div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div style={{ minHeight: "100vh", background: "#071829", fontFamily: "'DM Sans', Arial, sans-serif", color: "#e8f4fb" }}>
 
             {/* HEADER */}
             <div style={{ background: "linear-gradient(135deg,#071829,#0d3a6e)", borderBottom: "3px solid #00aeef", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
-              {(() => { const homeView = isHost ? "home" : "join"; return view !== homeView && <button onClick={() => setView(homeView)} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>; })()}
-              <div onClick={() => setView(isHost ? "home" : "join")} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff", cursor: "pointer" }}>
+              {(() => {
+                const homeView = appMode === "swim" ? (isHost ? "swim" : "swimwatch") : (isHost ? "home" : "join");
+                return view !== homeView && (
+                  <button onClick={() => {
+                    if (appMode === "swim" && isHost) { setView("swim"); setSwimView("setup"); }
+                    else setView(homeView);
+                  }} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
+                );
+              })()}
+              <div onClick={() => {
+                if (appMode === "swim" && isHost) { setView("swim"); setSwimView("setup"); }
+                else setView(isHost ? "home" : "join");
+              }} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, letterSpacing: 4, color: "#f0f6ff", cursor: "pointer" }}>
                 <span style={{ color: "#00aeef" }}>Time</span>athon
               </div>
-              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4 }}>
-                Swim &nbsp;&middot;&nbsp; Bike &nbsp;&middot;&nbsp; Run
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                {appMode === "swim" ? "Swim Meet Timer" : "Swim · Bike · Run"}
+                <button onClick={() => selectMode(null)} title="Switch timer" style={{ fontSize:9, color:"#3a6080", background:"none", border:"1px solid rgba(90,134,168,0.2)", borderRadius:3, padding:"1px 6px", cursor:"pointer", letterSpacing:0.5, fontFamily:"sans-serif" }}>⇄</button>
               </div>
               <button onClick={() => setView("profile")} title="Profile" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "4px 8px", letterSpacing: 1 }}>
                 &#128100; {currentUser?.displayName ? currentUser.displayName.split(" ")[0] : currentUser?.email?.split("@")[0]}
               </button>
             </div>
 
-            {/* NAV — conditional per role */}
+            {/* NAV — conditional per mode/role */}
             {(() => {
-              const navTabs = isHost
-                ? [["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"],["swim","🏊 Meet"],["swimlane","🏁 Lane"]]
+              const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
+              const navTabs = (appMode === "swim" && isHost)
+                ? [["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimarchive","🗂 Archive"]]
+                : (appMode === "swim")
+                ? [["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
+                : isHost
+                ? [["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]]
                 : isAthlete
-                  ? [["join","📍 Races"],["watch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
-                  : [["watch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]];
+                  ? [["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
+                  : [["watch","👀 Watch"],["profile","👤 Profile"]];
               return (
-                <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240" }}>
-                  {navTabs.map(([v, label]) => (
-                    <button key={v} onClick={() => setView(v)} style={{
-                      flex: 1, padding: "11px 0", background: "none", border: "none",
-                      borderBottom: view === v ? "3px solid #00aeef" : "3px solid transparent",
-                      color: view === v ? "#00aeef" : "#5a86a8",
-                      fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, letterSpacing: 2,
-                      textTransform: "uppercase", cursor: "pointer",
-                    }}>
-                      {label}
-                    </button>
-                  ))}
+                <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240", overflowX: "auto" }}>
+                  {navTabs.map(([v, label]) => {
+                    const isActive = v === view || (v in swimNavMap && view === "swim" && swimView === swimNavMap[v]);
+                    return (
+                      <button key={v} onClick={() => {
+                        if (v in swimNavMap) { setView("swim"); setSwimView(swimNavMap[v]); }
+                        else { setView(v); }
+                      }} style={{
+                        flex: 1, padding: "11px 4px", background: "none", border: "none",
+                        borderBottom: isActive ? "3px solid #00aeef" : "3px solid transparent",
+                        color: isActive ? "#00aeef" : "#5a86a8",
+                        fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, letterSpacing: 1,
+                        textTransform: "uppercase", cursor: "pointer", whiteSpace: "nowrap", minWidth: 56,
+                      }}>
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
               );
             })()}
@@ -6399,20 +6508,33 @@
                   const ev = swimMeet.events.find(e => e.eventNum === swimActiveEvent);
                   if (!ev) return;
                   const hIdx = ev.heats.findIndex(h => h.heatNum === swimActiveHeat);
+                  const ht = ev.heats[hIdx];
                   resetSwimClock();
                   if (swimLiveCode) {
+                    if (ht) {
+                      const hrs = {};
+                      ht.lanes.forEach(s => { if (s.finalMs != null) hrs[s.lane] = { finalMs: s.finalMs, dq: s.dq||false, name: s.name||"", team: s.team||"" }; });
+                      if (Object.keys(hrs).length > 0) {
+                        rtdb.ref(`swimLive/${swimLiveCode}/heatResults/${swimActiveEvent}_${swimActiveHeat}`).set(hrs).catch(console.error);
+                      }
+                    }
                     rtdb.ref(`swimLive/${swimLiveCode}`).update({ status: "waiting", startedAt: null, results: null }).catch(console.error);
                   }
                   if (hIdx < ev.heats.length - 1) {
-                    setSwimActiveHeat(ev.heats[hIdx + 1].heatNum);
+                    const nextHeat = ev.heats[hIdx + 1];
+                    setSwimActiveHeat(nextHeat.heatNum);
+                    if (swimLiveCode) rtdb.ref(`swimLive/${swimLiveCode}`).update({ activeHeat: nextHeat.heatNum }).catch(console.error);
                   } else {
                     const eIdx = swimMeet.events.findIndex(e => e.eventNum === swimActiveEvent);
                     if (eIdx < swimMeet.events.length - 1) {
                       const nextEv = swimMeet.events[eIdx + 1];
+                      const nextHt = nextEv.heats[0] ? nextEv.heats[0].heatNum : 1;
                       setSwimActiveEvent(nextEv.eventNum);
-                      setSwimActiveHeat(nextEv.heats[0] ? nextEv.heats[0].heatNum : 1);
+                      setSwimActiveHeat(nextHt);
+                      if (swimLiveCode) rtdb.ref(`swimLive/${swimLiveCode}`).update({ activeEvent: nextEv.eventNum, activeHeat: nextHt }).catch(console.error);
                     } else {
                       setSwimView("results");
+                      if (swimLiveCode) rtdb.ref(`swimLive/${swimLiveCode}`).update({ status: "finished" }).catch(console.error);
                       return;
                     }
                   }
@@ -6440,12 +6562,14 @@
                 return (
                   <div style={{ paddingTop: 8, maxWidth: 600, margin: "0 auto" }}>
 
-                    {/* Sub-nav */}
-                    <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
-                      {[["setup","Setup"],["race","Race"],["results","Results"],["archive","Archive"]].map(([v,label]) => (
-                        <button key={v} style={swimTabStyle(swimView === v)} onClick={() => setSwimView(v)}>{label}</button>
-                      ))}
-                    </div>
+                    {/* Sub-nav (only shown in triathlon mode; swim mode uses top-level nav) */}
+                    {appMode !== "swim" && (
+                      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+                        {[["setup","Setup"],["race","Race"],["results","Results"],["archive","Archive"]].map(([v,label]) => (
+                          <button key={v} style={swimTabStyle(swimView === v)} onClick={() => setSwimView(v)}>{label}</button>
+                        ))}
+                      </div>
+                    )}
 
                     {/* ── SETUP ── */}
                     {swimView === "setup" && (
@@ -6675,7 +6799,9 @@
                                     activeHeat: swimActiveHeat,
                                     status: "waiting",
                                     startedAt: null,
+                                    events: swimMeet.events,
                                     results: null,
+                                    heatResults: null,
                                   }).catch(console.error);
                                   setSwimLiveCode(code);
                                 }}>
@@ -6959,6 +7085,58 @@
                       </div>
                     )}
 
+                    {/* ── DEVICES ── */}
+                    {swimView === "devices" && (
+                      <div>
+                        {/* Clicker Assignments */}
+                        <div style={S.card}>
+                          <div style={{ fontSize:11, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#5a86a8", marginBottom:10 }}>📡 Clicker Assignments</div>
+                          {swimHostClickers.length === 0 ? (
+                            <div style={{ fontSize:13, color:"#5a86a8", marginBottom:10 }}>No clickers assigned yet.</div>
+                          ) : (
+                            <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 }}>
+                              {swimHostClickers.map(c => (
+                                <div key={c.lane} style={{ display:"flex", alignItems:"center", gap:10, background:"#071829", borderRadius:6, padding:"8px 12px" }}>
+                                  <span style={{ fontSize:12, color:"#5a86a8", width:60 }}>Lane {c.lane}</span>
+                                  <span style={{ background:"rgba(0,174,239,0.15)", border:"1px solid rgba(0,174,239,0.4)", borderRadius:4, padding:"2px 10px", fontFamily:"monospace", fontSize:13, color:"#48cae4" }}>
+                                    🎯 {c.key === " " ? "Space" : c.key}
+                                  </span>
+                                  <button onClick={() => setSwimHostClickers(cs => cs.filter(x => x.lane !== c.lane))}
+                                    style={{ marginLeft:"auto", background:"none", border:"none", color:"#f87171", cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div style={{ fontSize:12, color:"#5a86a8", marginTop:4 }}>
+                            To assign a clicker, go to <strong style={{ color:"#48cae4" }}>🏁 Race</strong> tab and tap <strong style={{ color:"#48cae4" }}>🎯 +</strong> on any lane card.
+                          </div>
+                        </div>
+
+                        {/* Lane Timer (remote phones) */}
+                        <div style={S.card}>
+                          <div style={{ fontSize:11, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#5a86a8", marginBottom:10 }}>🏁 Lane Timer Devices</div>
+                          {swimLiveCode ? (
+                            <div>
+                              <div style={{ fontSize:13, color:"#e8f4fb", marginBottom:6 }}>Share this code with lane operators:</div>
+                              <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                                <span style={{ fontSize:28, fontWeight:700, letterSpacing:6, color:"#00aeef", fontFamily:"monospace" }}>{swimLiveCode}</span>
+                                <button style={{ ...btnStyle("#48cae4", true), padding:"5px 12px", fontSize:11 }} onClick={() => navigator.clipboard?.writeText(swimLiveCode).catch(() => {})}>
+                                  📋 Copy
+                                </button>
+                              </div>
+                              <div style={{ fontSize:12, color:"#5a86a8", marginTop:8 }}>
+                                Lane operators: open this app → 👀 Watch tab → enter this code → select their lane.
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize:13, color:"#5a86a8" }}>
+                              No live session active. Start a session from the <strong style={{ color:"#48cae4" }}>🏁 Race</strong> tab to share a code with lane timer operators.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* ── ARCHIVE ── */}
                     {swimView === "archive" && (
                       <div>
@@ -7162,6 +7340,201 @@
                           ● Connected · Lane {swimLaneNum} · {swimLaneSession.pool || ""}
                         </div>
                       </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── SWIM MEET VIEWER ── */}
+            {view === "swimwatch" && (() => {
+              function joinSwimWatch() {
+                const code = swimWatchCode.trim().toUpperCase();
+                if (!code) return;
+                if (swimWatchListenerRef.current) {
+                  swimWatchListenerRef.current.ref.off("value", swimWatchListenerRef.current.fn);
+                }
+                setSwimWatchError("");
+                setSwimWatchSession(null);
+                const ref = rtdb.ref(`swimLive/${code}`);
+                const fn = snap => {
+                  if (!snap.exists()) { setSwimWatchError("Meet not found. Check the code with your host."); setSwimWatchSession(null); return; }
+                  setSwimWatchError("");
+                  setSwimWatchSession(snap.val());
+                };
+                ref.on("value", fn);
+                swimWatchListenerRef.current = { ref, fn };
+              }
+
+              const session = swimWatchSession;
+              const connected = !!session;
+              const status = session?.status || "waiting";
+
+              // Build sorted swimmer list from events for the "cheer on" picker
+              const allSwimmers = connected && session.events
+                ? session.events.flatMap(ev => ev.heats.flatMap(ht => ht.lanes.filter(s => s.name).map(s => ({ name: s.name, team: s.team||"", ev: ev.eventNum, ht: ht.heatNum, lane: s.lane, gender: ev.gender, distance: ev.distance, stroke: ev.stroke }))))
+                : [];
+              const uniqueNames = [...new Set(allSwimmers.map(s => s.name))];
+
+              // Get active heat lane data
+              const activeEv = connected && session.events ? session.events.find(e => e.eventNum === session.activeEvent) : null;
+              const activeHt = activeEv ? activeEv.heats.find(h => h.heatNum === session.activeHeat) : null;
+
+              return (
+                <div style={{ maxWidth:640, margin:"0 auto", padding:"0 16px 40px" }}>
+                  <div style={{ padding:"20px 0 10px", fontSize:20, fontWeight:700, color:"#e8f4fb" }}>🏊 Watch Swim Meet</div>
+
+                  {/* Join form */}
+                  {!connected && (
+                    <div style={{ background:"#0c2240", border:"1px solid rgba(0,174,239,0.2)", borderRadius:8, padding:"14px 16px", marginBottom:12 }}>
+                      <div style={{ fontSize:11, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#5a86a8", marginBottom:10 }}>Join a Meet</div>
+                      <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:10, color:"#5a86a8", marginBottom:3 }}>Meet Code</div>
+                          <input
+                            value={swimWatchCode}
+                            onChange={e => setSwimWatchCode(e.target.value.toUpperCase())}
+                            onKeyDown={e => e.key === "Enter" && joinSwimWatch()}
+                            maxLength={6}
+                            placeholder="ABC123"
+                            style={{ background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"10px 14px", color:"#e8f4fb", fontSize:18, fontFamily:"monospace", letterSpacing:4, outline:"none", width:"100%", boxSizing:"border-box" }}
+                          />
+                        </div>
+                        <button style={{ padding:"10px 24px", fontWeight:700, fontSize:14, background:"#00aeef", border:"none", borderRadius:4, color:"#071829", cursor:"pointer" }} onClick={joinSwimWatch}>
+                          Watch
+                        </button>
+                      </div>
+                      {swimWatchError && <div style={{ marginTop:8, fontSize:12, color:"#f87171" }}>{swimWatchError}</div>}
+                    </div>
+                  )}
+
+                  {/* Connected view */}
+                  {connected && (
+                    <div>
+                      {/* Meet header */}
+                      <div style={{ background:"#0c2240", border:"1px solid rgba(0,174,239,0.2)", borderRadius:8, padding:"12px 14px", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <div>
+                          <div style={{ fontSize:15, fontWeight:700, color:"#e8f4fb" }}>{session.meetName || "Swim Meet"}</div>
+                          <div style={{ fontSize:11, color:"#5a86a8", marginTop:2 }}>
+                            {session.pool || ""} · Code: <span style={{ fontFamily:"monospace", color:"#48cae4", letterSpacing:2 }}>{swimWatchCode}</span>
+                          </div>
+                        </div>
+                        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                          <button style={{ background:"transparent", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"5px 12px", fontSize:11, color:"#48cae4", cursor:"pointer" }}
+                            onClick={() => setSwimWatchChooserOpen(o => !o)}>
+                            {swimWatchCheering ? `⭐ ${swimWatchCheering.split(" ")[0]}` : "⭐ Cheer"}
+                          </button>
+                          <button style={{ background:"transparent", border:"1px solid rgba(90,134,168,0.4)", borderRadius:4, padding:"5px 10px", fontSize:11, color:"#5a86a8", cursor:"pointer" }} onClick={() => {
+                            if (swimWatchListenerRef.current) {
+                              swimWatchListenerRef.current.ref.off("value", swimWatchListenerRef.current.fn);
+                              swimWatchListenerRef.current = null;
+                            }
+                            setSwimWatchSession(null);
+                            setSwimWatchCheering(null);
+                          }}>Leave</button>
+                        </div>
+                      </div>
+
+                      {/* Swimmer chooser */}
+                      {swimWatchChooserOpen && (
+                        <div style={{ background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:8, padding:"12px 14px", marginBottom:12 }}>
+                          <div style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:"uppercase", color:"#5a86a8", marginBottom:8 }}>Who are you cheering for?</div>
+                          {swimWatchCheering && (
+                            <button style={{ ...btnStyle("#f87171", true), fontSize:11, padding:"4px 12px", marginBottom:8 }} onClick={() => { setSwimWatchCheering(null); setSwimWatchChooserOpen(false); }}>
+                              ✕ Stop cheering
+                            </button>
+                          )}
+                          <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:200, overflowY:"auto" }}>
+                            {uniqueNames.map(name => (
+                              <button key={name} onClick={() => { setSwimWatchCheering(name); setSwimWatchChooserOpen(false); }}
+                                style={{ textAlign:"left", background: swimWatchCheering === name ? "rgba(0,174,239,0.15)" : "transparent", border: swimWatchCheering === name ? "1px solid rgba(0,174,239,0.4)" : "1px solid transparent", borderRadius:4, padding:"7px 10px", color: swimWatchCheering === name ? "#00aeef" : "#e8f4fb", cursor:"pointer", fontSize:13 }}>
+                                {swimWatchCheering === name ? "⭐ " : ""}{name}
+                              </button>
+                            ))}
+                            {uniqueNames.length === 0 && <div style={{ fontSize:12, color:"#5a86a8" }}>No swimmer names in this meet yet.</div>}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Current heat */}
+                      {status === "finished" ? (
+                        <div style={{ background:"#0c2240", border:"1px solid rgba(72,202,228,0.3)", borderRadius:8, padding:"16px", marginBottom:12, textAlign:"center" }}>
+                          <div style={{ fontSize:14, color:"#48cae4", fontWeight:700 }}>🏁 Meet Complete</div>
+                        </div>
+                      ) : activeHt ? (
+                        <div style={{ background:"#0c2240", border:"1px solid rgba(0,174,239,0.2)", borderRadius:8, padding:"14px 16px", marginBottom:12 }}>
+                          <div style={{ fontSize:11, fontWeight:700, letterSpacing:2, textTransform:"uppercase", color:"#5a86a8", marginBottom:6 }}>
+                            Event {session.activeEvent} — {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
+                          </div>
+                          <div style={{ fontSize:12, color:"#48cae4", marginBottom:10 }}>
+                            Heat {session.activeHeat} of {activeEv.heats.length}
+                          </div>
+                          {/* Live clock */}
+                          <div style={{ fontSize:44, fontWeight:700, letterSpacing:2, color: status === "racing" ? "#00aeef" : "#3a6080", fontVariantNumeric:"tabular-nums", textAlign:"center", marginBottom:10 }}>
+                            {status === "racing" ? formatSwimTime(swimWatchClockMs) : (status === "waiting" ? "⏳ Waiting…" : formatSwimTime(swimWatchClockMs))}
+                          </div>
+                          {/* Lane results */}
+                          {activeHt.lanes.sort((a,b) => a.lane - b.lane).map(sw => {
+                            const res = session.results?.[sw.lane];
+                            const finalMs = res?.finalMs ?? null;
+                            const isCheering = swimWatchCheering && sw.name && sw.name === swimWatchCheering;
+                            return (
+                              <div key={sw.lane} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 10px", borderRadius:6, marginBottom:4, background: isCheering ? "rgba(0,174,239,0.1)" : "transparent", border: isCheering ? "1px solid rgba(0,174,239,0.4)" : "1px solid transparent" }}>
+                                <span style={{ fontSize:11, color:"#5a86a8", width:46, flexShrink:0 }}>Lane {sw.lane}</span>
+                                <span style={{ flex:1, fontSize:13, fontWeight: isCheering ? 700 : 400, color: isCheering ? "#00aeef" : "#e8f4fb" }}>
+                                  {isCheering && "⭐ "}{sw.name || "(empty)"}{sw.team ? <span style={{ fontSize:11, color:"#5a86a8", fontWeight:400 }}> · {sw.team}</span> : ""}
+                                </span>
+                                <span style={{ fontSize:14, fontWeight:700, fontVariantNumeric:"tabular-nums", color: finalMs != null ? "#00aeef" : "#3a6080" }}>
+                                  {finalMs != null ? formatSwimTime(finalMs) : (res?.dq ? "DQ" : "--:--.--")}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{ background:"#0c2240", border:"1px solid rgba(0,174,239,0.15)", borderRadius:8, padding:"24px", marginBottom:12, textAlign:"center", color:"#5a86a8", fontSize:13 }}>
+                          ⏳ Waiting for host to start a heat…
+                        </div>
+                      )}
+
+                      {/* Completed heats */}
+                      {session.heatResults && Object.keys(session.heatResults).length > 0 && (
+                        <div style={{ marginTop:16 }}>
+                          <div style={{ fontSize:11, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#5a86a8", marginBottom:10 }}>Completed Heats</div>
+                          {Object.entries(session.heatResults).sort().map(([key, results]) => {
+                            const [evNum, htNum] = key.split("_").map(Number);
+                            const ev = session.events?.find(e => e.eventNum === evNum);
+                            const ht = ev?.heats.find(h => h.heatNum === htNum);
+                            const sorted = Object.entries(results).filter(([,r]) => r.finalMs != null && !r.dq).sort(([,a],[,b]) => a.finalMs - b.finalMs);
+                            return (
+                              <div key={key} style={{ background:"#0c2240", border:"1px solid rgba(0,174,239,0.15)", borderRadius:8, padding:"10px 14px", marginBottom:8 }}>
+                                <div style={{ fontSize:11, color:"#48cae4", fontWeight:700, marginBottom:6 }}>
+                                  {ev ? `Event ${evNum} — ${ev.gender} ${ev.ageGroup} ${ev.distance} ${ev.stroke}` : `Event ${evNum}`} · Heat {htNum}
+                                </div>
+                                {sorted.map(([lane, r], rank) => {
+                                  const isCheering = swimWatchCheering && r.name && r.name === swimWatchCheering;
+                                  return (
+                                    <div key={lane} style={{ display:"flex", alignItems:"center", gap:8, padding:"3px 0", borderRadius:4, background: isCheering ? "rgba(0,174,239,0.08)" : "transparent" }}>
+                                      <span style={{ fontSize:11, color:"#5a86a8", width:20 }}>{rank + 1}.</span>
+                                      <span style={{ flex:1, fontSize:12, color: isCheering ? "#00aeef" : "#e8f4fb", fontWeight: isCheering ? 700 : 400 }}>
+                                        {isCheering && "⭐ "}{r.name || `Lane ${lane}`}{r.team ? <span style={{ fontSize:10, color:"#5a86a8", fontWeight:400 }}> {r.team}</span> : ""}
+                                      </span>
+                                      <span style={{ fontSize:12, fontVariantNumeric:"tabular-nums", color:"#00aeef", fontWeight:700 }}>{formatSwimTime(r.finalMs)}</span>
+                                    </div>
+                                  );
+                                })}
+                                {Object.entries(results).filter(([,r]) => r.dq).map(([lane, r]) => (
+                                  <div key={`dq${lane}`} style={{ display:"flex", alignItems:"center", gap:8, padding:"3px 0", opacity:0.5 }}>
+                                    <span style={{ fontSize:11, color:"#f87171", width:20 }}>DQ</span>
+                                    <span style={{ flex:1, fontSize:12, color:"#e8f4fb" }}>{r.name || `Lane ${lane}`}</span>
+                                    <span style={{ fontSize:11, color:"#f87171" }}>Disqualified</span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
