@@ -970,16 +970,18 @@
         useEffect(() => {
           if (view !== "swimlane" || !swimLaneSession || swimClickerDetecting) return;
           const code = swimLaneCode;
+          const VOLUME_KEYS = ["AudioVolumeUp","AudioVolumeDown","VolumeUp","VolumeDown"];
           const handler = (e) => {
-            if (e.key === swimClickerKey && !swimLaneFinished && swimLaneSession.status === "racing") {
+            const triggered = e.key === swimClickerKey || VOLUME_KEYS.includes(e.key);
+            if (triggered && !swimLaneFinished && swimLaneSession.status === "racing") {
               e.preventDefault();
               const finalMs = Date.now() - swimLaneSession.startedAt;
               rtdb.ref(`swimLive/${code}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
               setSwimLaneFinished(true);
             }
           };
-          window.addEventListener("keydown", handler);
-          return () => window.removeEventListener("keydown", handler);
+          window.addEventListener("keydown", handler, true);
+          return () => window.removeEventListener("keydown", handler, true);
         }, [view, swimLaneSession, swimClickerKey, swimLaneFinished, swimClickerDetecting, swimLaneNum, swimLaneCode]);
 
         // Host: listen for lane results from Firebase and apply to meet
@@ -7589,7 +7591,7 @@
                         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                           <span style={{ fontSize:12, color:"#e8f4fb" }}>Key:</span>
                           <span style={{ background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"4px 12px", fontFamily:"monospace", fontSize:14, color:"#00aeef", minWidth:40, textAlign:"center" }}>
-                            {swimClickerKey === " " ? "Space" : swimClickerKey}
+                            {swimClickerKey === " " ? "Space" : swimClickerKey === "AudioVolumeUp" || swimClickerKey === "VolumeUp" ? "🔊 Vol Up" : swimClickerKey === "AudioVolumeDown" || swimClickerKey === "VolumeDown" ? "🔉 Vol Down" : swimClickerKey}
                           </span>
                           <button
                             style={{ background: swimClickerDetecting ? "#ffd166" : "transparent", border:`2px solid ${swimClickerDetecting ? "#ffd166" : "#48cae4"}`, color: swimClickerDetecting ? "#071829" : "#48cae4", padding:"5px 14px", fontSize:12, borderRadius:4, fontWeight:700, cursor:"pointer" }}
