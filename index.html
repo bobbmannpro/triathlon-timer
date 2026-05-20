@@ -857,6 +857,8 @@
         });
         const [swimHomeSection, setSwimHomeSection] = useState(null);
         const [swimDeleteMeetConfirm, setSwimDeleteMeetConfirm] = useState(null);
+        const [swimShowSaveBefore, setSwimShowSaveBefore] = useState(false);
+        const [swimSaveBeforeName, setSwimSaveBeforeName] = useState("");
         const [swimAthletes, setSwimAthletes] = useState(() => {
           try { return JSON.parse(localStorage.getItem("swim-athletes") || "[]"); } catch { return []; }
         });
@@ -6511,22 +6513,47 @@
                 function saveCurentMeet() {
                   if (!swimMeet.meetName && swimMeet.events.length === 0) return;
                   const existing = swimSavedMeets.find(m => m.id === swimMeet._id);
+                  const id = swimMeet._id || `meet_${Date.now()}`;
                   const entry = {
-                    id: swimMeet._id || `meet_${Date.now()}`,
+                    id,
                     meetName: swimMeet.meetName || "Unnamed Meet",
                     pool: swimMeet.pool,
                     savedAt: new Date().toLocaleDateString(),
-                    events: swimMeet.events
+                    events: swimMeet.events,
+                    code: existing?.code
                   };
                   if (existing) {
-                    persistSwimMeets(swimSavedMeets.map(m => m.id === entry.id ? entry : m));
+                    persistSwimMeets(swimSavedMeets.map(m => m.id === id ? entry : m));
                   } else {
-                    setSwimMeet(m => ({ ...m, _id: entry.id }));
+                    setSwimMeet(m => ({ ...m, _id: id }));
                     persistSwimMeets([entry, ...swimSavedMeets]);
                   }
                 }
+                function saveAndStartLiveSession(nameVal) {
+                  const name = (nameVal || "").trim() || `Meet ${swimSavedMeets.length + 1}`;
+                  const existing = swimSavedMeets.find(m => m.id === swimMeet._id);
+                  const code = existing?.code || generateSwimCode();
+                  const id = swimMeet._id || `meet_${Date.now()}`;
+                  const entry = { id, meetName: name, pool: swimMeet.pool, savedAt: new Date().toLocaleDateString(), events: swimMeet.events, code };
+                  if (existing) {
+                    persistSwimMeets(swimSavedMeets.map(m => m.id === id ? entry : m));
+                  } else {
+                    persistSwimMeets([entry, ...swimSavedMeets]);
+                  }
+                  setSwimMeet(m => ({ ...m, meetName: name, _id: id }));
+                  setSwimShowSaveBefore(false);
+                  setSwimSaveBeforeName("");
+                  rtdb.ref(`swimLive/${code}`).set({
+                    meetName: name, pool: swimMeet.pool,
+                    activeEvent: swimActiveEvent, activeHeat: swimActiveHeat,
+                    status: "waiting", startedAt: null,
+                    events: swimMeet.events, results: null, heatResults: null,
+                  }).catch(console.error);
+                  setSwimLiveCode(code);
+                }
                 function loadSwimMeet(meet) {
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id });
+                  setSwimLiveCode(null);
                   setSwimView("setup");
                   setSwimHomeSection(null);
                 }
@@ -6943,7 +6970,10 @@
                               <div style={{ fontSize:10, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#5a86a8", marginBottom:8 }}>📡 Live Session</div>
                               {!swimLiveCode ? (
                                 <button style={{ ...btnStyle("#48cae4"), fontSize:12, padding:"8px 20px" }} onClick={() => {
-                                  const code = generateSwimCode();
+                                  const savedMeet = swimSavedMeets.find(m => m.id === swimMeet._id);
+                                  if (!swimMeet._id || !savedMeet) { setSwimShowSaveBefore(true); return; }
+                                  const code = savedMeet.code || generateSwimCode();
+                                  if (!savedMeet.code) persistSwimMeets(swimSavedMeets.map(m => m.id === swimMeet._id ? { ...m, code } : m));
                                   rtdb.ref(`swimLive/${code}`).set({
                                     meetName: swimMeet.meetName || "Unnamed Meet",
                                     pool: swimMeet.pool,
@@ -7411,6 +7441,33 @@
                         ))}
                       </div>
                     )}
+
+                  {/* Save-before-live prompt */}
+                  {swimShowSaveBefore && (
+                    <div style={{ position:"fixed", inset:0, background:"rgba(7,24,41,0.92)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 20px" }}
+                      onClick={e => { if (e.target === e.currentTarget) setSwimShowSaveBefore(false); }}>
+                      <div style={{ background:"#0c2240", border:"2px solid #48cae4", borderRadius:12, padding:"24px 20px", width:"100%", maxWidth:420 }}>
+                        <div style={{ fontSize:14, fontWeight:700, color:"#e8f4fb", marginBottom:6 }}>Name this meet before starting a live session</div>
+                        <div style={{ fontSize:12, color:"#5a86a8", marginBottom:16 }}>The meet code is locked in when you save — it will never change for this meet.</div>
+                        <input
+                          autoFocus
+                          value={swimSaveBeforeName}
+                          onChange={e => setSwimSaveBeforeName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter" && swimSaveBeforeName.trim()) saveAndStartLiveSession(swimSaveBeforeName); }}
+                          placeholder="e.g. Spring Invitational 2026"
+                          style={{ width:"100%", background:"#071829", border:"1px solid rgba(72,202,228,0.5)", borderRadius:6, padding:"10px 12px", color:"#e8f4fb", fontSize:14, outline:"none", boxSizing:"border-box", marginBottom:12 }}
+                        />
+                        <div style={{ display:"flex", gap:8 }}>
+                          <button onClick={() => { if (swimSaveBeforeName.trim()) saveAndStartLiveSession(swimSaveBeforeName); }}
+                            disabled={!swimSaveBeforeName.trim()}
+                            style={{ ...btnStyle("#48cae4"), flex:1, padding:"11px", fontSize:13, opacity: swimSaveBeforeName.trim() ? 1 : 0.4, cursor: swimSaveBeforeName.trim() ? "pointer" : "default" }}>
+                            Save &amp; Start Live Session
+                          </button>
+                          <button onClick={() => setSwimShowSaveBefore(false)} style={{ ...btnStyle("#5a86a8", true), padding:"11px 18px", fontSize:13 }}>Cancel</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   </div>
                 );
