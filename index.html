@@ -852,6 +852,16 @@
         const [swimArchive, setSwimArchive] = useState(() => {
           try { return JSON.parse(localStorage.getItem("swim-archive") || "[]"); } catch { return []; }
         });
+        const [swimSavedMeets, setSwimSavedMeets] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("swim-saved-meets") || "[]"); } catch { return []; }
+        });
+        const [swimHomeSection, setSwimHomeSection] = useState(null);
+        const [swimDeleteMeetConfirm, setSwimDeleteMeetConfirm] = useState(null);
+        const [swimAthletes, setSwimAthletes] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("swim-athletes") || "[]"); } catch { return []; }
+        });
+        const [swimAthleteView, setSwimAthleteView] = useState("list");
+        const [swimNewAthlete, setSwimNewAthlete] = useState({ name:"", team:"", ageGroup:"Open", gender:"Girls" });
         const swimFileInputRef = useRef(null);
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
         const [swimResultsEvent, setSwimResultsEvent] = useState(null);
@@ -3424,7 +3434,7 @@
           }
           setAppMode(mode);
           localStorage.setItem("tri-appmode", mode);
-          if (mode === "swim") { setView("swim"); setSwimView("setup"); }
+          if (mode === "swim") { setView("swim"); setSwimView("home"); }
           else { setView(isHost ? "home" : "join"); }
         }
 
@@ -3442,7 +3452,7 @@
         useEffect(() => {
           if (appMode === "swim" && view === "home") {
             setView(isHost ? "swim" : "swimwatch");
-            if (isHost) setSwimView("setup");
+            if (isHost) setSwimView("home");
           }
         }, [appMode, view, isHost]);
 
@@ -3578,7 +3588,7 @@
                 const homeView = appMode === "swim" ? (isHost ? "swim" : "swimwatch") : (isHost ? "home" : "join");
                 return view !== homeView && (
                   <button onClick={() => {
-                    if (appMode === "swim" && isHost) { setView("swim"); setSwimView("setup"); }
+                    if (appMode === "swim" && isHost) { setView("swim"); setSwimView("home"); }
                     else setView(homeView);
                   }} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
                 );
@@ -3599,9 +3609,9 @@
 
             {/* NAV — conditional per mode/role */}
             {(() => {
-              const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
+              const swimNavMap = { swimhome:"home", swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
               const navTabs = (appMode === "swim" && isHost)
-                ? [["__home__","⌂"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
+                ? [["__home__","⌂"],["swimhome","🏠 Meet"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
                 : (appMode === "swim")
                 ? [["__home__","⌂"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
                 : isHost
@@ -6491,6 +6501,38 @@
                   if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimArchive").set(updated).catch(console.error);
                 }
 
+                function persistSwimMeets(meets) {
+                  setSwimSavedMeets(meets);
+                  localStorage.setItem("swim-saved-meets", JSON.stringify(meets));
+                  if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimMeets").set(meets).catch(console.error);
+                }
+                function saveCurentMeet() {
+                  if (!swimMeet.meetName && swimMeet.events.length === 0) return;
+                  const existing = swimSavedMeets.find(m => m.id === swimMeet._id);
+                  const entry = {
+                    id: swimMeet._id || `meet_${Date.now()}`,
+                    meetName: swimMeet.meetName || "Unnamed Meet",
+                    pool: swimMeet.pool,
+                    savedAt: new Date().toLocaleDateString(),
+                    events: swimMeet.events
+                  };
+                  if (existing) {
+                    persistSwimMeets(swimSavedMeets.map(m => m.id === entry.id ? entry : m));
+                  } else {
+                    setSwimMeet(m => ({ ...m, _id: entry.id }));
+                    persistSwimMeets([entry, ...swimSavedMeets]);
+                  }
+                }
+                function loadSwimMeet(meet) {
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id });
+                  setSwimView("setup");
+                  setSwimHomeSection(null);
+                }
+                function persistSwimAthletes(athletes) {
+                  setSwimAthletes(athletes);
+                  localStorage.setItem("swim-athletes", JSON.stringify(athletes));
+                }
+
                 async function importMeetFile(file) {
                   const text = await file.text();
                   let parsed;
@@ -6571,6 +6613,105 @@
                         {[["setup","Setup"],["race","Race"],["results","Results"],["archive","Archive"]].map(([v,label]) => (
                           <button key={v} style={swimTabStyle(swimView === v)} onClick={() => setSwimView(v)}>{label}</button>
                         ))}
+                      </div>
+                    )}
+
+                    {swimView === "home" && (
+                      <div style={{ padding:"10px 0 20px" }}>
+                        <div style={{ textAlign:"center", marginBottom:28 }}>
+                          <div style={{ fontFamily:"'Bebas Neue', sans-serif", fontSize:56, letterSpacing:6, color:"#f0f6ff", lineHeight:1 }}>
+                            <span style={{ color:"#48cae4" }}>Swim</span> Meet
+                          </div>
+                          <div style={{ fontSize:11, letterSpacing:4, textTransform:"uppercase", color:"#5a86a8", marginTop:6 }}>
+                            {swimMeet.meetName || "No meet loaded"}
+                          </div>
+                        </div>
+
+                        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+
+                          <button onClick={() => { setSwimMeet({ meetName:"", pool:"25y", events:[] }); setSwimView("setup"); }}
+                            style={{ background:"linear-gradient(135deg,#0c2240,#0d3a6e)", border:"2px solid #48cae4", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            <div style={{ fontSize:40, lineHeight:1 }}>🏊</div>
+                            <div>
+                              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:3, color:"#48cae4" }}>New Meet</div>
+                              <div style={{ fontSize:12, color:"#5a86a8", marginTop:2 }}>Set up events, heats, and swimmers</div>
+                            </div>
+                            <div style={{ marginLeft:"auto", fontSize:22, color:"#48cae4" }}>→</div>
+                          </button>
+
+                          <button onClick={() => setSwimHomeSection(swimHomeSection === "meets" ? null : "meets")}
+                            style={{ background:"linear-gradient(135deg,#0c2240,#1a3a1a)", border:"2px solid #ffd166", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            <div style={{ fontSize:40, lineHeight:1 }}>📋</div>
+                            <div>
+                              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:3, color:"#ffd166" }}>Existing Meets</div>
+                              <div style={{ fontSize:12, color:"#5a86a8", marginTop:2 }}>
+                                {swimSavedMeets.length === 0 ? "No saved meets yet" : `${swimSavedMeets.length} saved meet${swimSavedMeets.length !== 1 ? "s" : ""}`}
+                              </div>
+                            </div>
+                            <div style={{ marginLeft:"auto", fontSize:22, color:"#ffd166" }}>{swimHomeSection === "meets" ? "▲" : "▼"}</div>
+                          </button>
+
+                          {swimHomeSection === "meets" && (
+                            <div style={{ marginTop:-6, background:"#0a1e36", border:"1px solid rgba(255,209,102,0.25)", borderRadius:8, padding:12, display:"flex", flexDirection:"column", gap:8 }}>
+                              {swimSavedMeets.length === 0 ? (
+                                <div style={{ fontSize:12, color:"#3a6080", textAlign:"center", padding:"12px 0" }}>No saved meets — go to Setup to save one.</div>
+                              ) : swimSavedMeets.map(meet => (
+                                <div key={meet.id} style={{ background:"#0c2240", borderRadius:6, padding:"10px 12px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                                  <div style={{ minWidth:0 }}>
+                                    <div style={{ fontWeight:700, fontSize:13, color:"#e8f4fb" }}>{meet.meetName}</div>
+                                    <div style={{ fontSize:11, color:"#3a6080" }}>{meet.pool} · {meet.events.length} events · {meet.savedAt}</div>
+                                  </div>
+                                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                                    <button onClick={() => loadSwimMeet(meet)} style={{ ...btnStyle("#ffd166"), padding:"5px 14px", fontSize:11 }}>Load</button>
+                                    {swimDeleteMeetConfirm === meet.id ? (
+                                      <>
+                                        <button onClick={() => { persistSwimMeets(swimSavedMeets.filter(m => m.id !== meet.id)); setSwimDeleteMeetConfirm(null); }} style={{ ...btnStyle("#f4742b"), padding:"5px 10px", fontSize:11 }}>Delete?</button>
+                                        <button onClick={() => setSwimDeleteMeetConfirm(null)} style={{ ...btnStyle("#5a86a8", true), padding:"5px 10px", fontSize:11 }}>No</button>
+                                      </>
+                                    ) : (
+                                      <button onClick={() => setSwimDeleteMeetConfirm(meet.id)} style={{ background:"none", border:"none", color:"#3a6080", fontSize:16, cursor:"pointer", padding:"0 4px" }}>×</button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <button onClick={() => setSwimView("athletes")}
+                            style={{ background:"linear-gradient(135deg,#0c2240,#0a2a1a)", border:"2px solid #4ade80", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            <div style={{ fontSize:40, lineHeight:1 }}>👥</div>
+                            <div>
+                              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:3, color:"#4ade80" }}>Swim Teams</div>
+                              <div style={{ fontSize:12, color:"#5a86a8", marginTop:2 }}>
+                                {swimAthletes.length === 0 ? "Manage swimmers and teams" : `${swimAthletes.length} swimmer${swimAthletes.length !== 1 ? "s" : ""} in library`}
+                              </div>
+                            </div>
+                            <div style={{ marginLeft:"auto", fontSize:22, color:"#4ade80" }}>→</div>
+                          </button>
+
+                          <button onClick={() => setSwimView("archive")}
+                            style={{ background:"linear-gradient(135deg,#0c2240,#1a0a2e)", border:"2px solid #f4742b", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            <div style={{ fontSize:40, lineHeight:1 }}>📁</div>
+                            <div>
+                              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:3, color:"#f4742b" }}>Past Meets</div>
+                              <div style={{ fontSize:12, color:"#5a86a8", marginTop:2 }}>
+                                {swimArchive.length === 0 ? "No past meets yet" : `${swimArchive.length} meet${swimArchive.length !== 1 ? "s" : ""} archived`}
+                              </div>
+                            </div>
+                            <div style={{ marginLeft:"auto", fontSize:22, color:"#f4742b" }}>→</div>
+                          </button>
+
+                          <button onClick={() => setView("swimwatch")}
+                            style={{ background:"linear-gradient(135deg,#0c2240,#1a1a3a)", border:"2px solid #a78bfa", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            <div style={{ fontSize:40, lineHeight:1 }}>👀</div>
+                            <div>
+                              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:3, color:"#a78bfa" }}>Watch a Meet</div>
+                              <div style={{ fontSize:12, color:"#5a86a8", marginTop:2 }}>Join a live meet as a viewer</div>
+                            </div>
+                            <div style={{ marginLeft:"auto", fontSize:22, color:"#a78bfa" }}>→</div>
+                          </button>
+
+                        </div>
                       </div>
                     )}
 
@@ -6724,10 +6865,16 @@
 
                         {/* Save meet to archive */}
                         {swimMeet.events.length > 0 && (
-                          <button style={{ ...btnStyle("#ffd166"), width:"100%", marginTop:4 }}
-                            onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>
-                            💾 Save Meet to Archive
-                          </button>
+                          <div style={{ display:"flex", gap:8, marginTop:4 }}>
+                            <button style={{ ...btnStyle("#48cae4"), padding:"8px 18px", fontSize:12 }}
+                              onClick={() => { saveCurentMeet(); alert("Meet saved!"); }}>
+                              💾 Save Meet
+                            </button>
+                            <button style={{ ...btnStyle("#ffd166"), flex:1 }}
+                              onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>
+                              💾 Save Meet to Archive
+                            </button>
+                          </div>
                         )}
                       </div>
                     )}
@@ -7137,6 +7284,81 @@
                             </div>
                           )}
                         </div>
+                      </div>
+                    )}
+
+                    {swimView === "athletes" && (
+                      <div style={{ padding:"10px 0 20px" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+                          <div style={{ fontSize:18, fontWeight:700, color:"#e8f4fb" }}>👥 Swim Teams</div>
+                          <button style={{ ...btnStyle("#4ade80"), padding:"7px 16px", fontSize:12 }}
+                            onClick={() => setSwimAthleteView(swimAthleteView === "add" ? "list" : "add")}>
+                            {swimAthleteView === "add" ? "✕ Cancel" : "+ Add Swimmer"}
+                          </button>
+                        </div>
+
+                        {swimAthleteView === "add" && (
+                          <div style={{ background:"#0c2240", border:"1px solid rgba(72,202,228,0.25)", borderRadius:10, padding:"16px", marginBottom:16 }}>
+                            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                              <div>
+                                <div style={{ fontSize:10, color:"#5a86a8", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Name</div>
+                                <input value={swimNewAthlete.name} onChange={e => setSwimNewAthlete(a => ({ ...a, name: e.target.value }))}
+                                  placeholder="Swimmer name" style={{ background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"8px 12px", color:"#e8f4fb", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize:10, color:"#5a86a8", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Team</div>
+                                <input value={swimNewAthlete.team} onChange={e => setSwimNewAthlete(a => ({ ...a, team: e.target.value }))}
+                                  placeholder="Team name" style={{ background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"8px 12px", color:"#e8f4fb", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" }} />
+                              </div>
+                              <div style={{ display:"flex", gap:10 }}>
+                                <div style={{ flex:1 }}>
+                                  <div style={{ fontSize:10, color:"#5a86a8", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Gender</div>
+                                  <select value={swimNewAthlete.gender} onChange={e => setSwimNewAthlete(a => ({ ...a, gender: e.target.value }))}
+                                    style={{ background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"8px 10px", color:"#e8f4fb", fontSize:13, outline:"none", width:"100%" }}>
+                                    {["Girls","Boys","Mixed"].map(g => <option key={g} value={g}>{g}</option>)}
+                                  </select>
+                                </div>
+                                <div style={{ flex:1 }}>
+                                  <div style={{ fontSize:10, color:"#5a86a8", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Age Group</div>
+                                  <input value={swimNewAthlete.ageGroup} onChange={e => setSwimNewAthlete(a => ({ ...a, ageGroup: e.target.value }))}
+                                    placeholder="9-10, Open…" style={{ background:"#071829", border:"1px solid rgba(0,174,239,0.3)", borderRadius:4, padding:"8px 10px", color:"#e8f4fb", fontSize:13, outline:"none", width:"100%", boxSizing:"border-box" }} />
+                                </div>
+                              </div>
+                              <button disabled={!swimNewAthlete.name.trim()} onClick={() => {
+                                if (!swimNewAthlete.name.trim()) return;
+                                const updated = [...swimAthletes, { id:`swa_${Date.now()}`, ...swimNewAthlete }];
+                                persistSwimAthletes(updated);
+                                setSwimNewAthlete({ name:"", team:"", ageGroup:"Open", gender:"Girls" });
+                                setSwimAthleteView("list");
+                              }} style={{ ...btnStyle("#4ade80"), padding:"9px", fontSize:13, opacity: swimNewAthlete.name.trim() ? 1 : 0.4 }}>
+                                Add Swimmer
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {swimAthletes.length === 0 ? (
+                          <div style={{ color:"#3a6080", fontSize:13, textAlign:"center", padding:"40px 0" }}>No swimmers yet — add one above.</div>
+                        ) : (() => {
+                          const teams = [...new Set(swimAthletes.map(a => a.team || "Unassigned"))].sort();
+                          return teams.map(team => (
+                            <div key={team} style={{ marginBottom:16 }}>
+                              <div style={{ fontSize:11, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#48cae4", marginBottom:8 }}>{team}</div>
+                              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                                {swimAthletes.filter(a => (a.team || "Unassigned") === team).map(ath => (
+                                  <div key={ath.id} style={{ background:"#0c2240", border:"1px solid rgba(0,174,239,0.1)", borderRadius:8, padding:"10px 14px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                                    <div>
+                                      <div style={{ fontSize:14, fontWeight:700, color:"#e8f4fb" }}>{ath.name}</div>
+                                      <div style={{ fontSize:11, color:"#5a86a8", marginTop:2 }}>{ath.gender} · {ath.ageGroup}</div>
+                                    </div>
+                                    <button onClick={() => persistSwimAthletes(swimAthletes.filter(a => a.id !== ath.id))}
+                                      style={{ background:"none", border:"none", color:"#3a6080", fontSize:18, cursor:"pointer", padding:"0 4px" }}>×</button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ));
+                        })()}
                       </div>
                     )}
 
