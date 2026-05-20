@@ -7257,20 +7257,22 @@
                   )}
 
                   {/* Connected view */}
-                  {connected && (
+                  {connected && (() => {
+                    const activeEvData = swimLaneSession?.events?.find(e => e.eventNum === swimLaneSession?.activeEvent);
+                    const activeHtData = activeEvData?.heats?.find(h => h.heatNum === swimLaneSession?.activeHeat);
+                    const mySwimmer = activeHtData?.lanes?.find(l => l.lane === swimLaneNum);
+                    const totalHeats = activeEvData?.heats?.length || 0;
+                    return (
                     <div>
-                      {/* Session header */}
-                      <div style={{ background:"#0c2240", border:"1px solid rgba(0,174,239,0.2)", borderRadius:8, padding:"12px 14px", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      {/* Top bar */}
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
                         <div>
-                          <div style={{ fontSize:13, fontWeight:700, color:"#e8f4fb" }}>
-                            {swimLaneSession.meetName || "Unnamed Meet"} · Lane {swimLaneNum}
-                          </div>
-                          <div style={{ fontSize:11, color:"#5a86a8", marginTop:2 }}>
+                          <div style={{ fontSize:15, fontWeight:700, color:"#e8f4fb" }}>{swimLaneSession.meetName || "Unnamed Meet"}</div>
+                          <div style={{ fontSize:11, color:"#5a86a8", marginTop:1 }}>
                             Code: <span style={{ fontFamily:"monospace", color:"#48cae4", letterSpacing:2 }}>{swimLaneCode}</span>
-                            {swimLaneSession.activeEvent ? ` · Event ${swimLaneSession.activeEvent} Heat ${swimLaneSession.activeHeat}` : ""}
                           </div>
                         </div>
-                        <button style={{ background:"transparent", border:"1px solid rgba(90,134,168,0.5)", borderRadius:4, padding:"5px 12px", fontSize:11, color:"#5a86a8", cursor:"pointer" }} onClick={() => {
+                        <button style={{ background:"transparent", border:"1px solid rgba(90,134,168,0.4)", borderRadius:6, padding:"6px 14px", fontSize:12, color:"#5a86a8", cursor:"pointer" }} onClick={() => {
                           if (swimLaneListenerRef.current) {
                             swimLaneListenerRef.current.ref.off("value", swimLaneListenerRef.current.fn);
                             swimLaneListenerRef.current = null;
@@ -7280,24 +7282,53 @@
                         }}>Leave</button>
                       </div>
 
-                      {/* Clock display */}
-                      <div style={{ background:"#071829", border:`2px solid ${status === "racing" ? "#00aeef" : "rgba(0,174,239,0.3)"}`, borderRadius:12, padding:"24px 16px", textAlign:"center", marginBottom:14 }}>
-                        <div style={{ fontSize:56, fontWeight:700, letterSpacing:2, color: status === "racing" ? "#00aeef" : "#e8f4fb", fontVariantNumeric:"tabular-nums" }}>
-                          {formatSwimTime(status === "racing" ? swimLaneClockMs : 0)}
+                      {/* Lane + event/heat pill row */}
+                      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+                        <div style={{ background:"rgba(0,174,239,0.15)", border:"1px solid rgba(0,174,239,0.35)", borderRadius:20, padding:"5px 14px", fontSize:13, fontWeight:700, color:"#00aeef" }}>
+                          Lane {swimLaneNum}
                         </div>
-                        <div style={{ fontSize:13, color:"#5a86a8", marginTop:6 }}>
-                          {status === "waiting" ? "⏳ Waiting for host to start…" :
-                           status === "racing" ? "🏁 Race in progress" :
-                           "✓ Heat finished"}
-                        </div>
-                        {swimLaneFinished && swimLaneSession?.results?.[swimLaneNum] && (
-                          <div style={{ marginTop:8, fontSize:16, fontWeight:700, color:"#00aeef" }}>
-                            ✓ {formatSwimTime(swimLaneSession.results[swimLaneNum].finalMs)} recorded
+                        {swimLaneSession.activeEvent && (
+                          <div style={{ background:"rgba(90,134,168,0.1)", border:"1px solid rgba(90,134,168,0.25)", borderRadius:20, padding:"5px 14px", fontSize:13, color:"#5a86a8" }}>
+                            Event {swimLaneSession.activeEvent}
+                            {activeEvData?.eventName ? ` · ${activeEvData.eventName}` : ""}
+                          </div>
+                        )}
+                        {swimLaneSession.activeHeat && (
+                          <div style={{ background:"rgba(90,134,168,0.1)", border:"1px solid rgba(90,134,168,0.25)", borderRadius:20, padding:"5px 14px", fontSize:13, color:"#5a86a8" }}>
+                            Heat {swimLaneSession.activeHeat}{totalHeats > 1 ? ` of ${totalHeats}` : ""}
                           </div>
                         )}
                       </div>
 
-                      {/* FINISH button */}
+                      {/* Swimmer card */}
+                      <div style={{ background:"#0c2240", border:"1px solid rgba(72,202,228,0.25)", borderRadius:12, padding:"18px 20px", marginBottom:16, minHeight:80 }}>
+                        {mySwimmer ? (
+                          <div>
+                            <div style={{ fontSize:28, fontWeight:700, color:"#e8f4fb", marginBottom:4 }}>{mySwimmer.name || "—"}</div>
+                            {mySwimmer.team && <div style={{ fontSize:14, color:"#48cae4" }}>{mySwimmer.team}</div>}
+                            {mySwimmer.seedTime && <div style={{ fontSize:12, color:"#5a86a8", marginTop:4 }}>Seed: {formatSwimTime(mySwimmer.seedTime)}</div>}
+                          </div>
+                        ) : (
+                          <div style={{ color:"#3a6080", fontSize:14, paddingTop:8 }}>
+                            {swimLaneSession.activeEvent ? "No swimmer assigned to this lane" : "Waiting for host to select event…"}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Clock */}
+                      <div style={{ textAlign:"center", marginBottom:20 }}>
+                        <div style={{ fontSize:64, fontWeight:700, letterSpacing:3, color: status === "racing" ? "#00aeef" : "#3a6080", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
+                          {formatSwimTime(status === "racing" ? swimLaneClockMs : (swimLaneFinished && swimLaneSession?.results?.[swimLaneNum] ? swimLaneSession.results[swimLaneNum].finalMs : 0))}
+                        </div>
+                        <div style={{ fontSize:13, color:"#5a86a8", marginTop:8 }}>
+                          {status === "waiting" ? "⏳ Waiting for start…" :
+                           status === "racing" && !swimLaneFinished ? "🏁 Race in progress" :
+                           swimLaneFinished ? `✓ Recorded — waiting for next heat` :
+                           "Heat finished"}
+                        </div>
+                      </div>
+
+                      {/* STOP button — big phone-friendly */}
                       <button
                         disabled={status !== "racing" || swimLaneFinished}
                         onClick={() => {
@@ -7306,9 +7337,17 @@
                           rtdb.ref(`swimLive/${swimLaneCode}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
                           setSwimLaneFinished(true);
                         }}
-                        style={{ width:"100%", padding:"20px", fontSize:18, fontWeight:700, letterSpacing:2, borderRadius:8, cursor: status === "racing" && !swimLaneFinished ? "pointer" : "default", background: swimLaneFinished ? "rgba(0,174,239,0.1)" : status === "racing" ? "rgba(0,174,239,0.2)" : "rgba(90,134,168,0.1)", border:`2px solid ${swimLaneFinished ? "#00aeef" : status === "racing" ? "#00aeef" : "rgba(90,134,168,0.3)"}`, color: swimLaneFinished ? "#00aeef" : status === "racing" ? "#e8f4fb" : "#5a86a8", marginBottom:14 }}>
-                        {swimLaneFinished ? "✓ Finish Recorded" : "■ FINISH"}
-                        {!swimLaneFinished && status === "racing" && <span style={{ fontSize:12, fontWeight:400, marginLeft:10, opacity:0.7 }}>or press {swimClickerKey === " " ? "Space" : swimClickerKey}</span>}
+                        style={{
+                          width:"100%", padding:"32px 20px", fontSize:22, fontWeight:900, letterSpacing:3,
+                          borderRadius:16, marginBottom:16, userSelect:"none", WebkitUserSelect:"none",
+                          cursor: status === "racing" && !swimLaneFinished ? "pointer" : "default",
+                          background: swimLaneFinished ? "rgba(0,174,239,0.08)" : status === "racing" ? "rgba(239,68,68,0.18)" : "rgba(90,134,168,0.08)",
+                          border: `3px solid ${swimLaneFinished ? "#00aeef" : status === "racing" ? "#ef4444" : "rgba(90,134,168,0.2)"}`,
+                          color: swimLaneFinished ? "#00aeef" : status === "racing" ? "#fca5a5" : "#3a6080",
+                          boxShadow: status === "racing" && !swimLaneFinished ? "0 0 32px rgba(239,68,68,0.25)" : "none",
+                          transition:"all 0.15s"
+                        }}>
+                        {swimLaneFinished ? "✓ FINISH RECORDED" : status === "racing" ? "⏹ STOP" : "■ STOP"}
                       </button>
 
                       {/* Clicker configuration */}
@@ -7341,7 +7380,7 @@
                         </div>
                       </div>
                     </div>
-                  )}
+                  );})()}
                 </div>
               );
             })()}
