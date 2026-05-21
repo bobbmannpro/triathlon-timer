@@ -242,6 +242,8 @@
         const lines = text.split(/\r?\n/);
         let meetName = "";
         const events = {};
+        const swimmers = {}; // key: "firstName|lastName|team"
+        let idCounter = 0;
         for (const line of lines) {
           if (line.length < 2) continue;
           const rec = line.substring(0, 2);
@@ -284,6 +286,23 @@
               age: isNaN(age) ? 0 : age,
               team, seedTime, seedMs, finalMs: null, dq: false, scratch: false
             });
+            // Build meet roster entry
+            const swKey = `${firstName}|${lastName}|${team}`;
+            if (!swimmers[swKey]) {
+              swimmers[swKey] = {
+                id: `me_imp_${++idCounter}`,
+                athleteId: null,
+                name: `${firstName} ${lastName}`.trim(),
+                firstName, lastName, team,
+                age: isNaN(age) ? 0 : age,
+                gender: events[eventNum]?.gender || "Girls",
+                ageGroup: events[eventNum]?.ageGroup || "Open",
+                events: []
+              };
+            }
+            if (!swimmers[swKey].events.some(e => e.eventNum === eventNum)) {
+              swimmers[swKey].events.push({ eventNum, seedMs, seedTime });
+            }
           }
         }
         return {
@@ -291,16 +310,19 @@
           events: Object.values(events).map(ev => ({
             ...ev,
             heats: Object.values(ev.heats).sort((a,b) => a.heatNum - b.heatNum)
-          })).sort((a,b) => a.eventNum - b.eventNum)
+          })).sort((a,b) => a.eventNum - b.eventNum),
+          meetEntries: Object.values(swimmers)
         };
       }
 
       function parseSwimCsv(text) {
         const lines = text.split(/\r?\n/).filter(l => l.trim());
-        if (lines.length < 2) return { meetName: "Imported Meet", events: [] };
+        if (lines.length < 2) return { meetName: "Imported Meet", events: [], meetEntries: [] };
         const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
         const idx = (name) => headers.indexOf(name.toLowerCase());
         const events = {};
+        const swimmers = {};
+        let idCounter = 0;
         for (let i = 1; i < lines.length; i++) {
           const cols = lines[i].split(",").map(c => c.trim());
           const get = (name) => { const j = idx(name); return j >= 0 ? cols[j] || "" : ""; };
@@ -309,6 +331,11 @@
           const lane     = parseInt(get("lane"), 10) || 1;
           const seedTimeStr = get("seedtime");
           const seedMs = parseSeedTime(seedTimeStr);
+          const lastName  = get("lastname");
+          const firstName = get("firstname");
+          const team      = get("team");
+          const age       = parseInt(get("age"), 10) || 0;
+          const seedTime  = seedMs ? formatSwimTime(seedMs) : (seedTimeStr || "NT");
           if (!events[eventNum]) {
             events[eventNum] = {
               eventNum,
@@ -321,23 +348,35 @@
             };
           }
           if (!events[eventNum].heats[heatNum]) events[eventNum].heats[heatNum] = { heatNum, lanes: [] };
-          const lastName  = get("lastname");
-          const firstName = get("firstname");
           events[eventNum].heats[heatNum].lanes.push({
             lane, lastName, firstName,
             name: `${firstName} ${lastName}`.trim(),
-            age: parseInt(get("age"), 10) || 0,
-            team: get("team"),
-            seedTime: seedMs ? formatSwimTime(seedMs) : (seedTimeStr || "NT"),
-            seedMs, finalMs: null, dq: false, scratch: false
+            age, team, seedTime, seedMs, finalMs: null, dq: false, scratch: false
           });
+          // Build roster entry
+          const swKey = `${firstName}|${lastName}|${team}`;
+          if (!swimmers[swKey]) {
+            swimmers[swKey] = {
+              id: `me_imp_${++idCounter}`,
+              athleteId: null,
+              name: `${firstName} ${lastName}`.trim(),
+              firstName, lastName, team, age,
+              gender: get("gender") || "Mixed",
+              ageGroup: get("agegroup") || "Open",
+              events: []
+            };
+          }
+          if (!swimmers[swKey].events.some(e => e.eventNum === eventNum)) {
+            swimmers[swKey].events.push({ eventNum, seedMs, seedTime });
+          }
         }
         return {
           meetName: "Imported Meet",
           events: Object.values(events).map(ev => ({
             ...ev,
             heats: Object.values(ev.heats).sort((a,b) => a.heatNum - b.heatNum)
-          })).sort((a,b) => a.eventNum - b.eventNum)
+          })).sort((a,b) => a.eventNum - b.eventNum),
+          meetEntries: Object.values(swimmers)
         };
       }
 
@@ -6742,9 +6781,34 @@
                   } else {
                     parsed = parseSwimCsv(text);
                   }
+                  // Link meetEntries to existing swimAthletes by name; create new profiles for unknowns
+                  const rawEntries = parsed.meetEntries || [];
+                  const newProfiles = [];
+                  const linkedEntries = rawEntries.map(entry => {
+                    const existing = swimAthletes.find(a =>
+                      a.name.toLowerCase() === entry.name.toLowerCase() &&
+                      (!entry.team || !a.team || a.team.toLowerCase() === entry.team.toLowerCase())
+                    );
+                    if (existing) return { ...entry, athleteId: existing.id };
+                    const newAth = {
+                      id: `swa_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
+                      name: entry.name, firstName: entry.firstName, lastName: entry.lastName,
+                      team: entry.team, age: entry.age || 0,
+                      gender: entry.gender || "Girls", ageGroup: entry.ageGroup || "Open",
+                      personalBests: {}, timeHistory: []
+                    };
+                    newProfiles.push(newAth);
+                    return { ...entry, athleteId: newAth.id };
+                  });
+                  if (newProfiles.length > 0) {
+                    persistSwimAthletes([...swimAthletes, ...newProfiles]);
+                  }
                   setSwimMeet(m => ({
-                    ...parsed,
-                    pool: m.pool
+                    ...m,
+                    meetName: parsed.meetName || m.meetName,
+                    events: parsed.events,
+                    meetEntries: linkedEntries,
+                    lanes: m.lanes || 8
                   }));
                   setSwimExpandedEvents({});
                 }
