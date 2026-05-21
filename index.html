@@ -887,7 +887,7 @@
         const manualLogoInputRef = useRef(null);
 
         // Swim meet state
-        const [swimMeet, setSwimMeet] = useState({ meetName: "", pool: "25y", lanes: 8, events: [] });
+        const [swimMeet, setSwimMeet] = useState({ meetName: "", pool: "25y", lanes: 8, events: [], meetEntries: [] });
         const [swimView, setSwimView] = useState("setup");
         const [swimActiveEvent, setSwimActiveEvent] = useState(null);
         const [swimActiveHeat, setSwimActiveHeat]   = useState(null);
@@ -915,6 +915,9 @@
         const [swimNewAthlete, setSwimNewAthlete] = useState({ name:"", team:"", ageGroup:"Open", gender:"Girls" });
         const [swimAddSwimmerEvt, setSwimAddSwimmerEvt] = useState(null);
         const [swimNewSwimmerForm, setSwimNewSwimmerForm] = useState({ name:"", team:"", seedTime:"" });
+        const [swimRosterOpen, setSwimRosterOpen] = useState(false);
+        const [swimRosterEditId, setSwimRosterEditId] = useState(null);
+        const [swimNewEntry, setSwimNewEntry] = useState({ name:"", team:"", age:"", gender:"Girls", ageGroup:"Open", events:{} });
         const swimFileInputRef = useRef(null);
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
         const [swimResultsEvent, setSwimResultsEvent] = useState(null);
@@ -6662,6 +6665,64 @@
                   }));
                 }
 
+                function addToMeetRoster() {
+                  const { name, team, age, gender, ageGroup, events: evts } = swimNewEntry;
+                  if (!name.trim()) return;
+                  const eventEntries = Object.entries(evts)
+                    .filter(([, v]) => v.checked)
+                    .map(([eventNum, v]) => {
+                      const seedMs = parseSeedTime(v.seedTime) || null;
+                      return { eventNum: parseInt(eventNum), seedMs, seedTime: seedMs ? formatSwimTime(seedMs) : "NT" };
+                    });
+                  const entry = {
+                    id: swimRosterEditId || `me_${Date.now()}`,
+                    name: name.trim(),
+                    firstName: name.trim().split(" ")[0] || "",
+                    lastName: name.trim().split(" ").slice(1).join(" ") || "",
+                    team: team.trim(),
+                    age: parseInt(age) || 0,
+                    gender, ageGroup,
+                    events: eventEntries
+                  };
+                  setSwimMeet(m => {
+                    const existing = (m.meetEntries || []);
+                    const updated = swimRosterEditId
+                      ? existing.map(e => e.id === swimRosterEditId ? entry : e)
+                      : [...existing, entry];
+                    return { ...m, meetEntries: updated };
+                  });
+                  setSwimNewEntry({ name:"", team:"", age:"", gender:"Girls", ageGroup:"Open", events:{} });
+                  setSwimRosterOpen(false);
+                  setSwimRosterEditId(null);
+                }
+
+                function removeMeetEntry(id) {
+                  setSwimMeet(m => ({ ...m, meetEntries: (m.meetEntries || []).filter(e => e.id !== id) }));
+                }
+
+                function autoSeedFromRoster() {
+                  const numLanes = swimMeet.lanes || 8;
+                  const roster = swimMeet.meetEntries || [];
+                  if (roster.length === 0) return;
+                  setSwimMeet(m => ({
+                    ...m,
+                    events: m.events.map(ev => {
+                      const entryList = roster
+                        .filter(s => s.events.some(e => e.eventNum === ev.eventNum))
+                        .map(s => {
+                          const evEntry = s.events.find(e => e.eventNum === ev.eventNum);
+                          return {
+                            name: s.name, firstName: s.firstName, lastName: s.lastName,
+                            team: s.team, age: s.age || 0,
+                            seedMs: evEntry?.seedMs || null, seedTime: evEntry?.seedTime || "NT"
+                          };
+                        });
+                      if (entryList.length === 0) return ev;
+                      return { ...ev, entries: entryList, heats: autoSeedEvent({ ...ev, entries: entryList }, numLanes) };
+                    })
+                  }));
+                }
+
                 async function importMeetFile(file) {
                   const text = await file.text();
                   let parsed;
@@ -7066,6 +7127,121 @@
                                   setSwimAddEventOpen(false);
                                 }}>
                                 Add Event
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* ── Meet Roster ── */}
+                        <div style={S.card}>
+                          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: swimRosterOpen || (swimMeet.meetEntries||[]).length > 0 ? 10 : 0 }}>
+                            <div style={S.label}>Meet Roster {(swimMeet.meetEntries||[]).length > 0 ? `(${swimMeet.meetEntries.length})` : ""}</div>
+                            <div style={{ display:"flex", gap:8 }}>
+                              {(swimMeet.meetEntries||[]).length > 0 && swimMeet.events.length > 0 && (
+                                <button onClick={autoSeedFromRoster}
+                                  style={{ fontSize:11, color:"#48cae4", background:"none", border:"none", cursor:"pointer" }}>🌱 Seed from Roster</button>
+                              )}
+                              <button onClick={() => { setSwimRosterOpen(o => !o); setSwimRosterEditId(null); setSwimNewEntry({ name:"", team:"", age:"", gender:"Girls", ageGroup:"Open", events:{} }); }}
+                                style={{ fontSize:11, color:"#00aeef", background:"none", border:"none", cursor:"pointer" }}>
+                                {swimRosterOpen ? "✕ Cancel" : "+ Add Swimmer"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Roster list */}
+                          {(swimMeet.meetEntries||[]).map(s => (
+                            <div key={s.id} style={{ display:"flex", gap:8, padding:"7px 0", alignItems:"flex-start", borderBottom:"1px solid rgba(0,174,239,0.06)" }}>
+                              <div style={{ flex:1 }}>
+                                <span style={{ fontSize:13, color:"#e8f4fb", fontWeight:600 }}>{s.name}</span>
+                                {s.team ? <span style={{ fontSize:11, color:"#5a86a8", marginLeft:8 }}>{s.team}</span> : null}
+                                {s.age ? <span style={{ fontSize:11, color:"#3a6080", marginLeft:6 }}>age {s.age}</span> : null}
+                                <div style={{ fontSize:11, color:"#3a6080", marginTop:2 }}>
+                                  {s.events.length > 0
+                                    ? `Events: ${s.events.map(e => `${e.eventNum} (${e.seedTime})`).join(", ")}`
+                                    : <span style={{ color:"#f87171" }}>No events selected</span>}
+                                </div>
+                              </div>
+                              <button onClick={() => {
+                                const evts = {};
+                                s.events.forEach(e => { evts[e.eventNum] = { checked:true, seedTime: e.seedTime === "NT" ? "" : e.seedTime }; });
+                                setSwimNewEntry({ name:s.name, team:s.team, age:String(s.age||""), gender:s.gender||"Girls", ageGroup:s.ageGroup||"Open", events:evts });
+                                setSwimRosterEditId(s.id);
+                                setSwimRosterOpen(true);
+                              }} style={{ background:"none", border:"none", color:"#5a86a8", cursor:"pointer", fontSize:12, padding:"2px 4px" }}>✏️</button>
+                              <button onClick={() => removeMeetEntry(s.id)}
+                                style={{ background:"none", border:"none", color:"#f87171", cursor:"pointer", fontSize:16, padding:"0 4px" }}>×</button>
+                            </div>
+                          ))}
+
+                          {/* Add / edit form */}
+                          {swimRosterOpen && (
+                            <div style={{ marginTop:10, padding:"12px", background:"rgba(0,174,239,0.04)", borderRadius:6, border:"1px solid rgba(0,174,239,0.1)" }}>
+                              {/* Pick from global roster */}
+                              {swimAthletes.length > 0 && !swimRosterEditId && (
+                                <div style={{ marginBottom:8 }}>
+                                  <select onChange={e => {
+                                    if (!e.target.value) return;
+                                    const a = swimAthletes.find(x => x.id === e.target.value);
+                                    if (a) setSwimNewEntry(f => ({ ...f, name:a.name, team:a.team||"", gender:a.gender||"Girls", ageGroup:a.ageGroup||"Open" }));
+                                    e.target.value = "";
+                                  }} style={{ ...S.input, marginBottom:0 }}>
+                                    <option value="">— Pick from athlete roster —</option>
+                                    {swimAthletes.map(a => <option key={a.id} value={a.id}>{a.name} ({a.team || "no team"})</option>)}
+                                  </select>
+                                </div>
+                              )}
+                              {/* Swimmer info */}
+                              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+                                <input placeholder="Full name *" value={swimNewEntry.name}
+                                  onChange={e => setSwimNewEntry(f => ({...f, name:e.target.value}))}
+                                  style={{ ...S.input, flex:2, minWidth:140, marginBottom:0 }} />
+                                <input placeholder="Team" value={swimNewEntry.team}
+                                  onChange={e => setSwimNewEntry(f => ({...f, team:e.target.value}))}
+                                  style={{ ...S.input, flex:1, minWidth:90, marginBottom:0 }} />
+                                <input placeholder="Age" type="number" min={1} max={99} value={swimNewEntry.age}
+                                  onChange={e => setSwimNewEntry(f => ({...f, age:e.target.value}))}
+                                  style={{ ...S.input, width:60, marginBottom:0 }} />
+                                <select value={swimNewEntry.gender} onChange={e => setSwimNewEntry(f => ({...f, gender:e.target.value}))}
+                                  style={{ ...S.input, marginBottom:0 }}>
+                                  {["Girls","Boys","Mixed"].map(g => <option key={g} value={g}>{g}</option>)}
+                                </select>
+                              </div>
+                              {/* Event entries */}
+                              {swimMeet.events.length > 0 ? (
+                                <div style={{ marginBottom:8 }}>
+                                  <div style={{ ...S.label, marginBottom:6 }}>Events &amp; Seed Times</div>
+                                  {swimMeet.events.map(ev => {
+                                    const checked = !!(swimNewEntry.events[ev.eventNum]?.checked);
+                                    const seedVal = swimNewEntry.events[ev.eventNum]?.seedTime || "";
+                                    return (
+                                      <div key={ev.eventNum} style={{ display:"flex", gap:8, alignItems:"center", padding:"4px 0", borderBottom:"1px solid rgba(0,174,239,0.04)" }}>
+                                        <input type="checkbox" checked={checked}
+                                          onChange={e => setSwimNewEntry(f => ({
+                                            ...f,
+                                            events: { ...f.events, [ev.eventNum]: { ...(f.events[ev.eventNum]||{}), checked:e.target.checked } }
+                                          }))} style={{ accentColor:"#00aeef", width:16, height:16, cursor:"pointer" }} />
+                                        <span style={{ fontSize:12, color: checked ? "#e8f4fb" : "#5a86a8", flex:1 }}>
+                                          <span style={{ color:"#00aeef", marginRight:4 }}>#{ev.eventNum}</span>
+                                          {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}
+                                        </span>
+                                        {checked && (
+                                          <input placeholder="Seed (NT or 1:23.45)" value={seedVal}
+                                            onChange={e => setSwimNewEntry(f => ({
+                                              ...f,
+                                              events: { ...f.events, [ev.eventNum]: { ...(f.events[ev.eventNum]||{}), seedTime:e.target.value } }
+                                            }))}
+                                            style={{ ...S.input, width:130, marginBottom:0, fontSize:11 }} />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize:11, color:"#5a86a8", marginBottom:8 }}>Add events first, then assign them here.</div>
+                              )}
+                              <button onClick={addToMeetRoster} disabled={!swimNewEntry.name.trim()}
+                                style={{ ...btnStyle("#00aeef"), padding:"8px 20px", fontSize:12, opacity: swimNewEntry.name.trim() ? 1 : 0.4 }}>
+                                {swimRosterEditId ? "Save Changes" : "Add to Meet"}
                               </button>
                             </div>
                           )}
