@@ -378,6 +378,54 @@
         return Math.random().toString(36).substring(2, 8).toUpperCase();
       }
 
+      function getLaneOrder(numLanes) {
+        const order = [];
+        const center = Math.ceil(numLanes / 2);
+        order.push(center);
+        let left = center - 1, right = center + 1;
+        while (order.length < numLanes) {
+          if (right <= numLanes) { order.push(right); right++; }
+          if (left >= 1 && order.length < numLanes) { order.push(left); left--; }
+        }
+        return order;
+      }
+
+      function autoSeedEvent(event, numLanes) {
+        let rawEntries;
+        if (event.entries && event.entries.length > 0) {
+          rawEntries = event.entries;
+        } else {
+          rawEntries = event.heats.flatMap(h => h.lanes).filter(l => l.name && l.name.trim());
+        }
+        if (rawEntries.length === 0) return event.heats;
+
+        const timed = rawEntries.filter(e => e.seedMs != null).sort((a, b) => a.seedMs - b.seedMs);
+        const nt = rawEntries.filter(e => e.seedMs == null).sort(() => Math.random() - 0.5);
+        const allSorted = [...nt, ...[...timed].reverse()];
+
+        const numHeats = Math.max(1, Math.ceil(allSorted.length / numLanes));
+        const laneOrder = getLaneOrder(numLanes);
+        const heats = [];
+
+        for (let hi = 0; hi < numHeats; hi++) {
+          const chunk = allSorted.slice(hi * numLanes, (hi + 1) * numLanes);
+          const sortedChunk = [...chunk].sort((a, b) => (a.seedMs ?? Infinity) - (b.seedMs ?? Infinity));
+          const lanes = sortedChunk.map((sw, idx) => ({
+            lane: laneOrder[idx],
+            name: sw.name || `${sw.firstName||""} ${sw.lastName||""}`.trim(),
+            firstName: sw.firstName || (sw.name||"").split(" ")[0] || "",
+            lastName: sw.lastName || (sw.name||"").split(" ").slice(1).join(" ") || "",
+            team: sw.team || "",
+            age: sw.age || 0,
+            seedTime: sw.seedMs ? formatSwimTime(sw.seedMs) : "NT",
+            seedMs: sw.seedMs || null,
+            finalMs: null, dq: false, scratch: false
+          })).sort((a, b) => a.lane - b.lane);
+          heats.push({ heatNum: hi + 1, lanes });
+        }
+        return heats;
+      }
+
       // ── Style helpers ────────────────────────────────────────────────────────
       function btnStyle(color, outline = false) {
         return {
@@ -839,7 +887,7 @@
         const manualLogoInputRef = useRef(null);
 
         // Swim meet state
-        const [swimMeet, setSwimMeet] = useState({ meetName: "", pool: "25y", events: [] });
+        const [swimMeet, setSwimMeet] = useState({ meetName: "", pool: "25y", lanes: 8, events: [] });
         const [swimView, setSwimView] = useState("setup");
         const [swimActiveEvent, setSwimActiveEvent] = useState(null);
         const [swimActiveHeat, setSwimActiveHeat]   = useState(null);
@@ -865,6 +913,8 @@
         });
         const [swimAthleteView, setSwimAthleteView] = useState("list");
         const [swimNewAthlete, setSwimNewAthlete] = useState({ name:"", team:"", ageGroup:"Open", gender:"Girls" });
+        const [swimAddSwimmerEvt, setSwimAddSwimmerEvt] = useState(null);
+        const [swimNewSwimmerForm, setSwimNewSwimmerForm] = useState({ name:"", team:"", seedTime:"" });
         const swimFileInputRef = useRef(null);
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
         const [swimResultsEvent, setSwimResultsEvent] = useState(null);
@@ -6563,6 +6613,55 @@
                   localStorage.setItem("swim-athletes", JSON.stringify(athletes));
                 }
 
+                function seedOneEvent(eventNum) {
+                  const numLanes = swimMeet.lanes || 8;
+                  setSwimMeet(m => ({
+                    ...m,
+                    events: m.events.map(ev => ev.eventNum === eventNum
+                      ? { ...ev, heats: autoSeedEvent(ev, numLanes) }
+                      : ev)
+                  }));
+                }
+
+                function seedAllEvents() {
+                  const numLanes = swimMeet.lanes || 8;
+                  setSwimMeet(m => ({
+                    ...m,
+                    events: m.events.map(ev => ({ ...ev, heats: autoSeedEvent(ev, numLanes) }))
+                  }));
+                }
+
+                function addSwimmerEntry(eventNum) {
+                  const { name, team, seedTime } = swimNewSwimmerForm;
+                  if (!name.trim()) return;
+                  const seedMs = parseSeedTime(seedTime) || null;
+                  const entry = {
+                    name: name.trim(),
+                    team: team.trim(),
+                    seedMs,
+                    seedTime: seedMs ? formatSwimTime(seedMs) : "NT",
+                    firstName: name.trim().split(" ")[0] || "",
+                    lastName: name.trim().split(" ").slice(1).join(" ") || "",
+                    age: 0
+                  };
+                  setSwimMeet(m => ({
+                    ...m,
+                    events: m.events.map(ev => ev.eventNum === eventNum
+                      ? { ...ev, entries: [...(ev.entries || []), entry] }
+                      : ev)
+                  }));
+                  setSwimNewSwimmerForm({ name:"", team:"", seedTime:"" });
+                }
+
+                function removeSwimmerEntry(eventNum, entryIdx) {
+                  setSwimMeet(m => ({
+                    ...m,
+                    events: m.events.map(ev => ev.eventNum === eventNum
+                      ? { ...ev, entries: (ev.entries || []).filter((_, i) => i !== entryIdx) }
+                      : ev)
+                  }));
+                }
+
                 async function importMeetFile(file) {
                   const text = await file.text();
                   let parsed;
@@ -6769,6 +6868,15 @@
                               </button>
                             ))}
                           </div>
+                          <div style={{...S.label, marginTop:12}}>Lanes per Pool</div>
+                          <div style={{ display:"flex", gap:6 }}>
+                            {[4,6,8,10].map(n => (
+                              <button key={n} onClick={() => setSwimMeet(m => ({...m, lanes:n}))}
+                                style={{ padding:"6px 14px", borderRadius:4, fontSize:12, fontWeight:700, border:"1px solid rgba(0,174,239,0.4)", background: (swimMeet.lanes||8) === n ? "rgba(0,174,239,0.2)" : "transparent", color: (swimMeet.lanes||8) === n ? "#00aeef" : "#5a86a8", cursor:"pointer" }}>
+                                {n}
+                              </button>
+                            ))}
+                          </div>
                         </div>
 
                         {/* Import */}
@@ -6788,11 +6896,16 @@
                           <div style={S.card}>
                             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
                               <div style={S.label}>Events ({swimMeet.events.length})</div>
-                              <button onClick={() => { const all = {}; swimMeet.events.forEach(ev => { all[ev.eventNum] = true; }); setSwimExpandedEvents(all); }}
-                                style={{ fontSize:11, color:"#5a86a8", background:"none", border:"none", cursor:"pointer" }}>Expand All</button>
+                              <div style={{ display:"flex", gap:8 }}>
+                                <button onClick={seedAllEvents}
+                                  style={{ fontSize:11, color:"#48cae4", background:"none", border:"none", cursor:"pointer" }}>🌱 Seed All</button>
+                                <button onClick={() => { const all = {}; swimMeet.events.forEach(ev => { all[ev.eventNum] = true; }); setSwimExpandedEvents(all); }}
+                                  style={{ fontSize:11, color:"#5a86a8", background:"none", border:"none", cursor:"pointer" }}>Expand All</button>
+                              </div>
                             </div>
                             {swimMeet.events.map(ev => {
                               const expanded = !!swimExpandedEvents[ev.eventNum];
+                              const showAddForm = swimAddSwimmerEvt === ev.eventNum;
                               return (
                                 <div key={ev.eventNum} style={{ background:"#071829", borderRadius:6, marginBottom:6, overflow:"hidden", border:"1px solid rgba(0,174,239,0.1)" }}>
                                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", cursor:"pointer" }}
@@ -6800,9 +6913,17 @@
                                     <div>
                                       <span style={{ color:"#00aeef", fontWeight:700, marginRight:8, fontSize:12 }}>Event {ev.eventNum}</span>
                                       <span style={{ color:"#e8f4fb", fontSize:13 }}>{ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</span>
-                                      <span style={{ color:"#5a86a8", fontSize:11, marginLeft:8 }}>{ev.heats.length} heat{ev.heats.length !== 1 ? "s" : ""}</span>
+                                      <span style={{ color:"#5a86a8", fontSize:11, marginLeft:8 }}>{ev.heats.length} heat{ev.heats.length !== 1 ? "s" : ""}{ev.entries && ev.entries.length > 0 ? ` · ${ev.entries.length} entries` : ""}</span>
                                     </div>
-                                    <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                                    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                                      <button onClick={e => { e.stopPropagation(); seedOneEvent(ev.eventNum); }}
+                                        style={{ fontSize:11, padding:"4px 10px", borderRadius:4, background:"rgba(72,202,228,0.1)", border:"1px solid rgba(72,202,228,0.3)", color:"#48cae4", cursor:"pointer", fontWeight:700 }}>
+                                        🌱 Seed
+                                      </button>
+                                      <button onClick={e => { e.stopPropagation(); setSwimAddSwimmerEvt(x => x === ev.eventNum ? null : ev.eventNum); setSwimNewSwimmerForm({ name:"", team:"", seedTime:"" }); }}
+                                        style={{ fontSize:11, padding:"4px 10px", borderRadius:4, background: showAddForm ? "rgba(0,174,239,0.2)" : "rgba(0,174,239,0.08)", border:"1px solid rgba(0,174,239,0.3)", color:"#00aeef", cursor:"pointer", fontWeight:700 }}>
+                                        + Swimmer
+                                      </button>
                                       <button onClick={e => { e.stopPropagation(); setSwimActiveEvent(ev.eventNum); setSwimActiveHeat(ev.heats[0] ? ev.heats[0].heatNum : 1); setSwimView("race"); }}
                                         style={{ fontSize:11, padding:"4px 10px", borderRadius:4, background:"rgba(0,174,239,0.15)", border:"1px solid rgba(0,174,239,0.3)", color:"#00aeef", cursor:"pointer", fontWeight:700 }}>
                                         ▶ Start
@@ -6823,6 +6944,57 @@
                                       ))}
                                     </div>
                                   ))}
+                                  {/* Entries list */}
+                                  {ev.entries && ev.entries.length > 0 && (
+                                    <div style={{ padding:"6px 16px 8px", borderTop:"1px solid rgba(0,174,239,0.08)" }}>
+                                      <div style={{ fontSize:11, color:"#48cae4", fontWeight:700, marginBottom:4 }}>
+                                        Entries ({ev.entries.length}) — click 🌱 Seed to assign heats/lanes
+                                      </div>
+                                      {ev.entries.map((en, idx) => (
+                                        <div key={idx} style={{ display:"flex", gap:8, fontSize:12, color:"#e8f4fb", padding:"2px 0", alignItems:"center" }}>
+                                          <span style={{ flex:1 }}>{en.name}</span>
+                                          <span style={{ color:"#5a86a8", fontSize:11 }}>{en.team}</span>
+                                          <span style={{ color:"#3a6080", width:60, textAlign:"right" }}>{en.seedTime || "NT"}</span>
+                                          <button onClick={() => removeSwimmerEntry(ev.eventNum, idx)}
+                                            style={{ background:"none", border:"none", color:"#f87171", cursor:"pointer", fontSize:14, padding:"0 4px" }}>×</button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {/* Add-swimmer form */}
+                                  {showAddForm && (
+                                    <div style={{ padding:"10px 16px", borderTop:"1px solid rgba(0,174,239,0.1)", background:"rgba(0,174,239,0.04)" }}>
+                                      {swimAthletes.length > 0 && (
+                                        <div style={{ marginBottom:8 }}>
+                                          <select onChange={e => {
+                                            if (!e.target.value) return;
+                                            const a = swimAthletes.find(x => x.id === e.target.value);
+                                            if (a) setSwimNewSwimmerForm(f => ({ ...f, name: a.name, team: a.team }));
+                                            e.target.value = "";
+                                          }} style={{ ...S.input, marginBottom:0 }}>
+                                            <option value="">— Pick from roster —</option>
+                                            {swimAthletes.map(a => <option key={a.id} value={a.id}>{a.name} ({a.team || "no team"})</option>)}
+                                          </select>
+                                        </div>
+                                      )}
+                                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                                        <input placeholder="Name *" value={swimNewSwimmerForm.name}
+                                          onChange={e => setSwimNewSwimmerForm(f => ({...f, name:e.target.value}))}
+                                          style={{ ...S.input, flex:2, minWidth:120, marginBottom:0 }} />
+                                        <input placeholder="Team" value={swimNewSwimmerForm.team}
+                                          onChange={e => setSwimNewSwimmerForm(f => ({...f, team:e.target.value}))}
+                                          style={{ ...S.input, flex:1, minWidth:80, marginBottom:0 }} />
+                                        <input placeholder="Seed (1:23.45 or NT)" value={swimNewSwimmerForm.seedTime}
+                                          onChange={e => setSwimNewSwimmerForm(f => ({...f, seedTime:e.target.value}))}
+                                          style={{ ...S.input, flex:1, minWidth:100, marginBottom:0 }} />
+                                        <button onClick={() => addSwimmerEntry(ev.eventNum)}
+                                          disabled={!swimNewSwimmerForm.name.trim()}
+                                          style={{ ...btnStyle("#00aeef"), padding:"8px 16px", fontSize:12, opacity: swimNewSwimmerForm.name.trim() ? 1 : 0.4 }}>
+                                          Add
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
