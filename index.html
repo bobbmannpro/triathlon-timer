@@ -7,6 +7,7 @@
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%23071829'/><text x='50' y='72' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='44' fill='%2300aeef'>T</text></svg>" />
     <meta name="theme-color" content="#071829" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Timeathon" />
@@ -21,7 +22,16 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+    <!-- Pinned to 7.x on purpose: Babel 8's preset-react defaults to runtime:"automatic",
+         which emits `import {jsx} from "react/jsx-runtime"` — illegal in a classic script. -->
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.29.7/babel.min.js"></script>
+    <script>
+      // Force the classic React.createElement transform regardless of Babel version,
+      // so the app keeps working even if the pin above is ever bumped to 8.x.
+      Babel.registerPreset("react-classic", {
+        presets: [[Babel.availablePresets["react"], { runtime: "classic" }]]
+      });
+    </script>
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       body { background: #071829; }
@@ -64,7 +74,7 @@
       var rtdb = firebase.database();
       var storage = firebase.storage();
     </script>
-    <script type="text/babel" data-presets="react">
+    <script type="text/babel" data-presets="react-classic">
       const { useState, useEffect, useRef, useCallback } = React;
 
       // Run is the final segment — logging it ends the race for that athlete
@@ -318,32 +328,51 @@
       function parseSwimCsv(text) {
         const lines = text.split(/\r?\n/).filter(l => l.trim());
         if (lines.length < 2) return { meetName: "Imported Meet", events: [], meetEntries: [] };
-        const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
-        const idx = (name) => headers.indexOf(name.toLowerCase());
+        // Header names vary between Hy-Tek/TM exports ("Event" vs "Event Num",
+        // "Last Name" vs "lastname"), so match on a space/underscore-stripped form
+        // and accept a list of aliases per field.
+        const norm = (s) => s.trim().toLowerCase().replace(/[\s_#]+/g, "");
+        const headers = lines[0].split(",").map(norm);
         const events = {};
         const swimmers = {};
         let idCounter = 0;
+        const autoEventNums = {};   // composite event key → assigned event number
+        let autoEventCount = 0;
         for (let i = 1; i < lines.length; i++) {
           const cols = lines[i].split(",").map(c => c.trim());
-          const get = (name) => { const j = idx(name); return j >= 0 ? cols[j] || "" : ""; };
-          const eventNum = parseInt(get("eventnum"), 10) || i;
-          const heatNum  = parseInt(get("heatnum"), 10) || 1;
+          const get = (...names) => {
+            for (const n of names) {
+              const j = headers.indexOf(norm(n));
+              if (j >= 0 && cols[j]) return cols[j];
+            }
+            return "";
+          };
+          const heatNum  = parseInt(get("heat", "heatnum", "heatnumber"), 10) || 1;
           const lane     = parseInt(get("lane"), 10) || 1;
-          const seedTimeStr = get("seedtime");
+          const seedTimeStr = get("seedtime", "seed");
           const seedMs = parseSeedTime(seedTimeStr);
-          const lastName  = get("lastname");
-          const firstName = get("firstname");
-          const team      = get("team");
+          const lastName  = get("lastname", "last");
+          const firstName = get("firstname", "first");
+          const team      = get("team", "club", "school");
           const age       = parseInt(get("age"), 10) || 0;
           const seedTime  = seedMs ? formatSwimTime(seedMs) : (seedTimeStr || "NT");
+          const gender    = get("gender", "sex") || "Mixed";
+          const ageGroup  = get("agegroup", "division", "div") || "Open";
+          const distance  = parseInt(get("distance", "dist"), 10) || 100;
+          const stroke    = get("stroke") || "Freestyle";
+          const course    = get("course") || "25y";
+          // Prefer an explicit event number; otherwise group rows by the event's
+          // defining fields so a CSV without an event column doesn't produce one
+          // event per swimmer.
+          let eventNum = parseInt(get("event", "eventnum", "eventnumber"), 10);
+          if (!eventNum) {
+            const key = [gender, ageGroup, distance, stroke, course].join("|");
+            if (!autoEventNums[key]) autoEventNums[key] = ++autoEventCount;
+            eventNum = autoEventNums[key];
+          }
           if (!events[eventNum]) {
             events[eventNum] = {
-              eventNum,
-              gender: get("gender") || "Mixed",
-              ageGroup: get("agegroup") || "Open",
-              distance: parseInt(get("distance"), 10) || 100,
-              stroke: get("stroke") || "Freestyle",
-              course: get("course") || "25y",
+              eventNum, gender, ageGroup, distance, stroke, course,
               heats: {}
             };
           }
@@ -361,8 +390,7 @@
               athleteId: null,
               name: `${firstName} ${lastName}`.trim(),
               firstName, lastName, team, age,
-              gender: get("gender") || "Mixed",
-              ageGroup: get("agegroup") || "Open",
+              gender, ageGroup,
               events: []
             };
           }
