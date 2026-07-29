@@ -84,6 +84,39 @@
       const DEFAULT_AGE_GROUPS = ["8 & Under", "9-10", "11-12", "13-14", "15+"];
       // LOGO_B64 is defined in the preceding plain <script> tag (keeps Babel fast)
 
+      // ── Bike Live Feed tuning ────────────────────────────────────────────────
+      // A phone GPS chip produces roughly one fix per second, so publishing faster
+      // than that just duplicates points at real cost in bandwidth and battery.
+      // Viewers interpolate between fixes at 60fps (see the rAF loop in the feed
+      // view), so 1 Hz already looks like continuous motion.
+      const BIKE_PUBLISH_MS      = 1000;  // while moving
+      const BIKE_IDLE_PUBLISH_MS = 5000;  // while stopped — nothing is changing
+      const BIKE_MOVING_MPS      = 0.5;   // below this we treat the rider as stopped
+      const BIKE_CRUMB_MIN_M     = 40;    // breadcrumb spacing for the stored trail
+      const BIKE_STALE_MS        = 20000; // no frame for this long ⇒ show "signal lost"
+
+      // ── Wahoo Cloud API (post-ride only — NOT live) ──────────────────────────
+      // The Wahoo Cloud API has no live-position endpoint: workout data (including
+      // GPS) only exists after a ride finishes and uploads, and webhooks fire on
+      // workout COMPLETION. So live tracking above comes from the rider's phone.
+      // This block is only for pulling her saved routes (to draw the planned course)
+      // and importing the ride summary afterwards.
+      //
+      // Requires an approved app: https://developers.wahooligan.com/cloud
+      // Paste clientId and flip enabled:true once approved.
+      //
+      // SECURITY: never put the client SECRET in this file. This page is public
+      // (GitHub Pages), so anyone could read it. The token exchange must happen on
+      // a server/function you control — point tokenProxy at it.
+      const WAHOO = {
+        enabled: false,
+        clientId: "",
+        tokenProxy: "",  // e.g. https://your-function.example.com/wahoo/token
+        redirectUri: (typeof location !== "undefined" ? location.origin + location.pathname : ""),
+        scopes: "user_read workouts_read routes_read offline_data",
+        authUrl: "https://api.wahooligan.com/oauth/authorize",
+      };
+
       // ── Formatting helpers ───────────────────────────────────────────────────
       function formatTime(ms) {
         if (ms === null || ms === undefined) return "--:--.-";
@@ -1034,6 +1067,47 @@
         const swimWatchPrevStatusRef = useRef(null);
         const [swimWatchChooserOpen, setSwimWatchChooserOpen] = useState(false);
 
+        // ── Bike Live Feed state ────────────────────────────────────────────────
+        // Single-rider GPS tracking with no timing/segments: viewers follow a dot
+        // on a map plus live sensor telemetry. Position comes from the rider's
+        // phone; cadence/power/HR come from the BLE sensor stack (see connectBleDevice).
+        const [bikeView, setBikeView]   = useState("home");   // home | setup | ride | feed
+        const [bikeFeedList, setBikeFeedList] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("bike-feeds") || "[]"); } catch(_) { return []; }
+        });
+        const [bikeDraft, setBikeDraft] = useState(null);     // feed being edited in Setup
+        const [bikeRideCode, setBikeRideCode] = useState(null); // feed the rider is publishing to
+        const [bikeRiding, setBikeRiding]     = useState(false);
+        const [bikeGpsStatus, setBikeGpsStatus] = useState("");
+        const [bikeLive, setBikeLive]         = useState(null); // rider's own latest frame
+        const [bikeElapsedMs, setBikeElapsedMs] = useState(0);
+        // Viewer side
+        const [bikeWatchCode, setBikeWatchCode] = useState("");
+        const [bikeWatchMeta, setBikeWatchMeta] = useState(null);
+        const [bikeWatchLive, setBikeWatchLive] = useState(null);
+        const [bikeWatchTrack, setBikeWatchTrack] = useState([]);
+        const [bikeWatchStatus, setBikeWatchStatus] = useState(null);
+        const [bikeWatchError, setBikeWatchError]   = useState("");
+        const [bikeFollowing, setBikeFollowing]     = useState(true);
+        const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
+
+        const bikeGpsWatchRef  = useRef(null);
+        const bikeLastPubRef   = useRef(0);
+        const bikeDistMRef     = useRef(0);
+        const bikePrevFixRef   = useRef(null);
+        const bikeLastCrumbRef = useRef(null);
+        const bikeStartedAtRef = useRef(null);
+        const bikeSensorRef    = useRef({ cadence: null, power: null, hr: null, sensorSpeed: null });
+        const bikeRideCodeRef  = useRef(null);
+        const bikeMapRef       = useRef(null);
+        const bikeMarkerRef    = useRef(null);
+        const bikeTrailLineRef = useRef(null);
+        const bikeRouteLineRef = useRef(null);
+        const bikeCpLayerRef   = useRef([]);
+        const bikeInterpRef    = useRef({ from: null, to: null, t0: 0, dur: BIKE_PUBLISH_MS });
+        const bikeFollowRef    = useRef(true);
+        const bikeMapElRef     = useRef(null);
+
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
         const offsetRef    = useRef(0);
@@ -1576,6 +1650,14 @@
                   setSavedAthletes(data.athletes); localStorage.setItem("tri-saved-athletes", JSON.stringify(data.athletes));
                 } else {
                   try { const c = localStorage.getItem("tri-saved-athletes"); if (c) { const a = JSON.parse(c); if (a.length > 0) { setSavedAthletes(a); rtdb.ref("users/" + user.uid + "/athletes").set(a).catch(console.error); } } } catch(_) {}
+                }
+
+                // Bike Live Feed configs: RTDB → localStorage fallback, then push local up
+                if (data.bikeFeeds && data.bikeFeeds.length > 0) {
+                  setBikeFeedList(data.bikeFeeds);
+                  localStorage.setItem("bike-feeds", JSON.stringify(data.bikeFeeds));
+                } else {
+                  try { const c = localStorage.getItem("bike-feeds"); if (c) { const b = JSON.parse(c); if (b.length > 0) { setBikeFeedList(b); rtdb.ref("users/" + user.uid + "/bikeFeeds").set(b).catch(console.error); } } } catch(_) {}
                 }
 
                 // Archive: RTDB → localStorage fallback
@@ -3549,6 +3631,353 @@
           padding: "8px 10px", color: "#e8f4fb", fontSize: 14, width: 80, outline: "none", textAlign: "center",
         };
 
+        // ── Bike Live Feed logic ────────────────────────────────────────────────
+        function newBikeFeed() {
+          return {
+            code: Math.random().toString(36).substring(2, 8).toUpperCase(),
+            riderName: "",
+            eventName: "",
+            bioText: "",
+            photoUrl: "",
+            bioLink: "",
+            units: "mi",
+            checkpoints: [],   // { name, lat, lng, note }
+            route: [],         // [[lat,lng], ...] optional planned course
+            createdAt: Date.now(),
+          };
+        }
+
+        function persistBikeFeeds(list) {
+          setBikeFeedList(list);
+          try { localStorage.setItem("bike-feeds", JSON.stringify(list)); } catch(_) {}
+          if (currentUser) {
+            rtdb.ref("users/" + currentUser.uid + "/bikeFeeds").set(list).catch(console.error);
+          }
+        }
+
+        // Publish the rider-facing config so viewers can render the bio card,
+        // checkpoints and planned route. Small and written rarely (setup only).
+        function publishBikeMeta(feed) {
+          if (!feed?.code) return Promise.resolve();
+          return rtdb.ref(`bikeFeeds/${feed.code}/meta`).set({
+            riderName: feed.riderName || "Rider",
+            eventName: feed.eventName || "",
+            bioText: feed.bioText || "",
+            photoUrl: feed.photoUrl || "",
+            bioLink: feed.bioLink || "",
+            units: feed.units || "mi",
+            checkpoints: feed.checkpoints || [],
+            route: feed.route || [],
+            updatedAt: Date.now(),
+          }).catch(console.error);
+        }
+
+        // Mirror BLE readings into a ref so the GPS callback never reads stale state.
+        useEffect(() => {
+          const s = { cadence: null, power: null, hr: null, sensorSpeed: null };
+          for (const d of btDevices) {
+            if (!d.connected) continue;
+            const r = d.readings || {};
+            if (r.cadence   != null) s.cadence     = r.cadence;
+            if (r.power     != null) s.power       = r.power;
+            if (r.heartRate != null) s.hr          = r.heartRate;
+            if (r.speed     != null) s.sensorSpeed = r.speed;
+          }
+          bikeSensorRef.current = s;
+        }, [btDevices]);
+
+        useEffect(() => { bikeRideCodeRef.current = bikeRideCode; }, [bikeRideCode]);
+        useEffect(() => { bikeFollowRef.current = bikeFollowing; }, [bikeFollowing]);
+
+        // Drives the "updated Ns ago" / stale-signal readout.
+        useEffect(() => {
+          if (appMode !== "bike") return;
+          const id = setInterval(() => setBikeTick(t => t + 1), 1000);
+          return () => clearInterval(id);
+        }, [appMode]);
+
+        // Rider's own elapsed clock
+        useEffect(() => {
+          if (!bikeRiding) return;
+          const id = setInterval(() => {
+            setBikeElapsedMs(Date.now() - (bikeStartedAtRef.current || Date.now()));
+          }, 500);
+          return () => clearInterval(id);
+        }, [bikeRiding]);
+
+        function startBikeRide(feed) {
+          if (!navigator.geolocation) { setBikeGpsStatus("Geolocation not supported on this device."); return; }
+          if (!feed?.code) { setBikeGpsStatus("No feed selected."); return; }
+          bikeDistMRef.current   = 0;
+          bikePrevFixRef.current = null;
+          bikeLastCrumbRef.current = null;
+          bikeLastPubRef.current = 0;
+          bikeStartedAtRef.current = Date.now();
+          setBikeElapsedMs(0);
+          setBikeRideCode(feed.code);
+          setBikeRiding(true);
+          setBikeGpsStatus("Acquiring GPS signal…");
+          acquireWakeLock();
+
+          // Fresh ride: clear the previous trail so viewers don't see last ride's line
+          rtdb.ref(`bikeFeeds/${feed.code}/track`).remove().catch(console.error);
+          rtdb.ref(`bikeFeeds/${feed.code}`).update({
+            status: "live", startedAt: bikeStartedAtRef.current, finishedAt: null,
+          }).catch(console.error);
+          publishBikeMeta(feed);
+
+          bikeGpsWatchRef.current = navigator.geolocation.watchPosition(pos => {
+            const { latitude: lat, longitude: lng, heading, speed, altitude, accuracy } = pos.coords;
+            const now = Date.now();
+            const prev = bikePrevFixRef.current;
+            // Ignore junk fixes that would inflate distance
+            if (prev && accuracy != null && accuracy > 50) return;
+            if (prev) bikeDistMRef.current += haversineM(prev.lat, prev.lng, lat, lng);
+            bikePrevFixRef.current = { lat, lng, t: now };
+
+            const mps    = (speed != null && speed >= 0) ? speed : null;
+            const moving = (mps ?? 0) > BIKE_MOVING_MPS;
+            const s      = bikeSensorRef.current;
+            const frame = {
+              lat: +lat.toFixed(6), lng: +lng.toFixed(6),
+              hdg: (heading != null && !isNaN(heading)) ? Math.round(heading) : null,
+              spd: mps != null ? +mps.toFixed(2) : null,
+              dst: Math.round(bikeDistMRef.current),
+              cad: s.cadence ?? null,
+              pwr: s.power ?? null,
+              hr:  s.hr ?? null,
+              alt: altitude != null ? Math.round(altitude) : null,
+              acc: accuracy != null ? Math.round(accuracy) : null,
+              mv:  moving,
+              el:  now - (bikeStartedAtRef.current || now),
+              t:   now,
+            };
+            setBikeLive(frame);
+            setBikeGpsStatus(`GPS active · ±${Math.round(accuracy || 0)}m`);
+
+            // Throttle: 1 Hz moving, 0.2 Hz stopped.
+            const interval = moving ? BIKE_PUBLISH_MS : BIKE_IDLE_PUBLISH_MS;
+            if (now - bikeLastPubRef.current < interval) return;
+            bikeLastPubRef.current = now;
+            const code = bikeRideCodeRef.current || feed.code;
+            // /live is a single small object overwritten each tick — the only node
+            // viewers subscribe to, so cost stays flat no matter how long the ride.
+            rtdb.ref(`bikeFeeds/${code}/live`).set(frame).catch(console.error);
+
+            // Breadcrumbs are appended (never rewritten) and spaced by distance so
+            // the stored trail stays small on a multi-hour ride.
+            const lc = bikeLastCrumbRef.current;
+            if (!lc || haversineM(lc[0], lc[1], lat, lng) >= BIKE_CRUMB_MIN_M) {
+              bikeLastCrumbRef.current = [lat, lng];
+              rtdb.ref(`bikeFeeds/${code}/track`).push([+lat.toFixed(5), +lng.toFixed(5)]).catch(console.error);
+            }
+          }, err => setBikeGpsStatus("GPS error: " + err.message),
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+        }
+
+        function stopBikeRide() {
+          if (bikeGpsWatchRef.current !== null) {
+            navigator.geolocation.clearWatch(bikeGpsWatchRef.current);
+            bikeGpsWatchRef.current = null;
+          }
+          const code = bikeRideCodeRef.current;
+          if (code) {
+            rtdb.ref(`bikeFeeds/${code}`).update({ status: "finished", finishedAt: Date.now() }).catch(console.error);
+          }
+          setBikeRiding(false);
+          setBikeGpsStatus("Ride ended.");
+        }
+
+        // ── Viewer subscription ─────────────────────────────────────────────────
+        useEffect(() => {
+          const code = (bikeWatchCode || "").trim().toUpperCase();
+          if (appMode !== "bike" || bikeView !== "feed" || code.length < 4) return;
+          setBikeWatchError("");
+          setBikeWatchTrack([]);
+          const metaRef  = rtdb.ref(`bikeFeeds/${code}/meta`);
+          const liveRef  = rtdb.ref(`bikeFeeds/${code}/live`);
+          const statRef  = rtdb.ref(`bikeFeeds/${code}/status`);
+          const trackRef = rtdb.ref(`bikeFeeds/${code}/track`);
+          const startRef = rtdb.ref(`bikeFeeds/${code}/startedAt`);
+          const mFn = metaRef.on("value", s => {
+            if (s.exists()) setBikeWatchMeta(s.val());
+            else setBikeWatchError(`No live feed found for code ${code}.`);
+          }, e => setBikeWatchError(e.message));
+          const lFn = liveRef.on("value", s => { if (s.exists()) setBikeWatchLive(s.val()); });
+          const sFn = statRef.on("value", s => setBikeWatchStatus(s.val()));
+          // Load the trail incrementally: child_added replays existing crumbs once,
+          // then streams new ones — far cheaper than re-reading a growing array.
+          const tFn = trackRef.on("child_added", s => {
+            const v = s.val();
+            if (Array.isArray(v) && v.length === 2) setBikeWatchTrack(p => [...p, v]);
+          });
+          // If the rider starts a fresh ride mid-watch, the old breadcrumbs are gone
+          // server-side — drop our local copy so we don't draw last ride's line.
+          let firstStart = true;
+          const stFn = startRef.on("value", () => {
+            if (firstStart) { firstStart = false; return; }
+            setBikeWatchTrack([]);
+            if (bikeTrailLineRef.current && bikeMapRef.current) {
+              try { bikeMapRef.current.removeLayer(bikeTrailLineRef.current); } catch(_) {}
+              bikeTrailLineRef.current = null;
+            }
+          });
+          return () => {
+            metaRef.off("value", mFn); liveRef.off("value", lFn);
+            statRef.off("value", sFn); trackRef.off("child_added", tFn);
+            startRef.off("value", stFn);
+          };
+        }, [appMode, bikeView, bikeWatchCode]);
+
+        // Feed a new target into the interpolator whenever a frame arrives.
+        useEffect(() => {
+          if (!bikeWatchLive) return;
+          const to = [bikeWatchLive.lat, bikeWatchLive.lng];
+          const cur = bikeInterpRef.current;
+          bikeInterpRef.current = {
+            from: cur.to || to,
+            to,
+            t0: (typeof performance !== "undefined" ? performance.now() : Date.now()),
+            dur: bikeWatchLive.mv ? BIKE_PUBLISH_MS : BIKE_IDLE_PUBLISH_MS,
+          };
+        }, [bikeWatchLive]);
+
+        // 60fps dot animation — this is what makes a 1 Hz feed look continuous.
+        useEffect(() => {
+          if (appMode !== "bike" || bikeView !== "feed") return;
+          let raf;
+          const step = () => {
+            const { from, to, t0, dur } = bikeInterpRef.current;
+            if (from && to) {
+              const nowP = (typeof performance !== "undefined" ? performance.now() : Date.now());
+              const k = dur > 0 ? Math.min(1, (nowP - t0) / dur) : 1;
+              const lat = from[0] + (to[0] - from[0]) * k;
+              const lng = from[1] + (to[1] - from[1]) * k;
+              const m = bikeMarkerRef.current;
+              if (m) {
+                try {
+                  m.setLatLng([lat, lng]);
+                  if (bikeFollowRef.current && bikeMapRef.current) {
+                    bikeMapRef.current.panTo([lat, lng], { animate: false });
+                  }
+                } catch(_) {}
+              }
+            }
+            raf = requestAnimationFrame(step);
+          };
+          raf = requestAnimationFrame(step);
+          return () => cancelAnimationFrame(raf);
+        }, [appMode, bikeView]);
+
+        function initBikeMap(el) {
+          bikeMapElRef.current = el;
+          if (!el || bikeMapRef.current) return;
+          const start = bikeWatchLive ? [bikeWatchLive.lat, bikeWatchLive.lng] : [39.5, -98.35];
+          const map = L.map(el, { zoomControl: true, attributionControl: false })
+            .setView(start, bikeWatchLive ? 14 : 4);
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+          // Dragging the map means the viewer wants to look around — stop following.
+          map.on("dragstart", () => setBikeFollowing(false));
+          bikeMapRef.current = map;
+        }
+
+        // Tear the map down when leaving the feed view so it rebuilds cleanly.
+        useEffect(() => {
+          if (appMode === "bike" && bikeView === "feed") return;
+          if (bikeMapRef.current) {
+            try { bikeMapRef.current.remove(); } catch(_) {}
+            bikeMapRef.current = null;
+            bikeMarkerRef.current = null;
+            bikeTrailLineRef.current = null;
+            bikeRouteLineRef.current = null;
+            bikeCpLayerRef.current = [];
+            bikeInterpRef.current = { from: null, to: null, t0: 0, dur: BIKE_PUBLISH_MS };
+          }
+        }, [appMode, bikeView]);
+
+        // Draw planned route + checkpoints once meta arrives.
+        useEffect(() => {
+          const map = bikeMapRef.current;
+          if (!map || !bikeWatchMeta) return;
+          try {
+            const route = bikeWatchMeta.route || [];
+            if (route.length > 1) {
+              if (bikeRouteLineRef.current) bikeRouteLineRef.current.setLatLngs(route);
+              else bikeRouteLineRef.current = L.polyline(route, { color: "#5a86a8", weight: 3, dashArray: "8 6", opacity: 0.6 }).addTo(map);
+            }
+            bikeCpLayerRef.current.forEach(l => { try { map.removeLayer(l); } catch(_) {} });
+            bikeCpLayerRef.current = (bikeWatchMeta.checkpoints || [])
+              .filter(cp => cp.lat != null && cp.lng != null)
+              .map((cp, i) => L.circleMarker([cp.lat, cp.lng], {
+                  radius: 7, color: "#ffd166", fillColor: "#ffd166", fillOpacity: 0.85, weight: 2,
+                })
+                .bindTooltip(cp.name || `Checkpoint ${i + 1}`, { permanent: false, direction: "top" })
+                .addTo(map));
+          } catch(_) {}
+        }, [bikeWatchMeta, bikeView]);
+
+        // Keep the breadcrumb trail line in sync.
+        useEffect(() => {
+          const map = bikeMapRef.current;
+          if (!map || bikeWatchTrack.length < 2) return;
+          try {
+            if (bikeTrailLineRef.current) bikeTrailLineRef.current.setLatLngs(bikeWatchTrack);
+            else bikeTrailLineRef.current = L.polyline(bikeWatchTrack, { color: "#ffd166", weight: 3.5, opacity: 0.85 }).addTo(map);
+          } catch(_) {}
+        }, [bikeWatchTrack]);
+
+        // Create the rider marker on first frame and recentre once.
+        useEffect(() => {
+          const map = bikeMapRef.current;
+          if (!map || !bikeWatchLive) return;
+          const pos = [bikeWatchLive.lat, bikeWatchLive.lng];
+          try {
+            if (!bikeMarkerRef.current) {
+              bikeMarkerRef.current = L.circleMarker(pos, {
+                radius: 11, color: "#00aeef", fillColor: "#00aeef", fillOpacity: 0.95, weight: 4,
+              })
+                .bindTooltip(bikeWatchMeta?.riderName || "Rider", {
+                  permanent: true, direction: "top", offset: [0, -14], className: "leaflet-ath-label",
+                })
+                .addTo(map);
+              map.setView(pos, 15, { animate: true });
+            }
+          } catch(_) {}
+        }, [bikeWatchLive, bikeWatchMeta]);
+
+        // Stop GPS if the rider navigates away from bike mode entirely.
+        useEffect(() => {
+          if (appMode !== "bike" && bikeGpsWatchRef.current !== null) stopBikeRide();
+        }, [appMode]);
+
+        // A shared follow link shouldn't demand an account. Anonymous auth keeps the
+        // database rules satisfied while asking nothing of the viewer.
+        // NOTE: needs "Anonymous" enabled under Firebase Auth → Sign-in method.
+        const bikeAnonTriedRef = useRef(false);
+        useEffect(() => {
+          if (currentUser || authLoading || bikeAnonTriedRef.current) return;
+          if (!new URLSearchParams(location.search).get("bike")) return;
+          bikeAnonTriedRef.current = true;
+          auth.signInAnonymously().catch(err => {
+            console.warn("Anonymous sign-in unavailable:", err.code);
+            setBikeWatchError("This follow link needs Anonymous sign-in enabled in Firebase Auth, or sign in below.");
+          });
+        }, [currentUser, authLoading]);
+
+        // Deep link: ?bike=CODE drops straight into that rider's live feed.
+        const bikeDeepLinkRef = useRef(false);
+        useEffect(() => {
+          if (bikeDeepLinkRef.current || !currentUser) return;
+          const code = new URLSearchParams(location.search).get("bike");
+          if (!code) return;
+          bikeDeepLinkRef.current = true;
+          setAppMode("bike");
+          try { localStorage.setItem("tri-appmode", "bike"); } catch(_) {}
+          setBikeWatchCode(code.trim().toUpperCase());
+          setView("bike");
+          setBikeView("feed");
+        }, [currentUser]);
+
         // Role booleans — computed early for hook ordering (before any conditional returns)
         const effectiveRole = (!userProfile?.role || userProfile.role === "participant") ? "athlete" : userProfile.role;
         const isHost      = effectiveRole === "host";
@@ -3565,6 +3994,7 @@
           setAppMode(mode);
           localStorage.setItem("tri-appmode", mode);
           if (mode === "swim") { setView("swim"); setSwimView("home"); }
+          else if (mode === "bike") { setView("bike"); setBikeView("home"); }
           else { setView(isHost ? "home" : "join"); }
         }
 
@@ -3577,6 +4007,12 @@
             setView("watch");
           }
         }, [currentUser, isHost, isAthlete, isSpectator, view, appMode]);
+
+        // Redirect to correct landing when in bike mode. Bike Live Feed has no
+        // host-only gate: whoever is riding needs the rider page on their own phone.
+        useEffect(() => {
+          if (appMode === "bike" && view !== "bike") setView("bike");
+        }, [appMode, view]);
 
         // Redirect to correct landing when in swim mode
         useEffect(() => {
@@ -3704,6 +4140,11 @@
                   <div style={{ fontSize:22, fontWeight:700, color:"#e8f4fb", letterSpacing:0.5 }}>Swim Meet Timer</div>
                   <div style={{ fontSize:13, color:"#5a86a8", marginTop:5 }}>Multi-lane · Live results · Team scoring</div>
                 </div>
+                <div onClick={() => selectMode("bike")} style={{ background:"linear-gradient(135deg,#3a2606,#7a4a0c)", border:"2px solid rgba(255,209,102,0.5)", borderRadius:16, padding:"28px 24px", cursor:"pointer" }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>🚴‍♀️📍</div>
+                  <div style={{ fontSize:22, fontWeight:700, color:"#e8f4fb", letterSpacing:0.5 }}>Bike Live Feed</div>
+                  <div style={{ fontSize:13, color:"#c8a45a", marginTop:5 }}>Follow one rider · Live GPS · Watts · Cadence</div>
+                </div>
               </div>
             </div>
           );
@@ -3715,6 +4156,11 @@
             {/* HEADER */}
             <div style={{ background: "linear-gradient(135deg,#071829,#0d3a6e)", borderBottom: "3px solid #00aeef", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
               {(() => {
+                if (appMode === "bike") {
+                  return bikeView !== "home" && (
+                    <button onClick={() => setBikeView("home")} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#5a86a8", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
+                  );
+                }
                 const homeView = appMode === "swim" ? (isHost ? "swim" : "swimwatch") : (isHost ? "home" : "join");
                 return view !== homeView && (
                   <button onClick={() => {
@@ -3730,7 +4176,7 @@
                 <span style={{ color: "#00aeef" }}>Time</span>athon
               </div>
               <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#5a86a8", marginTop: 4 }}>
-                {appMode === "swim" ? "Swim Meet Timer" : "Swim · Bike · Run"}
+                {appMode === "swim" ? "Swim Meet Timer" : appMode === "bike" ? "Bike Live Feed" : "Swim · Bike · Run"}
               </div>
               <button onClick={() => setView("profile")} title="Profile" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(90,134,168,0.3)", borderRadius: 4, color: "#5a86a8", fontSize: 11, cursor: "pointer", padding: "4px 8px", letterSpacing: 1 }}>
                 &#128100; {currentUser?.displayName ? currentUser.displayName.split(" ")[0] : currentUser?.email?.split("@")[0]}
@@ -3740,7 +4186,9 @@
             {/* NAV — conditional per mode/role */}
             {(() => {
               const swimNavMap = { swimhome:"home", swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
-              const navTabs = (appMode === "swim" && isHost)
+              const navTabs = (appMode === "bike")
+                ? [["__home__","⌂"],["__bike_home__","🚴 Rides"],["__bike_setup__","⚙️ Setup"],["__bike_ride__","📡 Ride"],["__bike_feed__","👀 Follow"],["profile","👤 Profile"]]
+                : (appMode === "swim" && isHost)
                 ? [["__home__","⌂"],["swimhome","🏠 Meet"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
                 : (appMode === "swim")
                 ? [["__home__","⌂"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
@@ -3752,10 +4200,14 @@
               return (
                 <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0c2240", overflowX: "auto" }}>
                   {navTabs.map(([v, label]) => {
-                    const isActive = v === view || (v in swimNavMap && view === "swim" && swimView === swimNavMap[v]);
+                    const bikeTab = v.startsWith("__bike_") ? v.slice(7, -2) : null;
+                    const isActive = bikeTab
+                      ? (view === "bike" && bikeView === bikeTab)
+                      : v === view || (v in swimNavMap && view === "swim" && swimView === swimNavMap[v]);
                     return (
                       <button key={v} onClick={() => {
                         if (v === "__home__") { selectMode(null); }
+                        else if (bikeTab) { setView("bike"); setBikeView(bikeTab); }
                         else if (v in swimNavMap) { setView("swim"); setSwimView(swimNavMap[v]); }
                         else { setView(v); }
                       }} style={{
@@ -8438,6 +8890,471 @@
                               </div>
                             );
                           })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ══ BIKE LIVE FEED ══════════════════════════════════════════════ */}
+            {view === "bike" && (() => {
+              const S = {
+                card:  { background:"#0c2240", border:"1px solid rgba(255,209,102,0.22)", borderRadius:8, padding:"14px 16px", marginBottom:12 },
+                label: { fontSize:11, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#c8a45a", marginBottom:6 },
+                input: { background:"#071829", border:"1px solid rgba(255,209,102,0.3)", borderRadius:4, padding:"8px 12px", color:"#e8f4fb", fontSize:13, outline:"none", width:"100%", boxSizing:"border-box" },
+                row:   { display:"flex", gap:8, alignItems:"center" },
+              };
+              const M_PER_MI = 1609.344;
+              const useKm = (bikeView === "feed" ? (bikeWatchMeta?.units || "mi") : (bikeDraft?.units || "mi")) === "km";
+              const fmtDist = (m) => m == null ? "—" : useKm
+                ? (m / 1000).toFixed(2) + " km"
+                : (m / M_PER_MI).toFixed(2) + " mi";
+              const fmtSpeed = (mps) => mps == null ? "—" : useKm
+                ? (mps * 3.6).toFixed(1) + " km/h"
+                : (mps * 2.236936).toFixed(1) + " mph";
+              const fmtRideClock = (ms) => {
+                if (ms == null) return "—";
+                const s = Math.floor(ms / 1000);
+                const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+                return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+              };
+              const ago = (t) => {
+                if (!t) return "—";
+                const d = Math.max(0, Math.round((Date.now() - t) / 1000));
+                if (d < 60) return d + "s ago";
+                if (d < 3600) return Math.floor(d / 60) + "m ago";
+                return Math.floor(d / 3600) + "h ago";
+              };
+              const shareLink = (code) =>
+                `${location.origin}${location.pathname}?bike=${code}`;
+
+              const metricTile = (label, value, color) => (
+                <div style={{ flex:"1 1 90px", minWidth:90, background:"#071829", border:"1px solid rgba(255,209,102,0.18)", borderRadius:8, padding:"10px 8px", textAlign:"center" }}>
+                  <div style={{ fontSize:9, letterSpacing:2, textTransform:"uppercase", color:"#5a86a8", fontWeight:700 }}>{label}</div>
+                  <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:1, color: color || "#e8f4fb", lineHeight:1.15, fontVariantNumeric:"tabular-nums" }}>{value}</div>
+                </div>
+              );
+
+              return (
+                <div>
+                  {/* ─── RIDES (home) ─────────────────────────────────────────── */}
+                  {bikeView === "home" && (
+                    <div>
+                      <div style={S.card}>
+                        <div style={S.label}>Follow a ride</div>
+                        <div style={{ fontSize:12, color:"#5a86a8", marginBottom:8 }}>
+                          Enter the 6-character code the rider shared with you.
+                        </div>
+                        <div style={S.row}>
+                          <input value={bikeWatchCode} onChange={e => setBikeWatchCode(e.target.value.toUpperCase())}
+                            placeholder="ABC123" maxLength={6}
+                            style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:4, textAlign:"center" }} />
+                          <button onClick={() => { if ((bikeWatchCode||"").trim().length >= 4) setBikeView("feed"); }}
+                            style={{ ...btnStyle("#ffd166"), whiteSpace:"nowrap" }}>Follow</button>
+                        </div>
+                      </div>
+
+                      <div style={{ ...S.row, justifyContent:"space-between", margin:"18px 0 8px" }}>
+                        <div style={{ ...S.label, marginBottom:0 }}>Your ride feeds</div>
+                        <button onClick={() => { setBikeDraft(newBikeFeed()); setBikeView("setup"); }}
+                          style={{ ...btnStyle("#ffd166"), padding:"7px 14px", fontSize:12 }}>+ New Feed</button>
+                      </div>
+
+                      {bikeFeedList.length === 0 ? (
+                        <div style={{ ...S.card, textAlign:"center", color:"#5a86a8", fontSize:13 }}>
+                          No ride feeds yet. Create one, fill in the rider's details, then send them the code.
+                        </div>
+                      ) : bikeFeedList.map(f => (
+                        <div key={f.code} style={S.card}>
+                          <div style={{ ...S.row, justifyContent:"space-between", flexWrap:"wrap", gap:6 }}>
+                            <div style={{ minWidth:0 }}>
+                              <div style={{ fontSize:16, fontWeight:700, color:"#e8f4fb" }}>{f.riderName || "Unnamed rider"}</div>
+                              <div style={{ fontSize:12, color:"#5a86a8" }}>{f.eventName || "No event name"}</div>
+                            </div>
+                            <div style={{ fontFamily:"monospace", fontSize:20, letterSpacing:3, color:"#ffd166" }}>{f.code}</div>
+                          </div>
+                          <div style={{ ...S.row, flexWrap:"wrap", gap:6, marginTop:10 }}>
+                            <button onClick={() => { setBikeDraft({ ...newBikeFeed(), ...f }); setBikeView("setup"); }}
+                              style={{ ...btnStyle("#48cae4", true), padding:"6px 12px", fontSize:12 }}>⚙️ Edit</button>
+                            <button onClick={() => { setBikeRideCode(f.code); setBikeView("ride"); }}
+                              style={{ ...btnStyle("#4ade80", true), padding:"6px 12px", fontSize:12 }}>📡 Ride</button>
+                            <button onClick={() => { setBikeWatchCode(f.code); setBikeView("feed"); }}
+                              style={{ ...btnStyle("#ffd166", true), padding:"6px 12px", fontSize:12 }}>👀 Follow</button>
+                            <button onClick={() => {
+                              navigator.clipboard?.writeText(shareLink(f.code));
+                              alert("Follow link copied:\n" + shareLink(f.code));
+                            }} style={{ ...btnStyle("#a78bfa", true), padding:"6px 12px", fontSize:12 }}>🔗 Copy link</button>
+                            <button onClick={() => {
+                              if (!confirm(`Delete the feed for ${f.riderName || f.code}? Viewers with the link will no longer see it.`)) return;
+                              persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code));
+                              rtdb.ref(`bikeFeeds/${f.code}`).remove().catch(console.error);
+                            }} style={{ ...btnStyle("#f87171", true), padding:"6px 12px", fontSize:12 }}>Delete</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ─── SETUP ────────────────────────────────────────────────── */}
+                  {bikeView === "setup" && (!bikeDraft ? (
+                    <div style={{ ...S.card, textAlign:"center" }}>
+                      <div style={{ fontSize:13, color:"#5a86a8", marginBottom:12 }}>Pick a feed to edit, or create a new one.</div>
+                      <button onClick={() => setBikeDraft(newBikeFeed())} style={btnStyle("#ffd166")}>+ New Feed</button>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={S.card}>
+                        <div style={{ ...S.row, justifyContent:"space-between" }}>
+                          <div style={{ ...S.label, marginBottom:0 }}>Follow code</div>
+                          <div style={{ fontFamily:"monospace", fontSize:22, letterSpacing:4, color:"#ffd166" }}>{bikeDraft.code}</div>
+                        </div>
+                        <div style={{ fontSize:11, color:"#5a86a8", marginTop:8, wordBreak:"break-all" }}>{shareLink(bikeDraft.code)}</div>
+                      </div>
+
+                      <div style={S.card}>
+                        <div style={S.label}>Rider &amp; event</div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                          <input value={bikeDraft.riderName} onChange={e => setBikeDraft(d => ({ ...d, riderName: e.target.value }))}
+                            placeholder="Rider name (e.g. Alani M.)" style={S.input} />
+                          <input value={bikeDraft.eventName} onChange={e => setBikeDraft(d => ({ ...d, eventName: e.target.value }))}
+                            placeholder="Ride / event name (e.g. Hill Country 100)" style={S.input} />
+                          <input value={bikeDraft.photoUrl} onChange={e => setBikeDraft(d => ({ ...d, photoUrl: e.target.value }))}
+                            placeholder="Photo URL (https://…)" style={S.input} />
+                          <input value={bikeDraft.bioLink} onChange={e => setBikeDraft(d => ({ ...d, bioLink: e.target.value }))}
+                            placeholder="Bio / fundraiser link (https://…)" style={S.input} />
+                          <textarea value={bikeDraft.bioText} onChange={e => setBikeDraft(d => ({ ...d, bioText: e.target.value }))}
+                            placeholder="A short blurb for viewers to read — why she's riding, what the route is, anything she wants to say."
+                            rows={5} style={{ ...S.input, resize:"vertical", lineHeight:1.5 }} />
+                          <div style={S.row}>
+                            <span style={{ fontSize:12, color:"#5a86a8" }}>Units</span>
+                            {["mi","km"].map(u => (
+                              <button key={u} onClick={() => setBikeDraft(d => ({ ...d, units: u }))}
+                                style={{ padding:"6px 14px", fontSize:12, fontWeight:700, borderRadius:6, cursor:"pointer",
+                                  background: bikeDraft.units === u ? "rgba(255,209,102,0.15)" : "transparent",
+                                  border: bikeDraft.units === u ? "1px solid rgba(255,209,102,0.5)" : "1px solid rgba(255,255,255,0.1)",
+                                  color: bikeDraft.units === u ? "#ffd166" : "#5a86a8" }}>{u === "mi" ? "Miles" : "Kilometres"}</button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={S.card}>
+                        <div style={{ ...S.row, justifyContent:"space-between" }}>
+                          <div style={{ ...S.label, marginBottom:0 }}>Checkpoints</div>
+                          <button onClick={() => setBikeDraft(d => ({ ...d, checkpoints: [...(d.checkpoints||[]), { name:"", lat:null, lng:null, note:"" }] }))}
+                            style={{ ...btnStyle("#ffd166", true), padding:"5px 11px", fontSize:11 }}>+ Add</button>
+                        </div>
+                        <div style={{ fontSize:11, color:"#5a86a8", margin:"6px 0 10px" }}>
+                          Shown as markers on the viewer's map — rest stops, water, the finish. These are labels only; they don't trigger anything.
+                        </div>
+                        {(bikeDraft.checkpoints || []).length === 0 && (
+                          <div style={{ fontSize:12, color:"#3a6080" }}>No checkpoints yet.</div>
+                        )}
+                        {(bikeDraft.checkpoints || []).map((cp, i) => (
+                          <div key={i} style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:10, marginTop:10 }}>
+                            <div style={{ ...S.row, gap:6 }}>
+                              <input value={cp.name} onChange={e => setBikeDraft(d => {
+                                const c = [...d.checkpoints]; c[i] = { ...c[i], name: e.target.value }; return { ...d, checkpoints: c };
+                              })} placeholder={`Checkpoint ${i+1} name`} style={{ ...S.input, flex:1 }} />
+                              <button onClick={() => setBikeDraft(d => ({ ...d, checkpoints: d.checkpoints.filter((_, j) => j !== i) }))}
+                                style={{ ...btnStyle("#f87171", true), padding:"6px 10px", fontSize:11 }}>✕</button>
+                            </div>
+                            <div style={{ ...S.row, gap:6, marginTop:6 }}>
+                              <input value={cp.lat ?? ""} onChange={e => setBikeDraft(d => {
+                                const c = [...d.checkpoints]; c[i] = { ...c[i], lat: e.target.value === "" ? null : +e.target.value }; return { ...d, checkpoints: c };
+                              })} placeholder="Latitude" style={{ ...S.input, flex:1, fontFamily:"monospace", fontSize:12 }} />
+                              <input value={cp.lng ?? ""} onChange={e => setBikeDraft(d => {
+                                const c = [...d.checkpoints]; c[i] = { ...c[i], lng: e.target.value === "" ? null : +e.target.value }; return { ...d, checkpoints: c };
+                              })} placeholder="Longitude" style={{ ...S.input, flex:1, fontFamily:"monospace", fontSize:12 }} />
+                              <button title="Use my current location" onClick={() => {
+                                navigator.geolocation?.getCurrentPosition(p => setBikeDraft(d => {
+                                  const c = [...d.checkpoints];
+                                  c[i] = { ...c[i], lat:+p.coords.latitude.toFixed(6), lng:+p.coords.longitude.toFixed(6) };
+                                  return { ...d, checkpoints: c };
+                                }), e => alert("Could not get location: " + e.message), { enableHighAccuracy:true });
+                              }} style={{ ...btnStyle("#48cae4", true), padding:"6px 10px", fontSize:11, whiteSpace:"nowrap" }}>📍</button>
+                            </div>
+                            <input value={cp.note || ""} onChange={e => setBikeDraft(d => {
+                              const c = [...d.checkpoints]; c[i] = { ...c[i], note: e.target.value }; return { ...d, checkpoints: c };
+                            })} placeholder="Note (optional)" style={{ ...S.input, marginTop:6, fontSize:12 }} />
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={S.card}>
+                        <div style={S.label}>Planned route (optional)</div>
+                        <div style={{ fontSize:11, color:"#5a86a8", marginBottom:8 }}>
+                          Draws a dashed line of the intended course. Paste GeoJSON coordinates or a list of <code>lat,lng</code> lines.
+                        </div>
+                        <textarea
+                          defaultValue={(bikeDraft.route || []).map(p => p.join(",")).join("\n")}
+                          onChange={e => {
+                            const pts = e.target.value.split(/\r?\n/).map(l => {
+                              const m = l.trim().match(/^\[?\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]?,?$/);
+                              return m ? [+m[1], +m[2]] : null;
+                            }).filter(Boolean);
+                            setBikeDraft(d => ({ ...d, route: pts }));
+                          }}
+                          placeholder={"30.2672,-97.7431\n30.2680,-97.7450"}
+                          rows={4} style={{ ...S.input, fontFamily:"monospace", fontSize:12, resize:"vertical" }} />
+                        <div style={{ fontSize:11, color:"#5a86a8", marginTop:6 }}>
+                          {(bikeDraft.route || []).length} route point{(bikeDraft.route||[]).length === 1 ? "" : "s"}
+                        </div>
+                        <div style={{ marginTop:10, padding:"10px 12px", background:"rgba(255,209,102,0.06)", border:"1px dashed rgba(255,209,102,0.3)", borderRadius:6 }}>
+                          <div style={{ fontSize:11, fontWeight:700, color:"#c8a45a", letterSpacing:1, textTransform:"uppercase" }}>Import from Wahoo</div>
+                          <div style={{ fontSize:11, color:"#5a86a8", marginTop:5, lineHeight:1.5 }}>
+                            {WAHOO.enabled
+                              ? "Connect a Wahoo account to pull saved routes."
+                              : "Needs an approved Wahoo developer app. Once you have a client ID, set it in the WAHOO config block near the top of index.html and flip enabled to true."}
+                          </div>
+                          <button disabled={!WAHOO.enabled} onClick={() => {
+                            const u = new URL(WAHOO.authUrl);
+                            u.searchParams.set("client_id", WAHOO.clientId);
+                            u.searchParams.set("redirect_uri", WAHOO.redirectUri);
+                            u.searchParams.set("response_type", "code");
+                            u.searchParams.set("scope", WAHOO.scopes);
+                            location.href = u.toString();
+                          }} style={{ ...btnStyle(WAHOO.enabled ? "#48cae4" : "#3a6080", true), padding:"6px 12px", fontSize:11, marginTop:8,
+                                      cursor: WAHOO.enabled ? "pointer" : "not-allowed", opacity: WAHOO.enabled ? 1 : 0.55 }}>
+                            Connect Wahoo{WAHOO.enabled ? "" : " (not configured)"}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ ...S.row, gap:8, flexWrap:"wrap", marginBottom:24 }}>
+                        <button onClick={() => {
+                          if (!bikeDraft.riderName.trim()) { alert("Give the rider a name so viewers know who they're following."); return; }
+                          const rest = bikeFeedList.filter(f => f.code !== bikeDraft.code);
+                          persistBikeFeeds([...rest, bikeDraft]);
+                          publishBikeMeta(bikeDraft);
+                          setBikeView("home");
+                        }} style={btnStyle("#4ade80")}>Save &amp; Publish</button>
+                        <button onClick={() => { setBikeDraft(null); setBikeView("home"); }}
+                          style={btnStyle("#5a86a8", true)}>Cancel</button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* ─── RIDE (rider's own phone) ─────────────────────────────── */}
+                  {bikeView === "ride" && (
+                    <div>
+                      <div style={S.card}>
+                        <div style={S.label}>Publishing to</div>
+                        <div style={S.row}>
+                          <input value={bikeRideCode || ""} onChange={e => setBikeRideCode(e.target.value.toUpperCase())}
+                            placeholder="ABC123" maxLength={6} disabled={bikeRiding}
+                            style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:4, textAlign:"center", opacity: bikeRiding ? 0.6 : 1 }} />
+                        </div>
+                        {bikeFeedList.length > 0 && !bikeRiding && (
+                          <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginTop:8 }}>
+                            {bikeFeedList.map(f => (
+                              <button key={f.code} onClick={() => setBikeRideCode(f.code)}
+                                style={{ ...btnStyle("#ffd166", true), padding:"5px 10px", fontSize:11 }}>
+                                {f.riderName || f.code}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={S.card}>
+                        <div style={{ ...S.row, justifyContent:"space-between" }}>
+                          <div style={{ ...S.label, marginBottom:0 }}>Sensors</div>
+                          <button onClick={scanBluetooth} disabled={!btSupported || btScanning}
+                            style={{ ...btnStyle("#48cae4", true), padding:"5px 11px", fontSize:11,
+                                     opacity: btSupported ? 1 : 0.5, cursor: btSupported ? "pointer" : "not-allowed" }}>
+                            {btScanning ? "Scanning…" : "+ Add sensor"}
+                          </button>
+                        </div>
+                        <div style={{ fontSize:11, color:"#5a86a8", margin:"6px 0 0", lineHeight:1.5 }}>
+                          Watts, cadence and heart rate come from her Bluetooth sensors. If the ELEMNT BOLT is paired to
+                          those sensors over <strong>ANT+</strong>, the Bluetooth channel stays free for this phone to read them at the same time.
+                        </div>
+                        {!btSupported && (
+                          <div style={{ fontSize:11, color:"#f87171", marginTop:8 }}>
+                            This browser has no Web Bluetooth. Use Chrome on Android — position still works without sensors.
+                          </div>
+                        )}
+                        {btDevices.length > 0 && (
+                          <div style={{ marginTop:10 }}>
+                            {btDevices.map(d => (
+                              <div key={d.id} style={{ ...S.row, justifyContent:"space-between", padding:"6px 0", borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+                                <span style={{ fontSize:12, color: d.connected ? "#4ade80" : "#5a86a8" }}>
+                                  {d.connected ? "●" : "○"} {d.name}
+                                </span>
+                                <span style={{ fontSize:11, color:"#5a86a8", fontVariantNumeric:"tabular-nums" }}>
+                                  {[d.readings?.power != null ? d.readings.power + "W" : null,
+                                    d.readings?.cadence != null ? d.readings.cadence + "rpm" : null,
+                                    d.readings?.heartRate != null ? d.readings.heartRate + "bpm" : null,
+                                   ].filter(Boolean).join(" · ") || "no data yet"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ ...S.card, background: bikeRiding ? "rgba(74,222,128,0.07)" : "#0c2240" }}>
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                          {metricTile("Elapsed", fmtRideClock(bikeElapsedMs), "#ffd166")}
+                          {metricTile("Distance", fmtDist(bikeLive?.dst), "#ffd166")}
+                          {metricTile("Speed", fmtSpeed(bikeLive?.spd), "#48cae4")}
+                          {metricTile("Power", bikeLive?.pwr != null ? bikeLive.pwr + " W" : "—", "#f4742b")}
+                          {metricTile("Cadence", bikeLive?.cad != null ? bikeLive.cad + " rpm" : "—", "#a78bfa")}
+                          {metricTile("Heart", bikeLive?.hr != null ? bikeLive.hr + " bpm" : "—", "#f472b6")}
+                        </div>
+                        <div style={{ fontSize:11, color: bikeRiding ? "#4ade80" : "#5a86a8", marginTop:10, textAlign:"center" }}>
+                          {bikeGpsStatus || "Not tracking."}
+                        </div>
+                      </div>
+
+                      <div style={{ ...S.row, gap:8, justifyContent:"center", marginBottom:16 }}>
+                        {!bikeRiding ? (
+                          <button onClick={() => {
+                            const code = (bikeRideCode || "").trim().toUpperCase();
+                            if (code.length < 4) { alert("Enter the follow code for this ride first."); return; }
+                            const feed = bikeFeedList.find(f => f.code === code) || { ...newBikeFeed(), code };
+                            startBikeRide(feed);
+                          }} style={{ ...btnStyle("#4ade80"), fontSize:16, padding:"14px 32px" }}>▶ Start Ride</button>
+                        ) : (
+                          <button onClick={() => { if (confirm("End the live feed for this ride?")) stopBikeRide(); }}
+                            style={{ ...btnStyle("#f87171"), fontSize:16, padding:"14px 32px" }}>■ End Ride</button>
+                        )}
+                      </div>
+
+                      <div style={{ ...S.card, borderColor:"rgba(72,202,228,0.25)" }}>
+                        <div style={S.label}>Before she sets off</div>
+                        <ul style={{ fontSize:12, color:"#5a86a8", lineHeight:1.7, paddingLeft:18, margin:0 }}>
+                          <li>This page must stay open on the phone she's carrying — it's the GPS source.</li>
+                          <li>The screen lock is held off automatically, so plug into a battery pack for a long ride.</li>
+                          <li>Position updates about once a second; viewers see a smoothly moving dot.</li>
+                          <li>Losing signal is fine — the trail resumes when data comes back.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ─── FOLLOW (viewer) ──────────────────────────────────────── */}
+                  {bikeView === "feed" && (
+                    <div>
+                      {(bikeWatchCode || "").trim().length < 4 ? (
+                        <div style={S.card}>
+                          <div style={S.label}>Follow a ride</div>
+                          <div style={S.row}>
+                            <input value={bikeWatchCode} onChange={e => setBikeWatchCode(e.target.value.toUpperCase())}
+                              placeholder="ABC123" maxLength={6}
+                              style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:4, textAlign:"center" }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          {bikeWatchError && (
+                            <div style={{ ...S.card, borderColor:"rgba(248,113,113,0.4)", color:"#f87171", fontSize:13 }}>
+                              {bikeWatchError}
+                            </div>
+                          )}
+
+                          {/* Rider card */}
+                          <div style={{ ...S.card, display:"flex", gap:14, alignItems:"center" }}>
+                            {bikeWatchMeta?.photoUrl
+                              ? <img src={bikeWatchMeta.photoUrl} alt={bikeWatchMeta?.riderName || "Rider"}
+                                     style={{ width:64, height:64, borderRadius:"50%", objectFit:"cover", border:"2px solid #ffd166", flexShrink:0 }} />
+                              : <div style={{ width:64, height:64, borderRadius:"50%", background:"#071829", border:"2px solid rgba(255,209,102,0.4)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>🚴</div>}
+                            <div style={{ minWidth:0, flex:1 }}>
+                              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:2, color:"#f0f6ff", lineHeight:1.1 }}>
+                                {bikeWatchMeta?.riderName || "Rider"}
+                              </div>
+                              <div style={{ fontSize:12, color:"#c8a45a" }}>{bikeWatchMeta?.eventName || ""}</div>
+                              <div style={{ ...S.row, gap:8, marginTop:5 }}>
+                                <span style={{ fontSize:10, letterSpacing:1, textTransform:"uppercase", fontWeight:700,
+                                  color: bikeWatchStatus === "live" ? "#4ade80" : "#5a86a8" }}>
+                                  {bikeWatchStatus === "live" ? "● Live" : bikeWatchStatus === "finished" ? "Finished" : "Not started"}
+                                </span>
+                                <span style={{ fontSize:10, color:"#5a86a8" }}>{bikeWatchLive ? "updated " + ago(bikeWatchLive.t) : ""}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {bikeWatchLive && bikeWatchStatus === "live" && (Date.now() - bikeWatchLive.t) > BIKE_STALE_MS && (
+                            <div style={{ ...S.card, borderColor:"rgba(255,209,102,0.5)", background:"rgba(255,209,102,0.07)", fontSize:12, color:"#ffd166" }}>
+                              ⚠ No update for {ago(bikeWatchLive.t).replace(" ago","")} — she may be out of mobile coverage. The dot is holding at her last known position.
+                            </div>
+                          )}
+
+                          {/* Metrics */}
+                          <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+                            {metricTile("Distance", fmtDist(bikeWatchLive?.dst), "#ffd166")}
+                            {metricTile("Speed", fmtSpeed(bikeWatchLive?.spd), "#48cae4")}
+                            {metricTile("Power", bikeWatchLive?.pwr != null ? bikeWatchLive.pwr + " W" : "—", "#f4742b")}
+                            {metricTile("Cadence", bikeWatchLive?.cad != null ? bikeWatchLive.cad + " rpm" : "—", "#a78bfa")}
+                            {metricTile("Heart", bikeWatchLive?.hr != null ? bikeWatchLive.hr + " bpm" : "—", "#f472b6")}
+                            {metricTile("Elapsed", fmtRideClock(bikeWatchLive?.el), "#e8f4fb")}
+                          </div>
+
+                          {/* Map */}
+                          <div style={{ position:"relative", marginBottom:12 }}>
+                            <div ref={initBikeMap} style={{ height:380, borderRadius:8, border:"1px solid rgba(255,209,102,0.25)", background:"#0c2240" }} />
+                            <button onClick={() => {
+                              setBikeFollowing(true);
+                              if (bikeWatchLive && bikeMapRef.current) {
+                                try { bikeMapRef.current.setView([bikeWatchLive.lat, bikeWatchLive.lng], 15, { animate:true }); } catch(_) {}
+                              }
+                            }} style={{ position:"absolute", right:10, bottom:10, zIndex:500,
+                              background: bikeFollowing ? "#ffd166" : "#0c2240",
+                              color: bikeFollowing ? "#071829" : "#ffd166",
+                              border:"1px solid #ffd166", borderRadius:6, padding:"6px 12px",
+                              fontSize:11, fontWeight:700, letterSpacing:1, cursor:"pointer" }}>
+                              {bikeFollowing ? "◎ Following" : "◎ Recentre"}
+                            </button>
+                          </div>
+
+                          {!bikeWatchLive && !bikeWatchError && (
+                            <div style={{ ...S.card, textAlign:"center", color:"#5a86a8", fontSize:13 }}>
+                              Waiting for the first GPS fix from {bikeWatchMeta?.riderName || "the rider"}…
+                            </div>
+                          )}
+
+                          {/* Bio */}
+                          {(bikeWatchMeta?.bioText || bikeWatchMeta?.bioLink) && (
+                            <div style={S.card}>
+                              <div style={S.label}>About {bikeWatchMeta?.riderName || "the rider"}</div>
+                              {bikeWatchMeta?.bioText && (
+                                <div style={{ fontSize:13, color:"#e8f4fb", lineHeight:1.65, whiteSpace:"pre-wrap" }}>{bikeWatchMeta.bioText}</div>
+                              )}
+                              {bikeWatchMeta?.bioLink && (
+                                <a href={bikeWatchMeta.bioLink} target="_blank" rel="noopener noreferrer"
+                                   style={{ display:"inline-block", marginTop:10, color:"#48cae4", fontSize:13, fontWeight:700 }}>
+                                  Read more →
+                                </a>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Checkpoints */}
+                          {(bikeWatchMeta?.checkpoints || []).length > 0 && (
+                            <div style={S.card}>
+                              <div style={S.label}>Checkpoints</div>
+                              {bikeWatchMeta.checkpoints.map((cp, i) => (
+                                <div key={i} style={{ ...S.row, justifyContent:"space-between", padding:"5px 0", borderTop: i ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+                                  <span style={{ fontSize:12, color:"#e8f4fb" }}>📍 {cp.name || `Checkpoint ${i+1}`}</span>
+                                  <span style={{ fontSize:11, color:"#5a86a8" }}>{cp.note || ""}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div style={{ ...S.row, gap:8, flexWrap:"wrap", marginBottom:24 }}>
+                            <button onClick={() => {
+                              const code = (bikeWatchCode||"").trim().toUpperCase();
+                              const link = shareLink(code);
+                              if (navigator.share) navigator.share({ title:`Follow ${bikeWatchMeta?.riderName || "the ride"}`, url: link }).catch(()=>{});
+                              else { navigator.clipboard?.writeText(link); alert("Follow link copied:\n" + link); }
+                            }} style={btnStyle("#ffd166", true)}>🔗 Share this feed</button>
+                            <button onClick={() => { setBikeWatchCode(""); setBikeWatchMeta(null); setBikeWatchLive(null); setBikeWatchTrack([]); setBikeView("home"); }}
+                              style={btnStyle("#5a86a8", true)}>Follow another</button>
+                          </div>
                         </div>
                       )}
                     </div>
