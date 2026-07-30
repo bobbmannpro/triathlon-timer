@@ -3477,20 +3477,21 @@
           acquireWakeLock();
         }
 
-        async function scanBluetooth() {
+        // Filtering by service UUID only finds devices that put that UUID in their
+        // advertisement packet. Plenty don't — WHOOP, some straps and trainers — so
+        // showAll drops the filters and lists everything nearby. optionalServices is
+        // still required either way, or the services can't be read after pairing.
+        async function scanBluetooth(showAll) {
           if (!btSupported) return;
+          const SERVICES = ["heart_rate", "cycling_speed_and_cadence", "cycling_power",
+                            "running_speed_and_cadence", "fitness_machine"];
           setBtScanning(true);
           try {
-            const device = await navigator.bluetooth.requestDevice({
-              filters: [
-                { services: ["heart_rate"] },
-                { services: ["cycling_speed_and_cadence"] },
-                { services: ["cycling_power"] },
-                { services: ["running_speed_and_cadence"] },
-                { services: ["fitness_machine"] },
-              ],
-              optionalServices: ["heart_rate", "cycling_speed_and_cadence", "cycling_power", "running_speed_and_cadence", "fitness_machine"],
-            });
+            const device = await navigator.bluetooth.requestDevice(
+              showAll === true
+                ? { acceptAllDevices: true, optionalServices: SERVICES }
+                : { filters: SERVICES.map(s => ({ services: [s] })), optionalServices: SERVICES }
+            );
             setBtDevices(prev => prev.some(d => d.id === device.id) ? prev
               : [...prev, { id: device.id, name: device.name || "Unknown Device", device, gattServer: null, connected: false, readings: {}, hrHistory: [], trainerBaseRevs: null, trainerBaseDistM: null }]);
             await connectBleDevice(device);
@@ -9966,7 +9967,7 @@
                       <div style={S.card}>
                         <div style={{ ...S.row, justifyContent:"space-between" }}>
                           <div style={{ ...S.label, marginBottom:0 }}>Sensors</div>
-                          <button onClick={scanBluetooth} disabled={!btSupported || btScanning}
+                          <button onClick={() => scanBluetooth(false)} disabled={!btSupported || btScanning}
                             style={{ ...btnStyle("#48cae4", true), padding:"5px 11px", fontSize:11,
                                      opacity: btSupported ? 1 : 0.5, cursor: btSupported ? "pointer" : "not-allowed" }}>
                             {btScanning ? "Scanning…" : "+ Add sensor"}
@@ -9983,6 +9984,17 @@
                           Bluetooth, this phone can't connect. Pair the sensors to the head unit over <strong>ANT+</strong> instead
                           — it broadcasts to any number of listeners, leaving Bluetooth free for this phone.
                         </div>
+                        <div style={{ fontSize:11, color:"#5a86a8", marginTop:8, lineHeight:1.55 }}>
+                          A <strong>WHOOP</strong> works as the heart-rate source — turn on <em>HR Broadcast</em> in the WHOOP
+                          app under Device Settings. It's Bluetooth only (no ANT+), so it can feed either this phone or a head
+                          unit, not both. Wrist optical readings lag a chest strap on hard or surging efforts, so it's ideal for
+                          testing and fine for a steady ride; use a strap when the number matters.
+                        </div>
+                        <button onClick={() => scanBluetooth(true)} disabled={!btSupported || btScanning}
+                          style={{ ...btnStyle("#a78bfa", true), padding:"5px 11px", fontSize:11, marginTop:8,
+                                   opacity: btSupported ? 1 : 0.5, cursor: btSupported ? "pointer" : "not-allowed" }}>
+                          Can't see it? Show all nearby devices
+                        </button>
                         {!btSupported && (
                           <div style={{ fontSize:11, color:"#f87171", marginTop:8 }}>
                             This browser has no Web Bluetooth. Use Chrome on Android — position still works without sensors.
