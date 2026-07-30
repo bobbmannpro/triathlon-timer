@@ -1253,6 +1253,12 @@
         const [bikeFailAt, setBikeFailAt]       = useState(null);  // last rejected write
         const [bikePubStats, setBikePubStats]   = useState({ ok: 0, fail: 0 });
         const [bikeLastError, setBikeLastError] = useState("");
+        // Setup map editor: click to place checkpoints or draw a course.
+        const [bikeEditMode, setBikeEditMode] = useState("checkpoint"); // checkpoint | route | pan
+        const bikeEditModeRef  = useRef("checkpoint");
+        const bikeEditMapRef   = useRef(null);
+        const bikeEditPinsRef  = useRef({});
+        const bikeEditLineRef  = useRef(null);
         const [bikeBasemap, setBikeBasemap] = useState(() => {
           const v = localStorage.getItem("bike-basemap");
           return BIKE_BASEMAPS[v] ? v : "roads";
@@ -4340,6 +4346,111 @@
             bikeLabelRef.current.setZIndex(2);
           }
         }
+
+        useEffect(() => { bikeEditModeRef.current = bikeEditMode; }, [bikeEditMode]);
+
+        function initBikeEditMap(el) {
+          if (!el || bikeEditMapRef.current) return;
+          const b = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
+          const map = L.map(el, { zoomControl: true, attributionControl: false });
+          L.tileLayer(b.url, {
+            maxZoom: b.maxZoom, subdomains: b.subdomains, detectRetina: b.url.includes("{r}"),
+          }).addTo(map);
+
+          const d = bikeDraft;
+          const first = (d?.route || [])[0] || (d?.checkpoints || []).find(c => c.lat != null);
+          if (Array.isArray(first)) map.setView(first, 14);
+          else if (first) map.setView([first.lat, first.lng], 14);
+          else {
+            map.setView([39.5, -98.35], 4);
+            navigator.geolocation?.getCurrentPosition(
+              p => map.setView([p.coords.latitude, p.coords.longitude], 14), null,
+              { enableHighAccuracy: false });
+          }
+
+          map.on("click", e => {
+            const mode = bikeEditModeRef.current;
+            const lat = e.latlng.lat, lng = e.latlng.lng;
+            if (mode === "checkpoint") {
+              setBikeDraft(dd => ({ ...dd, checkpoints: [...(dd.checkpoints || []),
+                { name: "", lat: +lat.toFixed(6), lng: +lng.toFixed(6), note: "", kind: "checkpoint", day: null }] }));
+            } else if (mode === "route") {
+              setBikeDraft(dd => {
+                const route = [...(dd.route || []), [+lat.toFixed(5), +lng.toFixed(5)]];
+                return {
+                  ...dd, rideMode: "route", route,
+                  routeMeta: route.length > 1 ? {
+                    name: dd.routeMeta?.source === "Drawn" ? dd.routeMeta.name : "Drawn route",
+                    source: "Drawn",
+                    distM: Math.round(bikeRouteCumulative(route).pop() || 0),
+                    points: route.length, elevGainM: 0,
+                  } : null,
+                };
+              });
+            }
+          });
+          bikeEditMapRef.current = map;
+          setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 200);
+        }
+
+        // Redraw checkpoint pins whenever they change.
+        useEffect(() => {
+          const map = bikeEditMapRef.current;
+          if (!map || !bikeDraft) return;
+          Object.values(bikeEditPinsRef.current).forEach(m => { try { map.removeLayer(m); } catch(_) {} });
+          bikeEditPinsRef.current = {};
+          (bikeDraft.checkpoints || []).forEach((cp, i) => {
+            if (cp.lat == null || cp.lng == null) return;
+            const col = cp.kind === "stop" ? "#f472b6" : cp.kind === "goal" ? "#4ade80" : "#ffd166";
+            const icon = L.divIcon({ className: "", iconSize: [18,18], iconAnchor: [9,9],
+              html: `<div style="background:${col};width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.7)"></div>` });
+            const m = L.marker([cp.lat, cp.lng], { draggable: true, icon })
+              .bindTooltip(cp.name || `Checkpoint ${i + 1}`, { permanent: true, direction: "top", offset: [0,-12], className: "leaflet-ath-label" })
+              .addTo(map);
+            m.on("dragend", ev => {
+              const p = ev.target.getLatLng();
+              setBikeDraft(dd => {
+                const c = [...dd.checkpoints];
+                c[i] = { ...c[i], lat: +p.lat.toFixed(6), lng: +p.lng.toFixed(6) };
+                return { ...dd, checkpoints: c };
+              });
+            });
+            bikeEditPinsRef.current[i] = m;
+          });
+        }, [bikeDraft?.checkpoints, bikeView, bikeEditMode]);
+
+        // Redraw the course line whenever the route changes.
+        useEffect(() => {
+          const map = bikeEditMapRef.current;
+          if (!map) return;
+          const route = bikeDraft?.route || [];
+          if (route.length > 1) {
+            if (bikeEditLineRef.current) bikeEditLineRef.current.setLatLngs(route);
+            else bikeEditLineRef.current = L.polyline(route, { color: "#4ade80", weight: 4, opacity: 0.9 }).addTo(map);
+          } else if (bikeEditLineRef.current) {
+            try { map.removeLayer(bikeEditLineRef.current); } catch(_) {}
+            bikeEditLineRef.current = null;
+          }
+        }, [bikeDraft?.route, bikeView]);
+
+        // Frame an imported route so it's immediately visible.
+        useEffect(() => {
+          const map = bikeEditMapRef.current;
+          const route = bikeDraft?.route || [];
+          if (!map || route.length < 2 || bikeDraft?.routeMeta?.source === "Drawn") return;
+          try { map.fitBounds(L.latLngBounds(route), { padding: [24, 24] }); } catch(_) {}
+        }, [bikeDraft?.routeMeta]);
+
+        // Rebuild the editor map cleanly on leaving Setup.
+        useEffect(() => {
+          if (appMode === "bike" && bikeView === "setup" && bikeDraft) return;
+          if (bikeEditMapRef.current) {
+            try { bikeEditMapRef.current.remove(); } catch(_) {}
+            bikeEditMapRef.current = null;
+            bikeEditPinsRef.current = {};
+            bikeEditLineRef.current = null;
+          }
+        }, [appMode, bikeView, bikeDraft]);
 
         function initBikeRideMap(el) {
           if (!el || bikeRideMapRef.current) return;
@@ -9790,6 +9901,50 @@
                             </button>
                           ))}
                         </div>
+                      </div>
+
+                      <div style={S.card}>
+                        <div style={S.label}>Map</div>
+                        <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginBottom:8 }}>
+                          {[["checkpoint","📍 Place checkpoints","#ffd166"],
+                            ["route","✏️ Draw route","#4ade80"],
+                            ["pan","✋ Pan only","#5a86a8"]].map(([m, label, col]) => (
+                            <button key={m} onClick={() => setBikeEditMode(m)}
+                              style={{ padding:"6px 11px", fontSize:11, fontWeight:700, borderRadius:6, cursor:"pointer",
+                                background: bikeEditMode === m ? col + "26" : "transparent",
+                                border: bikeEditMode === m ? `1px solid ${col}` : "1px solid rgba(255,255,255,0.1)",
+                                color: bikeEditMode === m ? col : "#5a86a8" }}>{label}</button>
+                          ))}
+                        </div>
+                        <div style={{ fontSize:11, color:"#5a86a8", marginBottom:8, lineHeight:1.5 }}>
+                          {bikeEditMode === "checkpoint"
+                            ? "Tap the map to drop a checkpoint. Drag any pin to move it; name and type it in the list below."
+                            : bikeEditMode === "route"
+                            ? "Tap along the road to build the course. Points join in straight lines — for a route that follows every bend, draw it in Strava and import the GPX above."
+                            : "Tapping won't add anything — pan and zoom freely."}
+                        </div>
+                        <div ref={initBikeEditMap} style={{ height:320, borderRadius:8, border:"1px solid rgba(255,209,102,0.25)", background:"#0c2240" }} />
+                        {bikeEditMode === "route" && (
+                          <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginTop:8 }}>
+                            <button onClick={() => setBikeDraft(d => {
+                              const route = (d.route || []).slice(0, -1);
+                              return { ...d, route, routeMeta: route.length > 1
+                                ? { ...(d.routeMeta || {}), source:"Drawn", name: d.routeMeta?.name || "Drawn route",
+                                    distM: Math.round(bikeRouteCumulative(route).pop() || 0), points: route.length, elevGainM: 0 }
+                                : null };
+                            })} disabled={!(bikeDraft.route || []).length}
+                              style={{ ...btnStyle("#48cae4", true), padding:"5px 11px", fontSize:11,
+                                       opacity: (bikeDraft.route || []).length ? 1 : 0.4 }}>↶ Undo point</button>
+                            <button onClick={() => { if (confirm("Clear the drawn course?")) setBikeDraft(d => ({ ...d, route: [], routeMeta: null })); }}
+                              disabled={!(bikeDraft.route || []).length}
+                              style={{ ...btnStyle("#f87171", true), padding:"5px 11px", fontSize:11,
+                                       opacity: (bikeDraft.route || []).length ? 1 : 0.4 }}>Clear course</button>
+                            <span style={{ fontSize:11, color:"#5a86a8", alignSelf:"center" }}>
+                              {(bikeDraft.route || []).length} point{(bikeDraft.route || []).length === 1 ? "" : "s"}
+                              {bikeDraft.routeMeta?.distM ? `  ·  ${fmtDist(bikeDraft.routeMeta.distM)}` : ""}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       <div style={S.card}>
