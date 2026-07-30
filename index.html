@@ -1251,7 +1251,14 @@
         // Single-rider GPS tracking with no timing/segments: viewers follow a dot
         // on a map plus live sensor telemetry. Position comes from the rider's
         // phone; cadence/power/HR come from the BLE sensor stack (see connectBleDevice).
-        const [bikeView, setBikeView]   = useState("home");   // home | riders | setup | ride | feed
+        // Remembered across reloads so a refresh puts you back where you were —
+        // a follower stays on the feed instead of landing on the ride list.
+        const [bikeView, setBikeView] = useState(() => {   // home | riders | setup | ride | feed
+          try {
+            const v = localStorage.getItem("bike-view");
+            return ["home","riders","setup","ride","feed"].includes(v) ? v : "home";
+          } catch(_) { return "home"; }
+        });
         const [bikeFeedList, setBikeFeedList] = useState(() => {
           try { return JSON.parse(localStorage.getItem("bike-feeds") || "[]"); } catch(_) { return []; }
         });
@@ -1268,7 +1275,9 @@
         const [bikeLive, setBikeLive]         = useState(null); // rider's own latest frame
         const [bikeElapsedMs, setBikeElapsedMs] = useState(0);
         // Viewer side
-        const [bikeWatchCode, setBikeWatchCode] = useState("");
+        const [bikeWatchCode, setBikeWatchCode] = useState(() => {
+          try { return localStorage.getItem("bike-watch-code") || ""; } catch(_) { return ""; }
+        });
         const [bikeWatchMeta, setBikeWatchMeta] = useState(null);
         const [bikeWatchLive, setBikeWatchLive] = useState(null);
         const [bikeWatchTrack, setBikeWatchTrack] = useState([]);
@@ -1277,6 +1286,9 @@
         const [bikeRouteProg, setBikeRouteProg] = useState(null);         // position along route
         const [bikeWatchError, setBikeWatchError]   = useState("");
         const [bikeFollowing, setBikeFollowing]     = useState(true);
+        // Bumped when the feed map is (re)created. Overlay effects depend on it, so
+        // data that arrived before the map existed still gets drawn.
+        const [bikeMapReady, setBikeMapReady]      = useState(0);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
         // Rider-facing upload health. "GPS active" only proves the phone has a fix;
         // these prove the data is actually reaching the server.
@@ -4142,16 +4154,26 @@
             bikeLastCrumbRef.current = [lat, lng];
             rtdb.ref(`bikeFeeds/${code}/track`).push([+lat.toFixed(5), +lng.toFixed(5)]).catch(console.error);
           }
+          persistBikeSession();
         }
 
-        async function startBikeRide(feed, resume) {
+        // restore = { distM, elapsedMs, day, lastCrumb } when picking a ride back up
+        // after a refresh: totals continue and nothing is cleared server-side.
+        async function startBikeRide(feed, resume, restore) {
           if (!feed?.code) { setBikeGpsStatus("No feed selected."); return; }
-          if (!bikeSimulate && !navigator.geolocation) { setBikeGpsStatus("Geolocation not supported on this device."); return; }
+          if (!bikeSimulate && !restore?.simulate && !navigator.geolocation) {
+            setBikeGpsStatus("Geolocation not supported on this device."); return;
+          }
 
           // Resuming a multi-day tour continues the running totals and keeps the
           // trail already laid down; a fresh start wipes both.
           let baseDist = 0, baseElapsed = 0, day = 1;
-          if (resume) {
+          if (restore) {
+            baseDist    = restore.distM || 0;
+            baseElapsed = restore.elapsedMs || 0;
+            day         = restore.day || 1;
+            bikeLastCrumbRef.current = restore.lastCrumb || null;
+          } else if (resume) {
             try {
               const snap = await rtdb.ref(`bikeFeeds/${feed.code}/progress`).once("value");
               const p = snap.val() || {};
@@ -4165,11 +4187,13 @@
           bikeDayRef.current         = day;
           bikeDistMRef.current   = baseDist;
           bikePrevFixRef.current = null;
-          bikeLastCrumbRef.current = null;
+          // Keep the restored crumb anchor, or breadcrumb spacing restarts from
+          // scratch and drops a point right where the last one already is.
+          if (!restore) bikeLastCrumbRef.current = null;
           bikeLastPubRef.current = 0;
           bikeStartedAtRef.current = Date.now();
           bikeSimLastRef.current   = Date.now();
-          if (!resume) {
+          if (!resume && !restore) {
             bikeRideTrailPtsRef.current = [];
             if (bikeRideTrailRef.current && bikeRideMapRef.current) {
               try { bikeRideMapRef.current.removeLayer(bikeRideTrailRef.current); } catch(_) {}
@@ -4185,13 +4209,16 @@
           setBikeRiding(true);
           acquireWakeLock();
 
-          if (!resume) {
+          if (!resume && !restore) {
             // Fresh ride: clear the previous trail so viewers don't see last ride's line
             rtdb.ref(`bikeFeeds/${feed.code}/track`).remove().catch(console.error);
           }
-          rtdb.ref(`bikeFeeds/${feed.code}`).update({
-            status: "live", startedAt: bikeStartedAtRef.current, finishedAt: null,
-          }).catch(console.error);
+          // A refresh must not look like a new ride to viewers: leave startedAt
+          // alone, or their trail gets cleared and the elapsed clock jumps.
+          rtdb.ref(`bikeFeeds/${feed.code}`).update(restore
+            ? { status: "live", finishedAt: null }
+            : { status: "live", startedAt: bikeStartedAtRef.current, finishedAt: null }
+          ).catch(console.error);
           rtdb.ref(`bikeFeeds/${feed.code}/progress`).update({
             distM: baseDist, elapsedMs: baseElapsed, day, updatedAt: Date.now(),
           }).catch(console.error);
@@ -4261,6 +4288,28 @@
           { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
         }
 
+        // Snapshot the running ride locally so a refresh — or the browser reloading
+        // the tab under memory pressure — can pick tracking straight back up.
+        // Written on every publish: it's localStorage, so it costs nothing.
+        function persistBikeSession() {
+          const code = bikeRideCodeRef.current;
+          if (!code) return;
+          try {
+            localStorage.setItem("bike-active-ride", JSON.stringify({
+              code,
+              day: bikeDayRef.current,
+              distM: Math.round(bikeDistMRef.current),
+              elapsedMs: bikeElapsedBaseRef.current + (Date.now() - (bikeStartedAtRef.current || Date.now())),
+              simulate: !!bikeSimulate,
+              lastCrumb: bikeLastCrumbRef.current,
+              savedAt: Date.now(),
+            }));
+          } catch(_) {}
+        }
+        function clearBikeSession() {
+          try { localStorage.removeItem("bike-active-ride"); } catch(_) {}
+        }
+
         function stopBikeRide(finish) {
           if (bikeGpsWatchRef.current !== null) {
             navigator.geolocation.clearWatch(bikeGpsWatchRef.current);
@@ -4284,6 +4333,7 @@
               : { status: "paused" }
             ).catch(console.error);
           }
+          clearBikeSession();   // nothing to auto-resume once stopped or paused
           setBikeRiding(false);
           setBikeGpsStatus(finish ? "Ride finished." : "Paused for the day — resume when you set off again.");
         }
@@ -4627,6 +4677,8 @@
           map.on("dragstart", () => setBikeFollowing(false));
           bikeMapRef.current = map;
           applyBikeBasemap(bikeBasemap);
+          setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 150);
+          setBikeMapReady(n => n + 1);
         }
 
         // Swap tiles when the viewer picks a different basemap.
@@ -4714,7 +4766,7 @@
                   .addTo(map);
               });
           } catch(_) {}
-        }, [bikeWatchMeta, bikeView, bikeBasemap]);
+        }, [bikeWatchMeta, bikeView, bikeBasemap, bikeMapReady]);
 
         // Project the rider onto the planned course and light up the covered part.
         useEffect(() => {
@@ -4730,7 +4782,7 @@
             if (bikeRouteDoneRef.current) bikeRouteDoneRef.current.setLatLngs(done);
             else bikeRouteDoneRef.current = L.polyline(done, { color: "#4ade80", weight: 5, opacity: 0.9 }).addTo(map);
           } catch(_) {}
-        }, [bikeWatchLive, bikeWatchMeta]);
+        }, [bikeWatchLive, bikeWatchMeta, bikeMapReady]);
 
         // Keep the breadcrumb trail line in sync.
         useEffect(() => {
@@ -4747,7 +4799,7 @@
               }).addTo(map);
             }
           } catch(_) {}
-        }, [bikeWatchTrack, bikeBasemap]);
+        }, [bikeWatchTrack, bikeBasemap, bikeMapReady]);
 
         // Create the rider marker on first frame and recentre once.
         useEffect(() => {
@@ -4767,7 +4819,7 @@
               map.setView(pos, 15, { animate: true });
             }
           } catch(_) {}
-        }, [bikeWatchLive, bikeWatchMeta]);
+        }, [bikeWatchLive, bikeWatchMeta, bikeMapReady]);
 
         // Stop GPS if the rider navigates away from bike mode entirely.
         useEffect(() => {
@@ -4787,6 +4839,62 @@
             setBikeWatchError("This follow link needs Anonymous sign-in enabled in Firebase Auth, or sign in below.");
           });
         }, [currentUser, authLoading]);
+
+        // ── Survive a refresh mid-ride ──────────────────────────────────────────
+        // Reloading the page (or the browser reclaiming the tab) must not break the
+        // feed: pick the session straight back up, continuing distance, elapsed time
+        // and the trail rather than starting over.
+        const bikeRestoredRef = useRef(false);
+        useEffect(() => {
+          if (bikeRestoredRef.current || !currentUser) return;
+          let sess = null;
+          try { sess = JSON.parse(localStorage.getItem("bike-active-ride") || "null"); } catch(_) {}
+          if (!sess || !sess.code) return;
+          bikeRestoredRef.current = true;
+          // A session this old is a leftover, not a refresh — don't silently
+          // restart tracking hours later.
+          if (Date.now() - (sess.savedAt || 0) > 6 * 3600 * 1000) { clearBikeSession(); return; }
+
+          (async () => {
+            try {
+              const snap = await rtdb.ref(`bikeFeeds/${sess.code}/status`).once("value");
+              if (snap.val() !== "live") { clearBikeSession(); return; }
+            } catch(_) { /* offline: resume anyway, writes will queue */ }
+
+            setAppMode("bike");
+            try { localStorage.setItem("tri-appmode", "bike"); } catch(_) {}
+            setView("bike");
+            setBikeView("ride");
+            if (sess.simulate) setBikeSimulate(true);
+
+            // Rebuild the rider's own trail from the crumbs already published, so
+            // the map isn't blank after the reload.
+            try {
+              const tsnap = await rtdb.ref(`bikeFeeds/${sess.code}/track`).once("value");
+              const v = tsnap.val();
+              if (v && typeof v === "object") {
+                const pts = Object.keys(v).sort().map(k => v[k]).filter(p => Array.isArray(p) && p.length === 2);
+                bikeRideTrailPtsRef.current = pts.slice(-3000);
+              }
+            } catch(_) {}
+
+            const feed = bikeFeedList.find(f => f.code === sess.code) || { ...newBikeFeed(), code: sess.code };
+            startBikeRide(feed, false, sess);
+            setBikeGpsStatus("Tracking resumed after reload — nothing was lost.");
+          })();
+        }, [currentUser, bikeFeedList]);
+
+        // Followers shouldn't have to re-enter the code after a refresh either.
+        useEffect(() => {
+          const code = (bikeWatchCode || "").trim().toUpperCase();
+          try {
+            if (code.length >= 4) localStorage.setItem("bike-watch-code", code);
+          } catch(_) {}
+        }, [bikeWatchCode]);
+
+        useEffect(() => {
+          try { localStorage.setItem("bike-view", bikeView); } catch(_) {}
+        }, [bikeView]);
 
         // Deep link: ?bike=CODE drops straight into that rider's live feed.
         const bikeDeepLinkRef = useRef(false);
@@ -10732,7 +10840,10 @@
                               if (navigator.share) navigator.share({ title:`Follow ${bikeWatchMeta?.riderName || "the ride"}`, url: link }).catch(()=>{});
                               else { navigator.clipboard?.writeText(link); alert("Follow link copied:\n" + link); }
                             }} style={btnStyle("#ffd166", true)}>🔗 Share this feed</button>
-                            <button onClick={() => { setBikeWatchCode(""); setBikeWatchMeta(null); setBikeWatchLive(null); setBikeWatchTrack([]); setBikeView("home"); }}
+                            <button onClick={() => {
+                              try { localStorage.removeItem("bike-watch-code"); } catch(_) {}
+                              setBikeWatchCode(""); setBikeWatchMeta(null); setBikeWatchLive(null); setBikeWatchTrack([]); setBikeView("home");
+                            }}
                               style={btnStyle("#5a86a8", true)}>Follow another</button>
                           </div>
                         </div>
