@@ -1,0 +1,103 @@
+{
+  "rules": {
+    "watchTokens": {
+      "$token": {
+        ".read": true,
+        ".write": "auth != null"
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    "liveRaces": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('publishedBy').val() === auth.uid)",
+        "waypoints": {
+          ".read": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+        },
+        "clockMs": {
+          ".read": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+        },
+        "athletes": {
+          "$idx": {
+            "gps": {
+              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+            },
+            "splits": {
+              "$seg": {
+                ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+              }
+            },
+            "startOffset": {
+              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+            },
+            "started": {
+              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+            },
+            "finished": {
+              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+            }
+          }
+        }
+      }
+    },
+    "swimLive": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+
+    "photoAlbums": {
+      "$code": {
+        ".read": true,
+        ".write": "auth != null"
+      }
+    },
+
+    "bikeFeeds": {
+      "$code": {
+        ".read": true,
+        ".write": "auth != null && data.exists() && data.child('meta/createdBy').val() === auth.uid",
+
+        "meta": {
+          ".write": "auth != null && (!data.exists() || data.child('createdBy').val() === auth.uid)",
+          ".validate": "newData.hasChildren(['riderName', 'createdBy']) && newData.child('createdBy').val() === auth.uid"
+        },
+
+        "status": {
+          ".write": "auth != null",
+          ".validate": "newData.isString()"
+        },
+        "startedAt": {
+          ".write": "auth != null",
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+        "finishedAt": {
+          ".write": "auth != null",
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+
+        "live": {
+          ".write": "auth != null",
+          ".validate": "newData.hasChildren(['lat', 'lng', 't'])",
+          "lat": { ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90" },
+          "lng": { ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180" },
+          "t": { ".validate": "newData.isNumber()" },
+          "$field": { ".validate": true }
+        },
+
+        "track": {
+          ".write": "auth != null",
+          "$crumb": {
+            ".validate": "newData.hasChildren(['0', '1'])"
+          }
+        }
+      }
+    }
+  }
+}

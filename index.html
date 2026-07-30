@@ -3706,6 +3706,9 @@
           if (!feed?.code) return Promise.resolve();
           const r = bikeRiderFor(feed, ridersOverride);
           return rtdb.ref(`bikeFeeds/${feed.code}/meta`).set({
+            // Ownership marker the database rules check: only the creator may edit
+            // meta, while anyone signed in can publish telemetry to live/track.
+            createdBy: currentUser?.uid || null,
             riderName: r?.name || "Rider",
             riderTeam: r?.team || "",
             eventName: feed.eventName || "",
@@ -3849,7 +3852,9 @@
           rtdb.ref(`bikeFeeds/${feed.code}`).update({
             status: "live", startedAt: bikeStartedAtRef.current, finishedAt: null,
           }).catch(console.error);
-          publishBikeMeta(feed);
+          // Only the feed's owner may write meta. A rider who joined with just a
+          // code doesn't own it — the organiser already published it at setup.
+          if (bikeFeedList.some(f => f.code === feed.code)) publishBikeMeta(feed);
 
           // ── Trainer / indoor mode ────────────────────────────────────────────
           if (bikeSimulate) {
