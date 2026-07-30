@@ -175,121 +175,6 @@
       // 995ms is rejected and the effective rate halves, so allow a small tolerance.
       const BIKE_PUBLISH_SLACK_MS = 100;
 
-      // ── Spotify (control the phone's own playback from the dashboard) ────────
-      // Uses Spotify Connect, so this drives the Spotify app already running on the
-      // rider's phone rather than starting a second player. Authorization Code with
-      // PKCE means no client secret, which is what makes it safe on a public page.
-      //
-      // Set up at https://developer.spotify.com/dashboard — create an app, add this
-      // page's URL as a Redirect URI, paste the Client ID below, set enabled:true.
-      //
-      // Two hard limits, both from Spotify:
-      //  • Playback control requires the RIDER to have Spotify Premium.
-      //  • Since Feb 2026 a Development Mode app serves at most 5 allowlisted
-      //    users and the developer account itself must be Premium. Fine for one
-      //    rider; extended quota needs a registered business and 250k MAU.
-      const SPOTIFY = {
-        enabled: false,
-        clientId: "",
-        redirectUri: (typeof location !== "undefined" ? location.origin + location.pathname : ""),
-        scopes: "user-read-playback-state user-modify-playback-state user-read-currently-playing",
-        authUrl:  "https://accounts.spotify.com/authorize",
-        tokenUrl: "https://accounts.spotify.com/api/token",
-        apiUrl:   "https://api.spotify.com/v1",
-        pollMs: 8000,   // well inside rate limits; controls update optimistically
-      };
-
-      const SPOTIFY_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-      function spotifyRandomString(n) {
-        const a = new Uint8Array(n);
-        crypto.getRandomValues(a);
-        return Array.from(a, b => SPOTIFY_CHARS[b % SPOTIFY_CHARS.length]).join("");
-      }
-      async function spotifyChallenge(verifier) {
-        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-        return btoa(String.fromCharCode.apply(null, new Uint8Array(digest)))
-          .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      }
-      function spotifyLoadToken() {
-        try { return JSON.parse(localStorage.getItem("spotify-token") || "null"); } catch(_) { return null; }
-      }
-      function spotifySaveToken(j) {
-        const prev = spotifyLoadToken() || {};
-        const tok = {
-          access_token: j.access_token,
-          // Spotify doesn't always return a new refresh token; keep the old one.
-          refresh_token: j.refresh_token || prev.refresh_token,
-          expires_at: Date.now() + ((j.expires_in || 3600) - 60) * 1000,
-        };
-        try { localStorage.setItem("spotify-token", JSON.stringify(tok)); } catch(_) {}
-        return tok;
-      }
-      function spotifyClearToken() {
-        try { localStorage.removeItem("spotify-token"); } catch(_) {}
-      }
-
-      async function spotifyBeginAuth() {
-        const verifier = spotifyRandomString(96);
-        try { sessionStorage.setItem("spotify-verifier", verifier); } catch(_) {}
-        const u = new URL(SPOTIFY.authUrl);
-        u.searchParams.set("client_id", SPOTIFY.clientId);
-        u.searchParams.set("response_type", "code");
-        u.searchParams.set("redirect_uri", SPOTIFY.redirectUri);
-        u.searchParams.set("code_challenge_method", "S256");
-        u.searchParams.set("code_challenge", await spotifyChallenge(verifier));
-        u.searchParams.set("scope", SPOTIFY.scopes);
-        location.href = u.toString();
-      }
-
-      async function spotifyExchangeCode(code) {
-        let verifier = "";
-        try { verifier = sessionStorage.getItem("spotify-verifier") || ""; } catch(_) {}
-        const res = await fetch(SPOTIFY.tokenUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            client_id: SPOTIFY.clientId, grant_type: "authorization_code",
-            code, redirect_uri: SPOTIFY.redirectUri, code_verifier: verifier,
-          }),
-        });
-        if (!res.ok) throw new Error("Spotify sign-in failed (" + res.status + ")");
-        return spotifySaveToken(await res.json());
-      }
-
-      async function spotifyRefresh(tok) {
-        if (!tok || !tok.refresh_token) throw new Error("Not signed in");
-        const res = await fetch(SPOTIFY.tokenUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            client_id: SPOTIFY.clientId, grant_type: "refresh_token", refresh_token: tok.refresh_token,
-          }),
-        });
-        if (!res.ok) { spotifyClearToken(); throw new Error("Spotify session expired — sign in again"); }
-        return spotifySaveToken(await res.json());
-      }
-
-      // Thin wrapper: refreshes expired tokens and turns Spotify's status codes into
-      // messages a rider can act on.
-      async function spotifyApi(path, options) {
-        let tok = spotifyLoadToken();
-        if (!tok) throw new Error("Not signed in");
-        if (Date.now() >= (tok.expires_at || 0)) tok = await spotifyRefresh(tok);
-        const call = (t) => fetch(SPOTIFY.apiUrl + path, {
-          ...(options || {}),
-          headers: { Authorization: "Bearer " + t.access_token, ...((options || {}).headers || {}) },
-        });
-        let res = await call(tok);
-        if (res.status === 401) { tok = await spotifyRefresh(tok); res = await call(tok); }
-        if (res.status === 403) throw new Error("Spotify Premium is required to control playback");
-        if (res.status === 404) throw new Error("No active Spotify device — open Spotify and play something once");
-        if (res.status === 429) throw new Error("Spotify is rate limiting — easing off");
-        if (res.status === 204) return null;                       // nothing playing
-        if (!res.ok) throw new Error("Spotify error " + res.status);
-        const text = await res.text();
-        return text ? JSON.parse(text) : null;
-      }
-
       // ── Wahoo Cloud API (post-ride only — NOT live) ──────────────────────────
       // The Wahoo Cloud API has no live-position endpoint: workout data (including
       // GPS) only exists after a ride finishes and uploads, and webhooks fire on
@@ -1404,11 +1289,6 @@
         // Bumped when the feed map is (re)created. Overlay effects depend on it, so
         // data that arrived before the map existed still gets drawn.
         const [bikeMapReady, setBikeMapReady]      = useState(0);
-        // Spotify now-playing widget
-        const [spotifyTok, setSpotifyTok]   = useState(() => spotifyLoadToken());
-        const [spotifyNow, setSpotifyNow]   = useState(null);   // { title, artist, art, playing }
-        const [spotifyErr, setSpotifyErr]   = useState("");
-        const [spotifyBusy, setSpotifyBusy] = useState(false);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
         // Rider-facing upload health. "GPS active" only proves the phone has a fix;
         // these prove the data is actually reaching the server.
@@ -4959,80 +4839,6 @@
             setBikeWatchError("This follow link needs Anonymous sign-in enabled in Firebase Auth, or sign in below.");
           });
         }, [currentUser, authLoading]);
-
-        // ── Spotify ─────────────────────────────────────────────────────────────
-        // Complete the PKCE redirect if we've just come back from Spotify.
-        const spotifyCbRef = useRef(false);
-        useEffect(() => {
-          if (spotifyCbRef.current || !SPOTIFY.enabled) return;
-          const params = new URLSearchParams(location.search);
-          const code = params.get("code");
-          if (!code) return;
-          spotifyCbRef.current = true;
-          spotifyExchangeCode(code)
-            .then(tok => { setSpotifyTok(tok); setSpotifyErr(""); })
-            .catch(e => setSpotifyErr(e.message))
-            .finally(() => {
-              // Strip the code so a reload doesn't try to redeem it twice.
-              try {
-                params.delete("code"); params.delete("state");
-                const q = params.toString();
-                history.replaceState({}, "", location.pathname + (q ? "?" + q : ""));
-              } catch(_) {}
-            });
-        }, []);
-
-        function readSpotifyState(d) {
-          if (!d || !d.item) return null;
-          const imgs = (d.item.album && d.item.album.images) || [];
-          return {
-            title: d.item.name || "",
-            artist: (d.item.artists || []).map(a => a.name).join(", "),
-            art: imgs.length ? imgs[imgs.length - 1].url : "",   // smallest: it's a 48px tile
-            playing: !!d.is_playing,
-            device: d.device ? d.device.name : "",
-          };
-        }
-
-        // Poll while the rider is on the Ride view. Slow enough to stay well inside
-        // rate limits — the controls update optimistically so it still feels instant.
-        useEffect(() => {
-          if (!SPOTIFY.enabled || !spotifyTok) return;
-          if (appMode !== "bike" || bikeView !== "ride") return;
-          let alive = true;
-          const tick = () => spotifyApi("/me/player")
-            .then(d => { if (alive) { setSpotifyNow(readSpotifyState(d)); setSpotifyErr(""); } })
-            .catch(e => { if (alive) setSpotifyErr(e.message); });
-          tick();
-          const id = setInterval(tick, SPOTIFY.pollMs);
-          return () => { alive = false; clearInterval(id); };
-        }, [spotifyTok, appMode, bikeView]);
-
-        async function spotifyControl(action) {
-          setSpotifyBusy(true);
-          setSpotifyErr("");
-          // Optimistic: a rider tapping pause shouldn't wait for a round trip.
-          if (action === "toggle") setSpotifyNow(n => n ? { ...n, playing: !n.playing } : n);
-          try {
-            if (action === "next")      await spotifyApi("/me/player/next", { method: "POST" });
-            else if (action === "prev") await spotifyApi("/me/player/previous", { method: "POST" });
-            else {
-              const playing = spotifyNow && spotifyNow.playing;
-              await spotifyApi("/me/player/" + (playing ? "pause" : "play"), { method: "PUT" });
-            }
-            // Give Spotify a moment to settle before reading back the truth.
-            setTimeout(() => {
-              spotifyApi("/me/player")
-                .then(d => setSpotifyNow(readSpotifyState(d)))
-                .catch(() => {});
-            }, 700);
-          } catch (e) {
-            setSpotifyErr(e.message);
-            spotifyApi("/me/player").then(d => setSpotifyNow(readSpotifyState(d))).catch(() => {});
-          } finally {
-            setSpotifyBusy(false);
-          }
-        }
 
         // ── Survive a refresh mid-ride ──────────────────────────────────────────
         // Reloading the page (or the browser reclaiming the tab) must not break the
@@ -10786,64 +10592,6 @@
                           </div>
                         );
                       })()}
-
-                      {/* Music — controls the Spotify app already on the phone */}
-                      {SPOTIFY.enabled && (
-                        <div style={{ ...S.card, padding:"10px 12px" }}>
-                          {!spotifyTok ? (
-                            <div style={{ ...S.row, justifyContent:"space-between", gap:10, flexWrap:"wrap" }}>
-                              <div style={{ minWidth:0 }}>
-                                <div style={{ ...S.label, marginBottom:2 }}>Music</div>
-                                <div style={{ fontSize:11, color:"#5a86a8", lineHeight:1.45 }}>
-                                  Connect Spotify to skip tracks without leaving this page.
-                                </div>
-                              </div>
-                              <button onClick={() => spotifyBeginAuth().catch(e => setSpotifyErr(e.message))}
-                                style={{ ...btnStyle("#1DB954"), padding:"8px 14px", fontSize:12, whiteSpace:"nowrap" }}>
-                                Connect Spotify
-                              </button>
-                            </div>
-                          ) : (
-                            <div>
-                              <div style={{ ...S.row, gap:10 }}>
-                                {spotifyNow?.art
-                                  ? <img src={spotifyNow.art} alt="" style={{ width:48, height:48, borderRadius:4, objectFit:"cover", flexShrink:0 }} />
-                                  : <div style={{ width:48, height:48, borderRadius:4, background:"#071829", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>🎵</div>}
-                                <div style={{ flex:1, minWidth:0 }}>
-                                  <div style={{ fontSize:13, fontWeight:700, color:"#e8f4fb", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                                    {spotifyNow?.title || "Nothing playing"}
-                                  </div>
-                                  <div style={{ fontSize:11, color:"#5a86a8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                                    {spotifyNow?.artist || (spotifyErr ? "" : "Start something in Spotify")}
-                                  </div>
-                                </div>
-                                <div style={{ ...S.row, gap:4, flexShrink:0 }}>
-                                  {[["prev","⏮"],["toggle", spotifyNow?.playing ? "⏸" : "▶"],["next","⏭"]].map(([act, icon]) => (
-                                    <button key={act} onClick={() => spotifyControl(act)} disabled={spotifyBusy}
-                                      style={{ width:40, height:40, borderRadius:20, fontSize:16, cursor:"pointer",
-                                        background: act === "toggle" ? "#1DB954" : "transparent",
-                                        color: act === "toggle" ? "#071829" : "#e8f4fb",
-                                        border: act === "toggle" ? "none" : "1px solid rgba(255,255,255,0.18)",
-                                        opacity: spotifyBusy ? 0.6 : 1 }}>{icon}</button>
-                                  ))}
-                                </div>
-                              </div>
-                              {spotifyErr && (
-                                <div style={{ fontSize:11, color:"#ffd166", marginTop:8 }}>⚠ {spotifyErr}</div>
-                              )}
-                              <div style={{ ...S.row, justifyContent:"space-between", marginTop:6 }}>
-                                <span style={{ fontSize:10, color:"#3a6080" }}>
-                                  {spotifyNow?.device ? "Playing on " + spotifyNow.device : ""}
-                                </span>
-                                <button onClick={() => { spotifyClearToken(); setSpotifyTok(null); setSpotifyNow(null); setSpotifyErr(""); }}
-                                  style={{ background:"none", border:"none", color:"#3a6080", fontSize:10, cursor:"pointer", textDecoration:"underline" }}>
-                                  Disconnect
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
 
                       {/* The rider's own map — proof the dot is where they are */}
                       <div style={{ ...S.card, padding:0, overflow:"hidden" }}>
