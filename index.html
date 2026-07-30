@@ -102,6 +102,38 @@
       const bikeCrumbSpacing = (distM) =>
         Math.max(BIKE_CRUMB_MIN_M, Math.min(BIKE_CRUMB_MAX_M, distM / BIKE_CRUMB_TARGET));
 
+      // ── Basemaps ─────────────────────────────────────────────────────────────
+      // Raw OSM tiles are cluttered with buildings and POIs. CARTO's styles are
+      // road-and-water first, which is what a tracking map actually needs, and
+      // they're free with attribution — no API key, no billing account.
+      // Satellite is Esri World Imagery, the standard keyless option, with a
+      // label overlay so roads stay identifiable.
+      const BIKE_BASEMAPS = {
+        roads: {
+          label: "Roads",
+          url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+          subdomains: "abcd", maxZoom: 20,
+          attribution: '&copy; OpenStreetMap &copy; CARTO',
+          routeColor: "#3a6a9a", trailColor: "#ffd166",
+        },
+        minimal: {
+          label: "Minimal",
+          url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+          subdomains: "abcd", maxZoom: 20,
+          attribution: '&copy; OpenStreetMap &copy; CARTO',
+          routeColor: "#8aa8c0", trailColor: "#f4742b",
+        },
+        satellite: {
+          label: "Satellite",
+          url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          subdomains: "abc", maxZoom: 19,
+          attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+          // Roads/place names on top of the imagery, otherwise it's unreadable.
+          labels: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
+          routeColor: "#ffffff", trailColor: "#ffd166",
+        },
+      };
+
       // A Strava GPX export can carry tens of thousands of points. Simplify hard
       // before storing: viewers download the route with the feed metadata.
       const BIKE_ROUTE_MAX_PTS   = 1200;
@@ -835,7 +867,7 @@
             : firstGps ? [firstGps.gps.lat, firstGps.gps.lng]
             : [37.7749, -122.4194];
           const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 15);
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+          L.tileLayer(BIKE_BASEMAPS.roads.url, { subdomains: BIKE_BASEMAPS.roads.subdomains, maxZoom: BIKE_BASEMAPS.roads.maxZoom, attribution: BIKE_BASEMAPS.roads.attribution, detectRetina: true }).addTo(map);
           if (wps.length > 1) {
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#4ade80", weight: 3, opacity: 0.7 }).addTo(map);
           }
@@ -1037,7 +1069,7 @@
           }
           if (setupMapRef.current) return;
           const map = L.map(el, { zoomControl: true, attributionControl: false });
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+          L.tileLayer(BIKE_BASEMAPS.roads.url, { subdomains: BIKE_BASEMAPS.roads.subdomains, maxZoom: BIKE_BASEMAPS.roads.maxZoom, attribution: BIKE_BASEMAPS.roads.attribution, detectRetina: true }).addTo(map);
           if (setupMapViewRef.current) {
             map.setView(setupMapViewRef.current.center, setupMapViewRef.current.zoom);
           } else {
@@ -1214,6 +1246,10 @@
         const [bikeWatchError, setBikeWatchError]   = useState("");
         const [bikeFollowing, setBikeFollowing]     = useState(true);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
+        const [bikeBasemap, setBikeBasemap] = useState(() => {
+          const v = localStorage.getItem("bike-basemap");
+          return BIKE_BASEMAPS[v] ? v : "roads";
+        });
         // Trainer/indoor mode: sensors are real, movement is synthesised. Lets a
         // smart trainer drive the whole feed with no GPS and no outdoor ride.
         const [bikeSimulate, setBikeSimulate]       = useState(false);
@@ -1229,6 +1265,8 @@
         const bikeMapRef       = useRef(null);
         const bikeMarkerRef    = useRef(null);
         const bikeTrailLineRef = useRef(null);
+        const bikeTileRef      = useRef(null);   // active basemap layer
+        const bikeLabelRef     = useRef(null);   // label overlay (satellite only)
         const bikeRouteLineRef = useRef(null);   // full planned course (faint)
         const bikeRouteDoneRef = useRef(null);   // portion already covered (bright)
         const bikeRouteCumRef  = useRef(null);   // cached cumulative distances
@@ -1643,7 +1681,7 @@
           const wps = (joinLiveData?.waypoints || joinRace?.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
           const center = wps[0] ? [wps[0].lat, wps[0].lng] : [37.7749, -122.4194];
           const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 15);
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+          L.tileLayer(BIKE_BASEMAPS.roads.url, { subdomains: BIKE_BASEMAPS.roads.subdomains, maxZoom: BIKE_BASEMAPS.roads.maxZoom, attribution: BIKE_BASEMAPS.roads.attribution, detectRetina: true }).addTo(map);
           if (wps.length > 1) {
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#5a86a8", weight: 2, dashArray: "6 4", opacity: 0.5 }).addTo(map);
             try { map.fitBounds(wps.map(w => [w.lat, w.lng]), { padding: [20, 20] }); } catch(_) {}
@@ -4236,17 +4274,45 @@
           return () => cancelAnimationFrame(raf);
         }, [appMode, bikeView]);
 
+        function applyBikeBasemap(key) {
+          const map = bikeMapRef.current;
+          if (!map) return;
+          const b = BIKE_BASEMAPS[key] || BIKE_BASEMAPS.roads;
+          if (bikeTileRef.current)  { try { map.removeLayer(bikeTileRef.current); } catch(_) {} }
+          if (bikeLabelRef.current) { try { map.removeLayer(bikeLabelRef.current); } catch(_) {} bikeLabelRef.current = null; }
+          bikeTileRef.current = L.tileLayer(b.url, {
+            attribution: b.attribution, maxZoom: b.maxZoom, subdomains: b.subdomains,
+            // Only for providers that serve an @2x tile via {r}. Without it Leaflet
+            // fakes retina by shifting zoom levels, which just costs a zoom step.
+            detectRetina: b.url.includes("{r}"),
+          }).addTo(map);
+          bikeTileRef.current.setZIndex(1);
+          if (b.labels) {
+            bikeLabelRef.current = L.tileLayer(b.labels, {
+              maxZoom: b.maxZoom, subdomains: "abcd", detectRetina: true,
+            }).addTo(map);
+            bikeLabelRef.current.setZIndex(2);
+          }
+        }
+
         function initBikeMap(el) {
           bikeMapElRef.current = el;
           if (!el || bikeMapRef.current) return;
           const start = bikeWatchLive ? [bikeWatchLive.lat, bikeWatchLive.lng] : [39.5, -98.35];
-          const map = L.map(el, { zoomControl: true, attributionControl: false })
+          const map = L.map(el, { zoomControl: true, attributionControl: true })
             .setView(start, bikeWatchLive ? 14 : 4);
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
           // Dragging the map means the viewer wants to look around — stop following.
           map.on("dragstart", () => setBikeFollowing(false));
           bikeMapRef.current = map;
+          applyBikeBasemap(bikeBasemap);
         }
+
+        // Swap tiles when the viewer picks a different basemap.
+        useEffect(() => {
+          if (!bikeMapRef.current) return;
+          applyBikeBasemap(bikeBasemap);
+          try { localStorage.setItem("bike-basemap", bikeBasemap); } catch(_) {}
+        }, [bikeBasemap]);
 
         // Tear the map down when leaving the feed view so it rebuilds cleanly.
         useEffect(() => {
@@ -4256,6 +4322,8 @@
             bikeMapRef.current = null;
             bikeMarkerRef.current = null;
             bikeTrailLineRef.current = null;
+            bikeTileRef.current = null;
+            bikeLabelRef.current = null;
             bikeRouteLineRef.current = null;
             bikeRouteDoneRef.current = null;
             bikeRouteCumRef.current = null;
@@ -4268,12 +4336,19 @@
         useEffect(() => {
           const map = bikeMapRef.current;
           if (!map || !bikeWatchMeta) return;
+          const theme = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
           try {
             const route = bikeWatchMeta.route || [];
             if (route.length > 1) {
               bikeRouteCumRef.current = bikeRouteCumulative(route);
-              if (bikeRouteLineRef.current) bikeRouteLineRef.current.setLatLngs(route);
-              else bikeRouteLineRef.current = L.polyline(route, { color: "#5a86a8", weight: 4, dashArray: "8 6", opacity: 0.55 }).addTo(map);
+              if (bikeRouteLineRef.current) {
+                bikeRouteLineRef.current.setLatLngs(route);
+                bikeRouteLineRef.current.setStyle({ color: theme.routeColor });
+              } else {
+                bikeRouteLineRef.current = L.polyline(route, {
+                  color: theme.routeColor, weight: 4, dashArray: "8 6", opacity: 0.75,
+                }).addTo(map);
+              }
             } else {
               bikeRouteCumRef.current = null;
             }
@@ -4296,7 +4371,7 @@
                   .addTo(map);
               });
           } catch(_) {}
-        }, [bikeWatchMeta, bikeView]);
+        }, [bikeWatchMeta, bikeView, bikeBasemap]);
 
         // Project the rider onto the planned course and light up the covered part.
         useEffect(() => {
@@ -4318,11 +4393,18 @@
         useEffect(() => {
           const map = bikeMapRef.current;
           if (!map || bikeWatchTrack.length < 2) return;
+          const theme = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
           try {
-            if (bikeTrailLineRef.current) bikeTrailLineRef.current.setLatLngs(bikeWatchTrack);
-            else bikeTrailLineRef.current = L.polyline(bikeWatchTrack, { color: "#ffd166", weight: 3.5, opacity: 0.85 }).addTo(map);
+            if (bikeTrailLineRef.current) {
+              bikeTrailLineRef.current.setLatLngs(bikeWatchTrack);
+              bikeTrailLineRef.current.setStyle({ color: theme.trailColor });
+            } else {
+              bikeTrailLineRef.current = L.polyline(bikeWatchTrack, {
+                color: theme.trailColor, weight: 4, opacity: 0.9,
+              }).addTo(map);
+            }
           } catch(_) {}
-        }, [bikeWatchTrack]);
+        }, [bikeWatchTrack, bikeBasemap]);
 
         // Create the rider marker on first frame and recentre once.
         useEffect(() => {
@@ -10040,6 +10122,16 @@
                           {/* Map */}
                           <div style={{ position:"relative", marginBottom:12 }}>
                             <div ref={initBikeMap} style={{ height:380, borderRadius:8, border:"1px solid rgba(255,209,102,0.25)", background:"#0c2240" }} />
+                            <div style={{ position:"absolute", right:10, top:10, zIndex:500, display:"flex", gap:4,
+                              background:"rgba(7,24,41,0.85)", padding:3, borderRadius:7, border:"1px solid rgba(255,255,255,0.14)" }}>
+                              {Object.entries(BIKE_BASEMAPS).map(([k, b]) => (
+                                <button key={k} onClick={() => setBikeBasemap(k)}
+                                  style={{ padding:"5px 10px", fontSize:11, fontWeight:700, letterSpacing:0.5, borderRadius:5, cursor:"pointer",
+                                    background: bikeBasemap === k ? "#ffd166" : "transparent",
+                                    color: bikeBasemap === k ? "#071829" : "#c8d8e8",
+                                    border:"none" }}>{b.label}</button>
+                              ))}
+                            </div>
                             <button onClick={() => {
                               setBikeFollowing(true);
                               if (bikeWatchLive && bikeMapRef.current) {
