@@ -197,6 +197,25 @@
         authUrl: "https://api.wahooligan.com/oauth/authorize",
       };
 
+      // Compass bearing a→b in degrees, for when the GPS doesn't report heading
+      // (common below walking pace).
+      function bikeBearing(a, b) {
+        const f1 = a[0] * Math.PI / 180, f2 = b[0] * Math.PI / 180;
+        const dl = (b[1] - a[1]) * Math.PI / 180;
+        const y = Math.sin(dl) * Math.cos(f2);
+        const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+        return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+      }
+
+      // Scale needed so a rotated rectangle still covers its own box — otherwise
+      // track-up mode shows blank wedges in the corners.
+      function bikeRotateScale(w, h, deg) {
+        const r = Math.abs(deg) * Math.PI / 180;
+        const c = Math.abs(Math.cos(r)), s = Math.abs(Math.sin(r));
+        if (!w || !h) return 1;
+        return Math.max((w * c + h * s) / w, (w * s + h * c) / h);
+      }
+
       // ── Route geometry (Bike Live Feed) ──────────────────────────────────────
       // Local flat-earth projection around an anchor; plenty accurate over the few
       // hundred metres these calculations span.
@@ -1289,6 +1308,12 @@
         // Bumped when the feed map is (re)created. Overlay effects depend on it, so
         // data that arrived before the map existed still gets drawn.
         const [bikeMapReady, setBikeMapReady]      = useState(0);
+        const [bikeRideMapReady, setBikeRideMapReady] = useState(0);
+        // Where the rider is when they're NOT yet broadcasting, so the Ride map
+        // shows them from the moment they open it rather than only after Start.
+        const [bikePreviewPos, setBikePreviewPos] = useState(null);
+        const [bikeRideMeta, setBikeRideMeta]     = useState(null); // course for the ride code
+        const bikePreviewWatchRef = useRef(null);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
         // Rider-facing upload health. "GPS active" only proves the phone has a fix;
         // these prove the data is actually reaching the server.
@@ -1331,6 +1356,11 @@
         const bikeRideMarkerRef  = useRef(null);
         const bikeRideTrailRef   = useRef(null);
         const bikeRideTrailPtsRef = useRef([]);
+        const bikeRideRouteRef   = useRef(null);
+        const bikeRideCpRef      = useRef([]);
+        const bikeRideStartRef   = useRef(null);
+        const bikeRideEndRef     = useRef(null);
+        const bikeRideCenteredRef = useRef(false);
         const bikeTileRef      = useRef(null);   // active basemap layer
         const bikeLabelRef     = useRef(null);   // label overlay (satellite only)
         const bikeRouteLineRef = useRef(null);   // full planned course (faint)
@@ -4621,40 +4651,137 @@
         function initBikeRideMap(el) {
           if (!el || bikeRideMapRef.current) return;
           const b = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
-          const start = bikeLive ? [bikeLive.lat, bikeLive.lng] : [39.5, -98.35];
-          const map = L.map(el, { zoomControl: false, attributionControl: false })
-            .setView(start, bikeLive ? 15 : 4);
+          const map = L.map(el, { zoomControl: true, attributionControl: false })
+            .setView([39.5, -98.35], 4);
           L.tileLayer(b.url, {
             maxZoom: b.maxZoom, subdomains: b.subdomains,
             detectRetina: b.url.includes("{r}"),
           }).addTo(map);
           bikeRideMapRef.current = map;
+          bikeRideCenteredRef.current = false;
+          setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 150);
+          setBikeRideMapReady(n => n + 1);
         }
 
-        // Keep the rider's map pinned to their own position, with the trail they've
-        // actually published so they can see it's going out.
+        // Before Start there are no published frames, so take a live fix purely to
+        // show the rider where they are. Stops once broadcasting takes over.
+        useEffect(() => {
+          const active = appMode === "bike" && bikeView === "ride" && !bikeRiding;
+          if (!active || !navigator.geolocation) {
+            if (bikePreviewWatchRef.current !== null) {
+              navigator.geolocation?.clearWatch(bikePreviewWatchRef.current);
+              bikePreviewWatchRef.current = null;
+            }
+            return;
+          }
+          bikePreviewWatchRef.current = navigator.geolocation.watchPosition(
+            p => setBikePreviewPos([p.coords.latitude, p.coords.longitude]),
+            () => {},
+            { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+          return () => {
+            if (bikePreviewWatchRef.current !== null) {
+              navigator.geolocation.clearWatch(bikePreviewWatchRef.current);
+              bikePreviewWatchRef.current = null;
+            }
+          };
+        }, [appMode, bikeView, bikeRiding]);
+
+        // The course for whatever code is loaded, so the rider can see the route
+        // before they set off. Read from the feed we own if we have it, otherwise
+        // from what's published — a rider who joined by code owns nothing locally.
+        useEffect(() => {
+          const code = (bikeRideCode || "").trim().toUpperCase();
+          if (appMode !== "bike" || bikeView !== "ride" || code.length < 4) { setBikeRideMeta(null); return; }
+          const ref = rtdb.ref(`bikeFeeds/${code}/meta`);
+          const fn = ref.on("value", s => setBikeRideMeta(s.exists() ? s.val() : null));
+          return () => ref.off("value", fn);
+        }, [appMode, bikeView, bikeRideCode]);
+
+        const bikeRideCourse = (() => {
+          const code = (bikeRideCode || "").trim().toUpperCase();
+          const local = bikeFeedList.find(f => f.code === code);
+          if (local && (local.route || []).length > 1) return local;
+          return bikeRideMeta;
+        })();
+
+        // Draw the planned course, its checkpoints and its start/finish on the
+        // rider's own map.
         useEffect(() => {
           const map = bikeRideMapRef.current;
-          if (!map || !bikeLive) return;
-          const pos = [bikeLive.lat, bikeLive.lng];
+          if (!map) return;
+          const route = (bikeRideCourse && bikeRideCourse.route) || [];
           try {
-            const pts = bikeRideTrailPtsRef.current;
-            const last = pts[pts.length - 1];
-            if (!last || haversineM(last[0], last[1], pos[0], pos[1]) > 5) {
-              pts.push(pos);
-              if (pts.length > 3000) pts.splice(0, pts.length - 3000);
+            if (route.length > 1) {
+              if (bikeRideRouteRef.current) bikeRideRouteRef.current.setLatLngs(route);
+              else bikeRideRouteRef.current = L.polyline(route, { color: "#4ade80", weight: 5, opacity: 0.85 }).addTo(map);
+            } else if (bikeRideRouteRef.current) {
+              map.removeLayer(bikeRideRouteRef.current);
+              bikeRideRouteRef.current = null;
             }
+            [["start", route[0], "#4ade80", "S"],
+             ["end", route.length > 1 ? route[route.length - 1] : null, "#f87171", "F"]]
+              .forEach(([key, pos, col, letter]) => {
+                const ref = key === "start" ? bikeRideStartRef : bikeRideEndRef;
+                if (!pos) {
+                  if (ref.current) { map.removeLayer(ref.current); ref.current = null; }
+                  return;
+                }
+                if (ref.current) { ref.current.setLatLng(pos); return; }
+                ref.current = L.marker(pos, { interactive: false, zIndexOffset: 300,
+                  icon: L.divIcon({ className: "", iconSize: [20,20], iconAnchor: [10,10],
+                    html: `<div style="background:${col};width:20px;height:20px;border-radius:50%;border:2px solid #fff;`
+                        + `box-shadow:0 2px 6px rgba(0,0,0,0.8);color:#071829;font:700 11px/16px 'DM Sans',Arial,sans-serif;`
+                        + `text-align:center">${letter}</div>` }) }).addTo(map);
+              });
+            bikeRideCpRef.current.forEach(l => { try { map.removeLayer(l); } catch(_) {} });
+            bikeRideCpRef.current = ((bikeRideCourse && bikeRideCourse.checkpoints) || [])
+              .filter(cp => cp.lat != null && cp.lng != null)
+              .map((cp, i) => {
+                const col = cp.kind === "stop" ? "#f472b6" : cp.kind === "goal" ? "#4ade80" : "#ffd166";
+                return L.circleMarker([cp.lat, cp.lng], {
+                  radius: 6, color: col, fillColor: col, fillOpacity: 0.9, weight: 2,
+                }).bindTooltip(cp.name || `Checkpoint ${i + 1}`, { direction: "top" }).addTo(map);
+              });
+          } catch(_) {}
+        }, [bikeRideCourse, bikeRideMapReady, bikeView]);
+
+        // The rider's own dot — shown whether or not they've started broadcasting.
+        const bikeSelfLat = bikeLive ? bikeLive.lat : (bikePreviewPos ? bikePreviewPos[0] : null);
+        const bikeSelfLng = bikeLive ? bikeLive.lng : (bikePreviewPos ? bikePreviewPos[1] : null);
+        useEffect(() => {
+          const map = bikeRideMapRef.current;
+          if (!map || bikeSelfLat == null || bikeSelfLng == null) return;
+          const pos = [bikeSelfLat, bikeSelfLng];
+          try {
             if (bikeRideMarkerRef.current) bikeRideMarkerRef.current.setLatLng(pos);
             else bikeRideMarkerRef.current = L.circleMarker(pos, {
               radius: 9, color: "#00aeef", fillColor: "#00aeef", fillOpacity: 0.95, weight: 3,
-            }).addTo(map);
-            if (pts.length > 1) {
-              if (bikeRideTrailRef.current) bikeRideTrailRef.current.setLatLngs(pts);
-              else bikeRideTrailRef.current = L.polyline(pts, { color: "#ffd166", weight: 4, opacity: 0.9 }).addTo(map);
+              className: "bike-self-dot",
+            }).bindTooltip("You", { permanent: true, direction: "top", offset: [0,-12], className: "leaflet-ath-label" })
+              .addTo(map);
+
+            // Only lay a trail once they're actually broadcasting.
+            if (bikeRiding) {
+              const pts = bikeRideTrailPtsRef.current;
+              const last = pts[pts.length - 1];
+              if (!last || haversineM(last[0], last[1], pos[0], pos[1]) > 5) {
+                pts.push(pos);
+                if (pts.length > 3000) pts.splice(0, pts.length - 3000);
+              }
+              if (pts.length > 1) {
+                if (bikeRideTrailRef.current) bikeRideTrailRef.current.setLatLngs(pts);
+                else bikeRideTrailRef.current = L.polyline(pts, { color: "#ffd166", weight: 4, opacity: 0.9 }).addTo(map);
+              }
             }
-            map.panTo(pos, { animate: false });
+
+            if (!bikeRideCenteredRef.current) {
+              bikeRideCenteredRef.current = true;
+              map.setView(pos, 16, { animate: false });
+            } else if (bikeRiding) {
+              map.panTo(pos, { animate: false });
+            }
           } catch(_) {}
-        }, [bikeLive]);
+        }, [bikeSelfLat, bikeSelfLng, bikeRiding, bikeRideMapReady]);
 
         // Rebuild the ride map cleanly whenever the rider leaves and returns.
         useEffect(() => {
@@ -4664,6 +4791,11 @@
             bikeRideMapRef.current = null;
             bikeRideMarkerRef.current = null;
             bikeRideTrailRef.current = null;
+            bikeRideRouteRef.current = null;
+            bikeRideStartRef.current = null;
+            bikeRideEndRef.current = null;
+            bikeRideCpRef.current = [];
+            bikeRideCenteredRef.current = false;
           }
         }, [appMode, bikeView]);
 
@@ -10593,9 +10725,23 @@
                         );
                       })()}
 
-                      {/* The rider's own map — proof the dot is where they are */}
-                      <div style={{ ...S.card, padding:0, overflow:"hidden" }}>
-                        <div ref={initBikeRideMap} style={{ height:240, background:"#0c2240" }} />
+                      {/* The rider's own map — where they are, and where they're going */}
+                      <div style={{ ...S.card, padding:0, overflow:"hidden", position:"relative" }}>
+                        <div ref={initBikeRideMap} style={{ height:280, background:"#0c2240" }} />
+                        <div style={{ position:"absolute", left:8, top:8, zIndex:500, pointerEvents:"none",
+                          background:"rgba(7,24,41,0.85)", borderRadius:6, padding:"4px 9px", fontSize:10, color:"#c8d8e8" }}>
+                          {bikeSelfLat == null
+                            ? "Finding your location…"
+                            : (bikeRideCourse && (bikeRideCourse.route || []).length > 1)
+                              ? (bikeRiding ? "You + your course" : "You + your course · not broadcasting yet")
+                              : (bikeRiding ? "You" : "You · no route loaded")}
+                        </div>
+                        <button onClick={() => {
+                          if (bikeSelfLat == null || !bikeRideMapRef.current) return;
+                          try { bikeRideMapRef.current.setView([bikeSelfLat, bikeSelfLng], 16, { animate:true }); } catch(_) {}
+                        }} style={{ position:"absolute", right:8, bottom:8, zIndex:500,
+                          background:"#0c2240", color:"#00aeef", border:"1px solid #00aeef", borderRadius:6,
+                          padding:"5px 11px", fontSize:11, fontWeight:700, cursor:"pointer" }}>⌖ Me</button>
                       </div>
 
                       <div style={{ ...S.row, gap:8, justifyContent:"center", marginBottom:16 }}>
