@@ -1071,10 +1071,16 @@
         // Single-rider GPS tracking with no timing/segments: viewers follow a dot
         // on a map plus live sensor telemetry. Position comes from the rider's
         // phone; cadence/power/HR come from the BLE sensor stack (see connectBleDevice).
-        const [bikeView, setBikeView]   = useState("home");   // home | setup | ride | feed
+        const [bikeView, setBikeView]   = useState("home");   // home | riders | setup | ride | feed
         const [bikeFeedList, setBikeFeedList] = useState(() => {
           try { return JSON.parse(localStorage.getItem("bike-feeds") || "[]"); } catch(_) { return []; }
         });
+        // Rider profiles live independently of events, so the same person can be
+        // reused across any number of rides without re-entering their details.
+        const [bikeRiders, setBikeRiders] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("bike-riders") || "[]"); } catch(_) { return []; }
+        });
+        const [bikeRiderDraft, setBikeRiderDraft] = useState(null);
         const [bikeDraft, setBikeDraft] = useState(null);     // feed being edited in Setup
         const [bikeRideCode, setBikeRideCode] = useState(null); // feed the rider is publishing to
         const [bikeRiding, setBikeRiding]     = useState(false);
@@ -1658,6 +1664,14 @@
                   localStorage.setItem("bike-feeds", JSON.stringify(data.bikeFeeds));
                 } else {
                   try { const c = localStorage.getItem("bike-feeds"); if (c) { const b = JSON.parse(c); if (b.length > 0) { setBikeFeedList(b); rtdb.ref("users/" + user.uid + "/bikeFeeds").set(b).catch(console.error); } } } catch(_) {}
+                }
+
+                // Bike rider profiles: RTDB → localStorage fallback, then push local up
+                if (data.bikeRiders && data.bikeRiders.length > 0) {
+                  setBikeRiders(data.bikeRiders);
+                  localStorage.setItem("bike-riders", JSON.stringify(data.bikeRiders));
+                } else {
+                  try { const c = localStorage.getItem("bike-riders"); if (c) { const b = JSON.parse(c); if (b.length > 0) { setBikeRiders(b); rtdb.ref("users/" + user.uid + "/bikeRiders").set(b).catch(console.error); } } } catch(_) {}
                 }
 
                 // Archive: RTDB → localStorage fallback
@@ -3632,14 +3646,19 @@
         };
 
         // ── Bike Live Feed logic ────────────────────────────────────────────────
+        function newBikeRider() {
+          return {
+            id: `br_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: "", team: "", photoUrl: "", bioText: "", bioLink: "",
+            createdAt: Date.now(),
+          };
+        }
+
         function newBikeFeed() {
           return {
             code: Math.random().toString(36).substring(2, 8).toUpperCase(),
-            riderName: "",
+            riderId: null,     // → bikeRiders profile
             eventName: "",
-            bioText: "",
-            photoUrl: "",
-            bioLink: "",
             units: "mi",
             checkpoints: [],   // { name, lat, lng, note }
             route: [],         // [[lat,lng], ...] optional planned course
@@ -3655,21 +3674,46 @@
           }
         }
 
-        // Publish the rider-facing config so viewers can render the bio card,
-        // checkpoints and planned route. Small and written rarely (setup only).
-        function publishBikeMeta(feed) {
+        function persistBikeRiders(list) {
+          setBikeRiders(list);
+          try { localStorage.setItem("bike-riders", JSON.stringify(list)); } catch(_) {}
+          if (currentUser) {
+            rtdb.ref("users/" + currentUser.uid + "/bikeRiders").set(list).catch(console.error);
+          }
+        }
+
+        // Feeds saved before rider profiles existed carried the rider inline, so fall
+        // back to those fields when there's no linked profile.
+        function bikeRiderFor(feed, ridersOverride) {
+          const riders = ridersOverride || bikeRiders;
+          return riders.find(r => r.id === feed?.riderId)
+              || (feed?.riderName ? { name: feed.riderName, team: "", photoUrl: feed.photoUrl || "",
+                                      bioText: feed.bioText || "", bioLink: feed.bioLink || "" } : null);
+        }
+
+        // Publish the viewer-facing config: rider profile merged with this event's
+        // settings. Small and written rarely (setup only).
+        function publishBikeMeta(feed, ridersOverride) {
           if (!feed?.code) return Promise.resolve();
+          const r = bikeRiderFor(feed, ridersOverride);
           return rtdb.ref(`bikeFeeds/${feed.code}/meta`).set({
-            riderName: feed.riderName || "Rider",
+            riderName: r?.name || "Rider",
+            riderTeam: r?.team || "",
             eventName: feed.eventName || "",
-            bioText: feed.bioText || "",
-            photoUrl: feed.photoUrl || "",
-            bioLink: feed.bioLink || "",
+            bioText: r?.bioText || "",
+            photoUrl: r?.photoUrl || "",
+            bioLink: r?.bioLink || "",
             units: feed.units || "mi",
             checkpoints: feed.checkpoints || [],
             route: feed.route || [],
             updatedAt: Date.now(),
           }).catch(console.error);
+        }
+
+        // Editing a profile must refresh every event that rider appears in, so live
+        // viewers pick up the new bio/photo without the organiser re-saving each one.
+        function republishRiderFeeds(riderId, riders) {
+          bikeFeedList.filter(f => f.riderId === riderId).forEach(f => publishBikeMeta(f, riders));
         }
 
         // Mirror BLE readings into a ref so the GPS callback never reads stale state.
@@ -4187,7 +4231,7 @@
             {(() => {
               const swimNavMap = { swimhome:"home", swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
               const navTabs = (appMode === "bike")
-                ? [["__home__","⌂"],["__bike_home__","🚴 Rides"],["__bike_setup__","⚙️ Setup"],["__bike_ride__","📡 Ride"],["__bike_feed__","👀 Follow"],["profile","👤 Profile"]]
+                ? [["__home__","⌂"],["__bike_home__","🚴 Rides"],["__bike_riders__","👥 Riders"],["__bike_setup__","⚙️ Setup"],["__bike_ride__","📡 Ride"],["__bike_feed__","👀 Follow"]]
                 : (appMode === "swim" && isHost)
                 ? [["__home__","⌂"],["swimhome","🏠 Meet"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
                 : (appMode === "swim")
@@ -8966,11 +9010,13 @@
                         <div style={{ ...S.card, textAlign:"center", color:"#5a86a8", fontSize:13 }}>
                           No ride feeds yet. Create one, fill in the rider's details, then send them the code.
                         </div>
-                      ) : bikeFeedList.map(f => (
+                      ) : bikeFeedList.map(f => {
+                        const rider = bikeRiderFor(f);
+                        return (
                         <div key={f.code} style={S.card}>
                           <div style={{ ...S.row, justifyContent:"space-between", flexWrap:"wrap", gap:6 }}>
                             <div style={{ minWidth:0 }}>
-                              <div style={{ fontSize:16, fontWeight:700, color:"#e8f4fb" }}>{f.riderName || "Unnamed rider"}</div>
+                              <div style={{ fontSize:16, fontWeight:700, color:"#e8f4fb" }}>{rider?.name || "No rider assigned"}</div>
                               <div style={{ fontSize:12, color:"#5a86a8" }}>{f.eventName || "No event name"}</div>
                             </div>
                             <div style={{ fontFamily:"monospace", fontSize:20, letterSpacing:3, color:"#ffd166" }}>{f.code}</div>
@@ -8987,21 +9033,129 @@
                               alert("Follow link copied:\n" + shareLink(f.code));
                             }} style={{ ...btnStyle("#a78bfa", true), padding:"6px 12px", fontSize:12 }}>🔗 Copy link</button>
                             <button onClick={() => {
-                              if (!confirm(`Delete the feed for ${f.riderName || f.code}? Viewers with the link will no longer see it.`)) return;
+                              if (!confirm(`Delete the "${f.eventName || f.code}" event? Viewers with the link will no longer see it. The rider's profile is kept.`)) return;
                               persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code));
                               rtdb.ref(`bikeFeeds/${f.code}`).remove().catch(console.error);
                             }} style={{ ...btnStyle("#f87171", true), padding:"6px 12px", fontSize:12 }}>Delete</button>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 
+                  {/* ─── RIDERS (reusable profiles) ───────────────────────────── */}
+                  {bikeView === "riders" && (bikeRiderDraft ? (
+                    <div>
+                      <div style={S.card}>
+                        <div style={S.label}>{bikeRiders.some(r => r.id === bikeRiderDraft.id) ? "Edit rider profile" : "New rider profile"}</div>
+                        <div style={{ fontSize:11, color:"#5a86a8", marginBottom:10 }}>
+                          Entered once, reusable for every ride this person does. Editing here updates any live feed they're in.
+                        </div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                          <input value={bikeRiderDraft.name} onChange={e => setBikeRiderDraft(d => ({ ...d, name: e.target.value }))}
+                            placeholder="Rider name" style={S.input} />
+                          <input value={bikeRiderDraft.team} onChange={e => setBikeRiderDraft(d => ({ ...d, team: e.target.value }))}
+                            placeholder="Team / club (optional)" style={S.input} />
+                          <input value={bikeRiderDraft.photoUrl} onChange={e => setBikeRiderDraft(d => ({ ...d, photoUrl: e.target.value }))}
+                            placeholder="Photo URL (https://…)" style={S.input} />
+                          <input value={bikeRiderDraft.bioLink} onChange={e => setBikeRiderDraft(d => ({ ...d, bioLink: e.target.value }))}
+                            placeholder="Bio / fundraiser link (https://…)" style={S.input} />
+                          <textarea value={bikeRiderDraft.bioText} onChange={e => setBikeRiderDraft(d => ({ ...d, bioText: e.target.value }))}
+                            placeholder="A short blurb for viewers — why they're riding, the route, anything they want to say."
+                            rows={5} style={{ ...S.input, resize:"vertical", lineHeight:1.5 }} />
+                        </div>
+                      </div>
+                      <div style={{ ...S.row, gap:8, flexWrap:"wrap", marginBottom:24 }}>
+                        <button onClick={() => {
+                          if (!bikeRiderDraft.name.trim()) { alert("Give the rider a name."); return; }
+                          const exists = bikeRiders.some(r => r.id === bikeRiderDraft.id);
+                          const next = exists
+                            ? bikeRiders.map(r => r.id === bikeRiderDraft.id ? bikeRiderDraft : r)
+                            : [...bikeRiders, bikeRiderDraft];
+                          persistBikeRiders(next);
+                          republishRiderFeeds(bikeRiderDraft.id, next);
+                          // Coming from Setup with no rider chosen yet? Attach this one.
+                          if (bikeDraft && !bikeDraft.riderId) {
+                            setBikeDraft(d => ({ ...d, riderId: bikeRiderDraft.id }));
+                            setBikeRiderDraft(null);
+                            setBikeView("setup");
+                            return;
+                          }
+                          setBikeRiderDraft(null);
+                          setBikeView(bikeDraft ? "setup" : "riders");
+                        }} style={btnStyle("#4ade80")}>Save Profile</button>
+                        <button onClick={() => { setBikeRiderDraft(null); setBikeView(bikeDraft ? "setup" : "riders"); }}
+                          style={btnStyle("#5a86a8", true)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ ...S.row, justifyContent:"space-between", marginBottom:8 }}>
+                        <div style={{ ...S.label, marginBottom:0 }}>Rider profiles</div>
+                        <button onClick={() => setBikeRiderDraft(newBikeRider())}
+                          style={{ ...btnStyle("#ffd166"), padding:"7px 14px", fontSize:12 }}>+ New Rider</button>
+                      </div>
+                      {bikeRiders.length === 0 ? (
+                        <div style={{ ...S.card, textAlign:"center", color:"#5a86a8", fontSize:13 }}>
+                          No riders yet. Add someone once and you can reuse them for any number of rides.
+                        </div>
+                      ) : bikeRiders.map(r => {
+                        const rides = bikeFeedList.filter(f => f.riderId === r.id).length;
+                        return (
+                          <div key={r.id} style={{ ...S.card, ...S.row, gap:12 }}>
+                            {r.photoUrl
+                              ? <img src={r.photoUrl} alt="" style={{ width:48, height:48, borderRadius:"50%", objectFit:"cover", border:"2px solid rgba(255,209,102,0.5)", flexShrink:0 }} />
+                              : <div style={{ width:48, height:48, borderRadius:"50%", background:"#071829", border:"1px solid rgba(255,209,102,0.3)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>🚴</div>}
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontSize:15, fontWeight:700, color:"#e8f4fb" }}>{r.name || "Unnamed"}</div>
+                              <div style={{ fontSize:11, color:"#5a86a8" }}>
+                                {r.team ? r.team + " · " : ""}{rides} ride{rides === 1 ? "" : "s"}
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                              <button onClick={() => setBikeRiderDraft({ ...r })}
+                                style={{ ...btnStyle("#48cae4", true), padding:"5px 10px", fontSize:11 }}>Edit</button>
+                              <button onClick={() => {
+                                if (rides > 0) { alert(`${r.name} is used by ${rides} ride${rides===1?"":"s"}. Delete those events first.`); return; }
+                                if (!confirm(`Delete the profile for ${r.name || "this rider"}?`)) return;
+                                persistBikeRiders(bikeRiders.filter(x => x.id !== r.id));
+                              }} style={{ ...btnStyle("#f87171", true), padding:"5px 10px", fontSize:11 }}>Delete</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+
                   {/* ─── SETUP ────────────────────────────────────────────────── */}
                   {bikeView === "setup" && (!bikeDraft ? (
-                    <div style={{ ...S.card, textAlign:"center" }}>
-                      <div style={{ fontSize:13, color:"#5a86a8", marginBottom:12 }}>Pick a feed to edit, or create a new one.</div>
-                      <button onClick={() => setBikeDraft(newBikeFeed())} style={btnStyle("#ffd166")}>+ New Feed</button>
+                    <div>
+                      <div style={S.card}>
+                        <div style={S.label}>New event</div>
+                        <div style={{ fontSize:12, color:"#5a86a8", marginBottom:10 }}>
+                          Starts a fresh ride with its own follow code. You'll pick which rider it's for.
+                        </div>
+                        <button onClick={() => setBikeDraft(newBikeFeed())} style={btnStyle("#ffd166")}>+ New Event</button>
+                      </div>
+                      {bikeFeedList.length > 0 && (
+                        <div style={S.card}>
+                          <div style={S.label}>Or edit an existing event</div>
+                          {bikeFeedList.map((f, i) => {
+                            const r = bikeRiderFor(f);
+                            return (
+                              <div key={f.code} style={{ ...S.row, justifyContent:"space-between", gap:8, padding:"8px 0", borderTop: i ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+                                <span style={{ fontSize:13, color:"#e8f4fb", minWidth:0 }}>
+                                  {f.eventName || "Untitled event"}
+                                  <span style={{ color:"#5a86a8", fontSize:11 }}>{r?.name ? "  ·  " + r.name : "  ·  no rider"}</span>
+                                </span>
+                                <button onClick={() => setBikeDraft({ ...newBikeFeed(), ...f })}
+                                  style={{ ...btnStyle("#48cae4", true), padding:"5px 10px", fontSize:11, whiteSpace:"nowrap" }}>Edit</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div>
@@ -9014,19 +9168,54 @@
                       </div>
 
                       <div style={S.card}>
-                        <div style={S.label}>Rider &amp; event</div>
+                        <div style={S.label}>Rider</div>
+                        {bikeRiders.length === 0 ? (
+                          <div style={{ fontSize:12, color:"#5a86a8", marginBottom:10 }}>
+                            No rider profiles yet. Create one — it's reusable for every future ride, so you only enter their bio and photo once.
+                          </div>
+                        ) : (
+                          <div style={{ ...S.row, flexWrap:"wrap", gap:6, marginBottom:10 }}>
+                            {bikeRiders.map(r => (
+                              <button key={r.id} onClick={() => setBikeDraft(d => ({ ...d, riderId: r.id }))}
+                                style={{ padding:"6px 12px", fontSize:12, fontWeight:700, borderRadius:6, cursor:"pointer",
+                                  background: bikeDraft.riderId === r.id ? "rgba(255,209,102,0.18)" : "transparent",
+                                  border: bikeDraft.riderId === r.id ? "1px solid rgba(255,209,102,0.6)" : "1px solid rgba(255,255,255,0.1)",
+                                  color: bikeDraft.riderId === r.id ? "#ffd166" : "#5a86a8" }}>
+                                {r.name || "Unnamed"}{r.team ? ` · ${r.team}` : ""}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <button onClick={() => { setBikeRiderDraft(newBikeRider()); setBikeView("riders"); }}
+                          style={{ ...btnStyle("#48cae4", true), padding:"6px 12px", fontSize:12 }}>+ New rider profile</button>
+                        {(() => {
+                          const r = bikeRiderFor(bikeDraft);
+                          if (!r) return null;
+                          return (
+                            <div style={{ ...S.row, gap:10, marginTop:12, paddingTop:12, borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+                              {r.photoUrl
+                                ? <img src={r.photoUrl} alt="" style={{ width:40, height:40, borderRadius:"50%", objectFit:"cover", border:"1px solid rgba(255,209,102,0.5)", flexShrink:0 }} />
+                                : <div style={{ width:40, height:40, borderRadius:"50%", background:"#071829", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>🚴</div>}
+                              <div style={{ flex:1, minWidth:0 }}>
+                                <div style={{ fontSize:14, fontWeight:700, color:"#e8f4fb" }}>{r.name || "Unnamed"}</div>
+                                <div style={{ fontSize:11, color:"#5a86a8" }}>
+                                  {(r.bioText || "").slice(0, 60) || "No bio yet"}{(r.bioText || "").length > 60 ? "…" : ""}
+                                </div>
+                              </div>
+                              {bikeDraft.riderId && (
+                                <button onClick={() => { setBikeRiderDraft({ ...bikeRiders.find(x => x.id === bikeDraft.riderId) }); setBikeView("riders"); }}
+                                  style={{ ...btnStyle("#48cae4", true), padding:"5px 10px", fontSize:11, whiteSpace:"nowrap" }}>Edit profile</button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      <div style={S.card}>
+                        <div style={S.label}>Event</div>
                         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                          <input value={bikeDraft.riderName} onChange={e => setBikeDraft(d => ({ ...d, riderName: e.target.value }))}
-                            placeholder="Rider name (e.g. Alani M.)" style={S.input} />
                           <input value={bikeDraft.eventName} onChange={e => setBikeDraft(d => ({ ...d, eventName: e.target.value }))}
                             placeholder="Ride / event name (e.g. Hill Country 100)" style={S.input} />
-                          <input value={bikeDraft.photoUrl} onChange={e => setBikeDraft(d => ({ ...d, photoUrl: e.target.value }))}
-                            placeholder="Photo URL (https://…)" style={S.input} />
-                          <input value={bikeDraft.bioLink} onChange={e => setBikeDraft(d => ({ ...d, bioLink: e.target.value }))}
-                            placeholder="Bio / fundraiser link (https://…)" style={S.input} />
-                          <textarea value={bikeDraft.bioText} onChange={e => setBikeDraft(d => ({ ...d, bioText: e.target.value }))}
-                            placeholder="A short blurb for viewers to read — why she's riding, what the route is, anything she wants to say."
-                            rows={5} style={{ ...S.input, resize:"vertical", lineHeight:1.5 }} />
                           <div style={S.row}>
                             <span style={{ fontSize:12, color:"#5a86a8" }}>Units</span>
                             {["mi","km"].map(u => (
@@ -9125,10 +9314,12 @@
 
                       <div style={{ ...S.row, gap:8, flexWrap:"wrap", marginBottom:24 }}>
                         <button onClick={() => {
-                          if (!bikeDraft.riderName.trim()) { alert("Give the rider a name so viewers know who they're following."); return; }
+                          const r = bikeRiderFor(bikeDraft);
+                          if (!r || !(r.name || "").trim()) { alert("Pick or create a rider profile first, so viewers know who they're following."); return; }
                           const rest = bikeFeedList.filter(f => f.code !== bikeDraft.code);
                           persistBikeFeeds([...rest, bikeDraft]);
                           publishBikeMeta(bikeDraft);
+                          setBikeDraft(null);   // back to the chooser next time Setup opens
                           setBikeView("home");
                         }} style={btnStyle("#4ade80")}>Save &amp; Publish</button>
                         <button onClick={() => { setBikeDraft(null); setBikeView("home"); }}
@@ -9152,7 +9343,7 @@
                             {bikeFeedList.map(f => (
                               <button key={f.code} onClick={() => setBikeRideCode(f.code)}
                                 style={{ ...btnStyle("#ffd166", true), padding:"5px 10px", fontSize:11 }}>
-                                {f.riderName || f.code}
+                                {bikeRiderFor(f)?.name || f.code}{f.eventName ? ` · ${f.eventName}` : ""}
                               </button>
                             ))}
                           </div>
@@ -9168,9 +9359,16 @@
                             {btScanning ? "Scanning…" : "+ Add sensor"}
                           </button>
                         </div>
-                        <div style={{ fontSize:11, color:"#5a86a8", margin:"6px 0 0", lineHeight:1.5 }}>
-                          Watts, cadence and heart rate come from her Bluetooth sensors. If the ELEMNT BOLT is paired to
-                          those sensors over <strong>ANT+</strong>, the Bluetooth channel stays free for this phone to read them at the same time.
+                        <div style={{ fontSize:11, color:"#5a86a8", margin:"6px 0 0", lineHeight:1.55 }}>
+                          Pair the <strong>sensors themselves</strong> — power meter, speed/cadence sensor, heart-rate strap.
+                          A head unit like an ELEMNT or Garmin will not appear here and can't be used: those devices
+                          <em> receive</em> sensor data, they don't rebroadcast it. Pairing the sensors directly gives the
+                          same numbers.
+                        </div>
+                        <div style={{ fontSize:11, color:"#ffd166", marginTop:8, padding:"8px 10px", background:"rgba(255,209,102,0.07)", border:"1px dashed rgba(255,209,102,0.3)", borderRadius:6, lineHeight:1.55 }}>
+                          ⚠ A Bluetooth sensor only talks to one device at a time. If a head unit already holds them over
+                          Bluetooth, this phone can't connect. Pair the sensors to the head unit over <strong>ANT+</strong> instead
+                          — it broadcasts to any number of listeners, leaving Bluetooth free for this phone.
                         </div>
                         {!btSupported && (
                           <div style={{ fontSize:11, color:"#f87171", marginTop:8 }}>
@@ -9225,12 +9423,14 @@
                       </div>
 
                       <div style={{ ...S.card, borderColor:"rgba(72,202,228,0.25)" }}>
-                        <div style={S.label}>Before she sets off</div>
+                        <div style={S.label}>Before setting off</div>
                         <ul style={{ fontSize:12, color:"#5a86a8", lineHeight:1.7, paddingLeft:18, margin:0 }}>
-                          <li>This page must stay open on the phone she's carrying — it's the GPS source.</li>
+                          <li>This page must stay open on the phone the rider is carrying — it's the GPS source.</li>
                           <li>The screen lock is held off automatically, so plug into a battery pack for a long ride.</li>
                           <li>Position updates about once a second; viewers see a smoothly moving dot.</li>
                           <li>Losing signal is fine — the trail resumes when data comes back.</li>
+                          <li>Chrome on Android is the most reliable. iOS Safari suspends background tabs and has no Web Bluetooth, so watts and cadence won't work there.</li>
+                          <li>A head unit can keep recording the ride at the same time — it doesn't conflict with this.</li>
                         </ul>
                       </div>
                     </div>
@@ -9266,7 +9466,9 @@
                               <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:2, color:"#f0f6ff", lineHeight:1.1 }}>
                                 {bikeWatchMeta?.riderName || "Rider"}
                               </div>
-                              <div style={{ fontSize:12, color:"#c8a45a" }}>{bikeWatchMeta?.eventName || ""}</div>
+                              <div style={{ fontSize:12, color:"#c8a45a" }}>
+                                {[bikeWatchMeta?.eventName, bikeWatchMeta?.riderTeam].filter(Boolean).join("  ·  ")}
+                              </div>
                               <div style={{ ...S.row, gap:8, marginTop:5 }}>
                                 <span style={{ fontSize:10, letterSpacing:1, textTransform:"uppercase", fontWeight:700,
                                   color: bikeWatchStatus === "live" ? "#4ade80" : "#5a86a8" }}>
@@ -9279,7 +9481,7 @@
 
                           {bikeWatchLive && bikeWatchStatus === "live" && (Date.now() - bikeWatchLive.t) > BIKE_STALE_MS && (
                             <div style={{ ...S.card, borderColor:"rgba(255,209,102,0.5)", background:"rgba(255,209,102,0.07)", fontSize:12, color:"#ffd166" }}>
-                              ⚠ No update for {ago(bikeWatchLive.t).replace(" ago","")} — she may be out of mobile coverage. The dot is holding at her last known position.
+                              ⚠ No update for {ago(bikeWatchLive.t).replace(" ago","")} — likely out of mobile coverage. The dot is holding at the last known position.
                             </div>
                           )}
 
