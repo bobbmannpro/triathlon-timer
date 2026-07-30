@@ -134,6 +134,32 @@
         },
       };
 
+      // ── Road snapping ────────────────────────────────────────────────────────
+      // BRouter is an OpenStreetMap routing engine with genuine cycling profiles,
+      // free, no API key, and it sends Access-Control-Allow-Origin:* so the browser
+      // can call it directly. Strava has no public snap-to-road endpoint — their
+      // route builder is internal — so this is the practical way to get it.
+      const BIKE_SNAP_PROFILES = [
+        ["trekking", "Trekking",  "Balanced — paths, lanes and quiet roads"],
+        ["fastbike", "Road bike", "Prefers tarmac and faster roads"],
+        ["safety",   "Quiet",     "Strongly avoids traffic"],
+      ];
+      const BIKE_ROUTER_URL = "https://brouter.de/brouter";
+
+      // Route one leg and return its geometry as [[lat,lng], ...].
+      async function snapBikeSegment(a, b, profile) {
+        const url = `${BIKE_ROUTER_URL}?lonlats=${a[1]},${a[0]}|${b[1]},${b[0]}`
+                  + `&profile=${encodeURIComponent(profile || "trekking")}&alternativeidx=0&format=geojson`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Router returned " + res.status);
+        const j = await res.json();
+        const coords = j && j.features && j.features[0] && j.features[0].geometry
+                     ? j.features[0].geometry.coordinates : null;
+        if (!Array.isArray(coords) || coords.length < 2) throw new Error("No rideable route found");
+        // BRouter emits [lon, lat, ele]; the app works in [lat, lng].
+        return coords.map(p => [+(+p[1]).toFixed(5), +(+p[0]).toFixed(5)]);
+      }
+
       // A Strava GPX export can carry tens of thousands of points. Simplify hard
       // before storing: viewers download the route with the feed metadata.
       const BIKE_ROUTE_MAX_PTS   = 1200;
@@ -1255,6 +1281,8 @@
         const [bikeLastError, setBikeLastError] = useState("");
         // Setup map editor: click to place checkpoints or draw a course.
         const [bikeEditMode, setBikeEditMode] = useState("checkpoint"); // checkpoint | route | pan
+        const [bikeSnapping, setBikeSnapping]   = useState(0);   // in-flight routing requests
+        const [bikeSnapError, setBikeSnapError] = useState("");
         const bikeEditModeRef  = useRef("checkpoint");
         const bikeEditMapRef   = useRef(null);
         const bikeEditPinsRef  = useRef({});
@@ -3852,7 +3880,11 @@
             rideMode: "free",     // "free" = just trace the ride | "route" = follow a planned course
             multiDay: false,      // multi-day tours get stages, overnight stops and resume
             checkpoints: [],      // { name, lat, lng, note, kind: checkpoint|stop|goal, day }
-            route: [],            // [[lat,lng], ...] simplified planned course
+            route: [],            // [[lat,lng], ...] the course as published
+            routeAnchors: [],     // the points actually tapped, for undo
+            routeSegs: [],        // geometry per leg; routeSegs.length === routeAnchors.length - 1
+            snapToRoads: true,    // route drawn legs along real roads
+            snapProfile: "trekking",
             routeMeta: null,      // { name, source, distM, points, elevGainM, toleranceM }
             createdAt: Date.now(),
           };
@@ -3948,6 +3980,8 @@
               ...d,
               rideMode: "route",
               route: latlng,
+              // An imported course isn't tap-editable; clear any drawn legs.
+              routeAnchors: [], routeSegs: [],
               routeMeta: {
                 name: parsed.name || file.name.replace(/\.[^.]+$/, ""),
                 source: file.name.toLowerCase().endsWith(".tcx") ? "TCX" : "GPX",
@@ -4348,6 +4382,35 @@
         }
 
         useEffect(() => { bikeEditModeRef.current = bikeEditMode; }, [bikeEditMode]);
+        // The map click handler is bound once, so it needs the live draft from a ref
+        // rather than a stale closure — and it must not read values assigned inside a
+        // setState updater, which React defers until render.
+        const bikeDraftRef = useRef(null);
+        useEffect(() => { bikeDraftRef.current = bikeDraft; }, [bikeDraft]);
+
+        // Flatten the per-leg geometry into the published route and refresh its stats.
+        function bikeRebuildRoute(d) {
+          const segs = d.routeSegs || [];
+          const anchors = d.routeAnchors || [];
+          let route = [];
+          segs.forEach((seg, i) => {
+            (seg || []).forEach((p, j) => {
+              // Skip each leg's first point: it repeats the previous leg's last.
+              if (i > 0 && j === 0) return;
+              route.push(p);
+            });
+          });
+          if (!route.length && anchors.length) route = anchors.slice();
+          const distM = route.length > 1 ? Math.round(bikeRouteCumulative(route).pop() || 0) : 0;
+          return {
+            ...d, route,
+            routeMeta: route.length > 1 ? {
+              name: d.routeMeta?.source === "Drawn" ? d.routeMeta.name : "Drawn route",
+              source: "Drawn", distM, points: route.length, elevGainM: 0,
+              snapped: d.snapToRoads !== false,
+            } : null,
+          };
+        }
 
         function initBikeEditMap(el) {
           if (!el || bikeEditMapRef.current) return;
@@ -4375,18 +4438,35 @@
               setBikeDraft(dd => ({ ...dd, checkpoints: [...(dd.checkpoints || []),
                 { name: "", lat: +lat.toFixed(6), lng: +lng.toFixed(6), note: "", kind: "checkpoint", day: null }] }));
             } else if (mode === "route") {
+              const pt = [+lat.toFixed(5), +lng.toFixed(5)];
+              const cur     = bikeDraftRef.current || {};
+              const prevAnc = cur.routeAnchors || [];
+              const segIdx  = prevAnc.length - 1;              // leg from last anchor to pt
+              const from    = segIdx >= 0 ? prevAnc[segIdx] : null;
+              const snap    = cur.snapToRoads !== false;
+              const profile = cur.snapProfile || "trekking";
               setBikeDraft(dd => {
-                const route = [...(dd.route || []), [+lat.toFixed(5), +lng.toFixed(5)]];
-                return {
-                  ...dd, rideMode: "route", route,
-                  routeMeta: route.length > 1 ? {
-                    name: dd.routeMeta?.source === "Drawn" ? dd.routeMeta.name : "Drawn route",
-                    source: "Drawn",
-                    distM: Math.round(bikeRouteCumulative(route).pop() || 0),
-                    points: route.length, elevGainM: 0,
-                  } : null,
-                };
+                const anchors = [...(dd.routeAnchors || []), pt];
+                const segs    = [...(dd.routeSegs || [])];
+                if (anchors.length > 1) segs[anchors.length - 2] = [anchors[anchors.length - 2], pt];
+                return bikeRebuildRoute({ ...dd, rideMode: "route", routeAnchors: anchors, routeSegs: segs });
               });
+              // Route the new leg in the background; the straight line shows meanwhile.
+              if (segIdx >= 0 && snap && from) {
+                setBikeSnapping(n => n + 1);
+                snapBikeSegment(from, pt, profile)
+                  .then(geo => {
+                    setBikeDraft(dd => {
+                      const segs = [...(dd.routeSegs || [])];
+                      if (segIdx >= segs.length) return dd;   // undone while in flight
+                      segs[segIdx] = geo;
+                      return bikeRebuildRoute({ ...dd, routeSegs: segs });
+                    });
+                    setBikeSnapError("");
+                  })
+                  .catch(err => setBikeSnapError(err.message || "Router unavailable"))
+                  .finally(() => setBikeSnapping(n => n - 1));
+              }
             }
           });
           bikeEditMapRef.current = map;
@@ -9920,28 +10000,81 @@
                           {bikeEditMode === "checkpoint"
                             ? "Tap the map to drop a checkpoint. Drag any pin to move it; name and type it in the list below."
                             : bikeEditMode === "route"
-                            ? "Tap along the road to build the course. Points join in straight lines — for a route that follows every bend, draw it in Strava and import the GPX above."
+                            ? (bikeDraft.snapToRoads !== false
+                                ? "Tap roughly where you want to go — each leg is routed along real rideable roads, so you can't draw across a field. Distance is the true road distance."
+                                : "Snapping is off, so taps join in straight lines. Turn it back on for a course that follows actual roads.")
                             : "Tapping won't add anything — pan and zoom freely."}
                         </div>
+                        {bikeEditMode === "checkpoint" && (
+                          <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginBottom:8 }}>
+                            <button onClick={() => {
+                              if (!navigator.geolocation) { alert("Geolocation isn't available on this device."); return; }
+                              navigator.geolocation.getCurrentPosition(p => {
+                                const lat = +p.coords.latitude.toFixed(6), lng = +p.coords.longitude.toFixed(6);
+                                setBikeDraft(d => ({ ...d, checkpoints: [...(d.checkpoints || []),
+                                  { name: "", lat, lng, note: "", kind: "checkpoint", day: null }] }));
+                                try { bikeEditMapRef.current?.setView([lat, lng], 16); } catch(_) {}
+                              }, e => alert("Could not get your location: " + e.message), { enableHighAccuracy: true, timeout: 15000 });
+                            }} style={{ ...btnStyle("#48cae4"), padding:"6px 12px", fontSize:12 }}>
+                              📍 Add at my location
+                            </button>
+                            <button onClick={() => {
+                              navigator.geolocation?.getCurrentPosition(
+                                p => { try { bikeEditMapRef.current?.setView([p.coords.latitude, p.coords.longitude], 16); } catch(_) {} },
+                                e => alert("Could not get your location: " + e.message), { enableHighAccuracy: true, timeout: 15000 });
+                            }} style={{ ...btnStyle("#5a86a8", true), padding:"6px 12px", fontSize:12 }}>
+                              ⌖ Centre on me
+                            </button>
+                          </div>
+                        )}
+                        {bikeEditMode === "route" && (
+                          <div style={{ marginBottom:8 }}>
+                            <div style={{ ...S.row, gap:8, flexWrap:"wrap" }}>
+                              <button onClick={() => setBikeDraft(d => ({ ...d, snapToRoads: d.snapToRoads === false }))}
+                                style={{ padding:"6px 12px", fontSize:11, fontWeight:700, borderRadius:6, cursor:"pointer",
+                                  background: bikeDraft.snapToRoads !== false ? "rgba(74,222,128,0.18)" : "transparent",
+                                  border: bikeDraft.snapToRoads !== false ? "1px solid rgba(74,222,128,0.7)" : "1px solid rgba(255,255,255,0.12)",
+                                  color: bikeDraft.snapToRoads !== false ? "#4ade80" : "#5a86a8" }}>
+                                {bikeDraft.snapToRoads !== false ? "● Snap to roads" : "Snap to roads: off"}
+                              </button>
+                              {bikeSnapping > 0 && <span style={{ fontSize:11, color:"#ffd166" }}>Finding roads…</span>}
+                            </div>
+                            {bikeDraft.snapToRoads !== false && (
+                              <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginTop:6 }}>
+                                {BIKE_SNAP_PROFILES.map(([k, label, hint]) => (
+                                  <button key={k} title={hint} onClick={() => setBikeDraft(d => ({ ...d, snapProfile: k }))}
+                                    style={{ padding:"5px 10px", fontSize:10, fontWeight:700, borderRadius:5, cursor:"pointer",
+                                      background: (bikeDraft.snapProfile || "trekking") === k ? "rgba(72,202,228,0.2)" : "transparent",
+                                      border: (bikeDraft.snapProfile || "trekking") === k ? "1px solid #48cae4" : "1px solid rgba(255,255,255,0.1)",
+                                      color: (bikeDraft.snapProfile || "trekking") === k ? "#48cae4" : "#5a86a8" }}>{label}</button>
+                                ))}
+                              </div>
+                            )}
+                            {bikeSnapError && (
+                              <div style={{ fontSize:11, color:"#ffd166", marginTop:6 }}>
+                                ⚠ {bikeSnapError}. That leg is a straight line — try tapping nearer a road.
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <div ref={initBikeEditMap} style={{ height:320, borderRadius:8, border:"1px solid rgba(255,209,102,0.25)", background:"#0c2240" }} />
                         {bikeEditMode === "route" && (
                           <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginTop:8 }}>
-                            <button onClick={() => setBikeDraft(d => {
-                              const route = (d.route || []).slice(0, -1);
-                              return { ...d, route, routeMeta: route.length > 1
-                                ? { ...(d.routeMeta || {}), source:"Drawn", name: d.routeMeta?.name || "Drawn route",
-                                    distM: Math.round(bikeRouteCumulative(route).pop() || 0), points: route.length, elevGainM: 0 }
-                                : null };
-                            })} disabled={!(bikeDraft.route || []).length}
+                            <button onClick={() => setBikeDraft(d => bikeRebuildRoute({
+                              ...d,
+                              routeAnchors: (d.routeAnchors || []).slice(0, -1),
+                              routeSegs: (d.routeSegs || []).slice(0, -1),
+                            }))} disabled={!(bikeDraft.routeAnchors || []).length}
                               style={{ ...btnStyle("#48cae4", true), padding:"5px 11px", fontSize:11,
-                                       opacity: (bikeDraft.route || []).length ? 1 : 0.4 }}>↶ Undo point</button>
-                            <button onClick={() => { if (confirm("Clear the drawn course?")) setBikeDraft(d => ({ ...d, route: [], routeMeta: null })); }}
-                              disabled={!(bikeDraft.route || []).length}
+                                       opacity: (bikeDraft.routeAnchors || []).length ? 1 : 0.4 }}>↶ Undo point</button>
+                            <button onClick={() => { if (confirm("Clear the drawn course?")) setBikeDraft(d => ({ ...d, route: [], routeAnchors: [], routeSegs: [], routeMeta: null })); }}
+                              disabled={!(bikeDraft.routeAnchors || []).length}
                               style={{ ...btnStyle("#f87171", true), padding:"5px 11px", fontSize:11,
-                                       opacity: (bikeDraft.route || []).length ? 1 : 0.4 }}>Clear course</button>
+                                       opacity: (bikeDraft.routeAnchors || []).length ? 1 : 0.4 }}>Clear course</button>
                             <span style={{ fontSize:11, color:"#5a86a8", alignSelf:"center" }}>
-                              {(bikeDraft.route || []).length} point{(bikeDraft.route || []).length === 1 ? "" : "s"}
+                              {(bikeDraft.routeAnchors || []).length} tap{(bikeDraft.routeAnchors || []).length === 1 ? "" : "s"}
                               {bikeDraft.routeMeta?.distM ? `  ·  ${fmtDist(bikeDraft.routeMeta.distM)}` : ""}
+                              {bikeDraft.routeMeta?.points ? `  ·  ${bikeDraft.routeMeta.points} pts` : ""}
                             </span>
                           </div>
                         )}
@@ -10085,9 +10218,18 @@
                         <button onClick={() => {
                           const r = bikeRiderFor(bikeDraft);
                           if (!r || !(r.name || "").trim()) { alert("Pick or create a rider profile first, so viewers know who they're following."); return; }
+                          if (bikeSnapping > 0) { alert("Still routing the last leg — give it a second and save again."); return; }
+                          // A snapped course can run to thousands of points; viewers
+                          // download this, so simplify before it's stored.
+                          let toSave = bikeDraft;
+                          if ((bikeDraft.route || []).length > BIKE_ROUTE_MAX_PTS) {
+                            const { points, toleranceM } = bikeSimplifyTo(bikeDraft.route, BIKE_ROUTE_MAX_PTS, BIKE_ROUTE_TOL_M);
+                            toSave = { ...bikeDraft, route: points,
+                              routeMeta: { ...(bikeDraft.routeMeta || {}), points: points.length, toleranceM } };
+                          }
                           const rest = bikeFeedList.filter(f => f.code !== bikeDraft.code);
-                          persistBikeFeeds([...rest, bikeDraft]);
-                          publishBikeMeta(bikeDraft);
+                          persistBikeFeeds([...rest, toSave]);
+                          publishBikeMeta(toSave);
                           setBikeDraft(null);   // back to the chooser next time Setup opens
                           setBikeView("home");
                         }} style={btnStyle("#4ade80")}>Save &amp; Publish</button>
