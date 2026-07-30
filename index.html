@@ -213,7 +213,60 @@
         const r = Math.abs(deg) * Math.PI / 180;
         const c = Math.abs(Math.cos(r)), s = Math.abs(Math.sin(r));
         if (!w || !h) return 1;
-        return Math.max((w * c + h * s) / w, (w * s + h * c) / h);
+        const need = Math.max((w * c + h * s) / w, (w * s + h * c) / h);
+        // A wide desktop window needs an absurd factor (4x+) to cover its corners
+        // when rotated; capping trades a sliver of corner for a usable zoom level.
+        // On a phone held upright the honest figure is ~1.4, well under the cap.
+        return Math.min(need, 2.5);
+      }
+
+      // ── Map orientation ──────────────────────────────────────────────────────
+      const BIKE_ORIENTS = [
+        ["north",       "⬆ North",  "North stays at the top"],
+        ["overview",    "🗺 Route",  "Whole course in view"],
+        ["perspective", "🧭 Ahead",  "Direction of travel at the top"],
+      ];
+
+      // Perspective mode rotates the whole Leaflet container. Leaflet uses the map
+      // pane's own transform for panning, so rotating the container is the one place
+      // it's safe to intervene. Dragging is disabled while rotated because Leaflet's
+      // pointer maths doesn't know about the rotation, and its built-in controls are
+      // hidden since they'd be upside down — our own overlay buttons sit outside the
+      // container and stay upright.
+      function applyMapOrientation(map, mode, headingDeg) {
+        if (!map || !map.getContainer) return;
+        const c = map.getContainer();
+        const ctrl = c.querySelector(".leaflet-control-container");
+        const rotate = mode === "perspective" && headingDeg != null;
+        if (rotate) {
+          const s = bikeRotateScale(c.clientWidth, c.clientHeight, headingDeg);
+          c.style.transformOrigin = "50% 50%";
+          c.style.transform = `rotate(${(-headingDeg).toFixed(1)}deg) scale(${s.toFixed(3)})`;
+          if (map.dragging) map.dragging.disable();
+          if (ctrl) { ctrl.style.opacity = "0"; ctrl.style.pointerEvents = "none"; }
+        } else {
+          c.style.transform = "";
+          c.style.transformOrigin = "";
+          if (map.dragging) map.dragging.enable();
+          if (ctrl) { ctrl.style.opacity = ""; ctrl.style.pointerEvents = ""; }
+        }
+      }
+
+      // A chevron that can be spun to a compass bearing. In perspective mode the
+      // container counter-rotates by the same angle, so it always reads "up".
+      // className goes on the icon itself: setIcon() rebuilds the element, so a
+      // class added afterwards is lost on the next position update.
+      function bikeArrowIcon(headingDeg, color, className) {
+        const rot = headingDeg == null ? 0 : headingDeg;
+        const body = headingDeg == null
+          ? `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.8)"></div>`
+          : `<div style="transform:rotate(${rot.toFixed(0)}deg);width:26px;height:26px;display:flex;align-items:center;justify-content:center">
+               <svg width="26" height="26" viewBox="0 0 26 26">
+                 <circle cx="13" cy="13" r="11" fill="${color}" stroke="#fff" stroke-width="2.5"/>
+                 <path d="M13 5 L18 17 L13 14 L8 17 Z" fill="#fff"/>
+               </svg>
+             </div>`;
+        return L.divIcon({ className: className || "", iconSize: [26,26], iconAnchor: [13,13], html: body });
       }
 
       // ── Route geometry (Bike Live Feed) ──────────────────────────────────────
@@ -1313,6 +1366,16 @@
         // shows them from the moment they open it rather than only after Start.
         const [bikePreviewPos, setBikePreviewPos] = useState(null);
         const [bikeRideMeta, setBikeRideMeta]     = useState(null); // course for the ride code
+        const [bikeHeading, setBikeHeading]       = useState(null);
+        const bikePrevSelfRef = useRef(null);
+        const [bikeOrient, setBikeOrient] = useState(() => {
+          try { const v = localStorage.getItem("bike-orient-ride");
+                return BIKE_ORIENTS.some(o => o[0] === v) ? v : "north"; } catch(_) { return "north"; }
+        });
+        const [bikeWatchOrient, setBikeWatchOrient] = useState(() => {
+          try { const v = localStorage.getItem("bike-orient-watch");
+                return BIKE_ORIENTS.some(o => o[0] === v) ? v : "north"; } catch(_) { return "north"; }
+        });
         const bikePreviewWatchRef = useRef(null);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
         // Rider-facing upload health. "GPS active" only proves the phone has a fix;
@@ -4753,12 +4816,15 @@
           if (!map || bikeSelfLat == null || bikeSelfLng == null) return;
           const pos = [bikeSelfLat, bikeSelfLng];
           try {
-            if (bikeRideMarkerRef.current) bikeRideMarkerRef.current.setLatLng(pos);
-            else bikeRideMarkerRef.current = L.circleMarker(pos, {
-              radius: 9, color: "#00aeef", fillColor: "#00aeef", fillOpacity: 0.95, weight: 3,
-              className: "bike-self-dot",
-            }).bindTooltip("You", { permanent: true, direction: "top", offset: [0,-12], className: "leaflet-ath-label" })
-              .addTo(map);
+            const selfIcon = bikeArrowIcon(bikeHeading, "#00aeef", "bike-self-dot");
+            if (bikeRideMarkerRef.current) {
+              bikeRideMarkerRef.current.setLatLng(pos);
+              bikeRideMarkerRef.current.setIcon(selfIcon);
+            } else {
+              bikeRideMarkerRef.current = L.marker(pos, {
+                interactive: false, zIndexOffset: 900, icon: selfIcon,
+              }).addTo(map);
+            }
 
             // Only lay a trail once they're actually broadcasting.
             if (bikeRiding) {
@@ -4774,14 +4840,50 @@
               }
             }
 
-            if (!bikeRideCenteredRef.current) {
-              bikeRideCenteredRef.current = true;
-              map.setView(pos, 16, { animate: false });
-            } else if (bikeRiding) {
-              map.panTo(pos, { animate: false });
+            // Overview deliberately doesn't chase the rider — it frames the course.
+            if (bikeOrient !== "overview") {
+              if (!bikeRideCenteredRef.current) {
+                bikeRideCenteredRef.current = true;
+                map.setView(pos, 16, { animate: false });
+              } else if (bikeRiding) {
+                map.panTo(pos, { animate: false });
+              }
             }
           } catch(_) {}
-        }, [bikeSelfLat, bikeSelfLng, bikeRiding, bikeRideMapReady]);
+        }, [bikeSelfLat, bikeSelfLng, bikeRiding, bikeRideMapReady, bikeHeading, bikeOrient]);
+
+        // Heading: prefer what the GPS reports, fall back to the bearing between
+        // fixes, which is the only option below walking pace on most phones.
+        useEffect(() => {
+          if (bikeSelfLat == null || bikeSelfLng == null) return;
+          const cur = [bikeSelfLat, bikeSelfLng];
+          const prev = bikePrevSelfRef.current;
+          if (bikeLive && bikeLive.hdg != null && !isNaN(bikeLive.hdg)) {
+            setBikeHeading(bikeLive.hdg);
+          } else if (prev && haversineM(prev[0], prev[1], cur[0], cur[1]) > 8) {
+            setBikeHeading(bikeBearing(prev, cur));
+          }
+          if (!prev || haversineM(prev[0], prev[1], cur[0], cur[1]) > 8) bikePrevSelfRef.current = cur;
+        }, [bikeSelfLat, bikeSelfLng]);
+
+        // Apply the chosen orientation to the rider's map.
+        useEffect(() => {
+          const map = bikeRideMapRef.current;
+          if (!map) return;
+          applyMapOrientation(map, bikeOrient, bikeOrient === "perspective" ? (bikeHeading ?? 0) : null);
+          try { localStorage.setItem("bike-orient-ride", bikeOrient); } catch(_) {}
+        }, [bikeOrient, bikeHeading, bikeRideMapReady]);
+
+        // Frame the whole course when Overview is selected (not on every fix, or it
+        // would fight the rider panning around).
+        useEffect(() => {
+          const map = bikeRideMapRef.current;
+          if (!map || bikeOrient !== "overview") return;
+          const pts = ((bikeRideCourse && bikeRideCourse.route) || []).slice();
+          if (bikeSelfLat != null) pts.push([bikeSelfLat, bikeSelfLng]);
+          if (pts.length < 2) return;
+          try { map.fitBounds(L.latLngBounds(pts), { padding: [28, 28] }); } catch(_) {}
+        }, [bikeOrient, bikeRideCourse, bikeRideMapReady]);
 
         // Rebuild the ride map cleanly whenever the rider leaves and returns.
         useEffect(() => {
@@ -4798,6 +4900,29 @@
             bikeRideCenteredRef.current = false;
           }
         }, [appMode, bikeView]);
+
+        // Viewer-side orientation. Heading comes from the rider's published frame.
+        useEffect(() => {
+          const map = bikeMapRef.current;
+          if (!map) return;
+          const hdg = bikeWatchLive && bikeWatchLive.hdg != null ? bikeWatchLive.hdg : 0;
+          applyMapOrientation(map, bikeWatchOrient, bikeWatchOrient === "perspective" ? hdg : null);
+          try { localStorage.setItem("bike-orient-watch", bikeWatchOrient); } catch(_) {}
+        }, [bikeWatchOrient, bikeWatchLive, bikeMapReady]);
+
+        useEffect(() => {
+          const map = bikeMapRef.current;
+          if (!map || bikeWatchOrient !== "overview") return;
+          const pts = ((bikeWatchMeta && bikeWatchMeta.route) || []).concat(bikeWatchTrack);
+          if (bikeWatchLive) pts.push([bikeWatchLive.lat, bikeWatchLive.lng]);
+          if (pts.length < 2) return;
+          try { map.fitBounds(L.latLngBounds(pts), { padding: [28, 28] }); } catch(_) {}
+        }, [bikeWatchOrient, bikeWatchMeta, bikeMapReady]);
+
+        // Overview shouldn't be yanked back to the rider by follow mode.
+        useEffect(() => {
+          if (bikeWatchOrient === "overview") setBikeFollowing(false);
+        }, [bikeWatchOrient]);
 
         function initBikeMap(el) {
           bikeMapElRef.current = el;
@@ -10742,6 +10867,15 @@
                         }} style={{ position:"absolute", right:8, bottom:8, zIndex:500,
                           background:"#0c2240", color:"#00aeef", border:"1px solid #00aeef", borderRadius:6,
                           padding:"5px 11px", fontSize:11, fontWeight:700, cursor:"pointer" }}>⌖ Me</button>
+                        <div style={{ position:"absolute", left:8, bottom:8, zIndex:500, display:"flex", gap:3,
+                          background:"rgba(7,24,41,0.88)", padding:3, borderRadius:7, border:"1px solid rgba(255,255,255,0.14)" }}>
+                          {BIKE_ORIENTS.map(([k, label, hint]) => (
+                            <button key={k} title={hint} onClick={() => setBikeOrient(k)}
+                              style={{ padding:"4px 8px", fontSize:10, fontWeight:700, borderRadius:5, cursor:"pointer", border:"none",
+                                background: bikeOrient === k ? "#00aeef" : "transparent",
+                                color: bikeOrient === k ? "#071829" : "#c8d8e8" }}>{label}</button>
+                          ))}
+                        </div>
                       </div>
 
                       <div style={{ ...S.row, gap:8, justifyContent:"center", marginBottom:16 }}>
@@ -10934,6 +11068,15 @@
                               fontSize:11, fontWeight:700, letterSpacing:1, cursor:"pointer" }}>
                               {bikeFollowing ? "◎ Following" : "◎ Recentre"}
                             </button>
+                            <div style={{ position:"absolute", left:10, bottom:10, zIndex:500, display:"flex", gap:3,
+                              background:"rgba(7,24,41,0.88)", padding:3, borderRadius:7, border:"1px solid rgba(255,255,255,0.14)" }}>
+                              {BIKE_ORIENTS.map(([k, label, hint]) => (
+                                <button key={k} title={hint} onClick={() => setBikeWatchOrient(k)}
+                                  style={{ padding:"4px 8px", fontSize:10, fontWeight:700, borderRadius:5, cursor:"pointer", border:"none",
+                                    background: bikeWatchOrient === k ? "#ffd166" : "transparent",
+                                    color: bikeWatchOrient === k ? "#071829" : "#c8d8e8" }}>{label}</button>
+                              ))}
+                            </div>
                           </div>
 
                           {!bikeWatchLive && !bikeWatchError && (
