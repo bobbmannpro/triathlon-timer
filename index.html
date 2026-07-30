@@ -1246,6 +1246,13 @@
         const [bikeWatchError, setBikeWatchError]   = useState("");
         const [bikeFollowing, setBikeFollowing]     = useState(true);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
+        // Rider-facing upload health. "GPS active" only proves the phone has a fix;
+        // these prove the data is actually reaching the server.
+        const [bikeConnected, setBikeConnected] = useState(true);
+        const [bikeAckAt, setBikeAckAt]         = useState(null);  // last confirmed write
+        const [bikeFailAt, setBikeFailAt]       = useState(null);  // last rejected write
+        const [bikePubStats, setBikePubStats]   = useState({ ok: 0, fail: 0 });
+        const [bikeLastError, setBikeLastError] = useState("");
         const [bikeBasemap, setBikeBasemap] = useState(() => {
           const v = localStorage.getItem("bike-basemap");
           return BIKE_BASEMAPS[v] ? v : "roads";
@@ -1265,6 +1272,11 @@
         const bikeMapRef       = useRef(null);
         const bikeMarkerRef    = useRef(null);
         const bikeTrailLineRef = useRef(null);
+        // The rider's own confidence map on the Ride page.
+        const bikeRideMapRef     = useRef(null);
+        const bikeRideMarkerRef  = useRef(null);
+        const bikeRideTrailRef   = useRef(null);
+        const bikeRideTrailPtsRef = useRef([]);
         const bikeTileRef      = useRef(null);   // active basemap layer
         const bikeLabelRef     = useRef(null);   // label overlay (satellite only)
         const bikeRouteLineRef = useRef(null);   // full planned course (faint)
@@ -3975,6 +3987,15 @@
           return () => clearInterval(id);
         }, [appMode]);
 
+        // Firebase's own view of the connection — more trustworthy than
+        // navigator.onLine, which only knows whether a network interface exists.
+        useEffect(() => {
+          if (appMode !== "bike") return;
+          const ref = rtdb.ref(".info/connected");
+          const fn = ref.on("value", s => setBikeConnected(s.val() === true));
+          return () => ref.off("value", fn);
+        }, [appMode]);
+
         // Rider's own elapsed clock
         useEffect(() => {
           if (!bikeRiding) return;
@@ -4046,7 +4067,20 @@
           bikeLastPubRef.current = now;
           // /live is a single small object overwritten each tick — the only node
           // viewers subscribe to, so cost stays flat no matter how long the ride.
-          rtdb.ref(`bikeFeeds/${code}/live`).set(frame).catch(console.error);
+          // Track acknowledgements, not just attempts: the rider needs to know the
+          // data landed, and Firebase resolves this promise only once it has.
+          rtdb.ref(`bikeFeeds/${code}/live`).set(frame)
+            .then(() => {
+              setBikeAckAt(Date.now());
+              setBikePubStats(s => ({ ...s, ok: s.ok + 1 }));
+              setBikeLastError("");
+            })
+            .catch(err => {
+              setBikeFailAt(Date.now());
+              setBikePubStats(s => ({ ...s, fail: s.fail + 1 }));
+              setBikeLastError(err && err.message ? err.message : String(err));
+              console.error("bike publish failed:", err);
+            });
 
           // Breadcrumbs are appended (never rewritten) and spaced by distance so
           // the stored trail stays small on a multi-day ride. The first crumb drops
@@ -4083,6 +4117,17 @@
           bikeLastPubRef.current = 0;
           bikeStartedAtRef.current = Date.now();
           bikeSimLastRef.current   = Date.now();
+          if (!resume) {
+            bikeRideTrailPtsRef.current = [];
+            if (bikeRideTrailRef.current && bikeRideMapRef.current) {
+              try { bikeRideMapRef.current.removeLayer(bikeRideTrailRef.current); } catch(_) {}
+              bikeRideTrailRef.current = null;
+            }
+          }
+          setBikeAckAt(null);
+          setBikeFailAt(null);
+          setBikePubStats({ ok: 0, fail: 0 });
+          setBikeLastError("");
           setBikeElapsedMs(baseElapsed);
           setBikeRideCode(feed.code);
           setBikeRiding(true);
@@ -4294,6 +4339,55 @@
             bikeLabelRef.current.setZIndex(2);
           }
         }
+
+        function initBikeRideMap(el) {
+          if (!el || bikeRideMapRef.current) return;
+          const b = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
+          const start = bikeLive ? [bikeLive.lat, bikeLive.lng] : [39.5, -98.35];
+          const map = L.map(el, { zoomControl: false, attributionControl: false })
+            .setView(start, bikeLive ? 15 : 4);
+          L.tileLayer(b.url, {
+            maxZoom: b.maxZoom, subdomains: b.subdomains,
+            detectRetina: b.url.includes("{r}"),
+          }).addTo(map);
+          bikeRideMapRef.current = map;
+        }
+
+        // Keep the rider's map pinned to their own position, with the trail they've
+        // actually published so they can see it's going out.
+        useEffect(() => {
+          const map = bikeRideMapRef.current;
+          if (!map || !bikeLive) return;
+          const pos = [bikeLive.lat, bikeLive.lng];
+          try {
+            const pts = bikeRideTrailPtsRef.current;
+            const last = pts[pts.length - 1];
+            if (!last || haversineM(last[0], last[1], pos[0], pos[1]) > 5) {
+              pts.push(pos);
+              if (pts.length > 3000) pts.splice(0, pts.length - 3000);
+            }
+            if (bikeRideMarkerRef.current) bikeRideMarkerRef.current.setLatLng(pos);
+            else bikeRideMarkerRef.current = L.circleMarker(pos, {
+              radius: 9, color: "#00aeef", fillColor: "#00aeef", fillOpacity: 0.95, weight: 3,
+            }).addTo(map);
+            if (pts.length > 1) {
+              if (bikeRideTrailRef.current) bikeRideTrailRef.current.setLatLngs(pts);
+              else bikeRideTrailRef.current = L.polyline(pts, { color: "#ffd166", weight: 4, opacity: 0.9 }).addTo(map);
+            }
+            map.panTo(pos, { animate: false });
+          } catch(_) {}
+        }, [bikeLive]);
+
+        // Rebuild the ride map cleanly whenever the rider leaves and returns.
+        useEffect(() => {
+          if (appMode === "bike" && bikeView === "ride") return;
+          if (bikeRideMapRef.current) {
+            try { bikeRideMapRef.current.remove(); } catch(_) {}
+            bikeRideMapRef.current = null;
+            bikeRideMarkerRef.current = null;
+            bikeRideTrailRef.current = null;
+          }
+        }, [appMode, bikeView]);
 
         function initBikeMap(el) {
           bikeMapElRef.current = el;
@@ -9952,6 +10046,58 @@
                         <div style={{ fontSize:11, color: bikeRiding ? "#4ade80" : "#5a86a8", marginTop:10, textAlign:"center" }}>
                           {bikeGpsStatus || "Not tracking."}
                         </div>
+                      </div>
+
+                      {/* Signal health — the thing to glance at mid-ride */}
+                      {(() => {
+                        const ackAge = bikeAckAt ? Date.now() - bikeAckAt : null;
+                        let tone, title, detail;
+                        if (!bikeRiding) {
+                          tone = "#5a86a8"; title = "Not broadcasting";
+                          detail = "Start the ride and this will confirm your updates are reaching followers.";
+                        } else if (!bikeConnected) {
+                          tone = "#f87171"; title = "⚠ No connection";
+                          detail = "Out of mobile coverage. Your ride is still being recorded and everything queued will send automatically when signal returns.";
+                        } else if (bikeFailAt && (!bikeAckAt || bikeFailAt > bikeAckAt)) {
+                          // The most recent attempt was rejected — don't let a slightly
+                          // older success make this look healthy.
+                          tone = "#f87171"; title = "⚠ Updates rejected";
+                          detail = "The server is reachable but refusing the update, so followers aren't seeing you move. This is usually a database rules problem rather than signal.";
+                        } else if (ackAge == null) {
+                          tone = "#ffd166"; title = "Connecting…";
+                          detail = "Waiting for the first update to be confirmed by the server.";
+                        } else if (ackAge > 30000) {
+                          tone = "#f87171"; title = "⚠ Updates not confirmed";
+                          detail = `Nothing acknowledged for ${Math.round(ackAge/1000)}s. Followers are seeing your last known position.`;
+                        } else if (ackAge > 10000) {
+                          tone = "#ffd166"; title = "Syncing…";
+                          detail = `Last confirmed ${Math.round(ackAge/1000)}s ago. Weak signal, but it's still going through.`;
+                        } else {
+                          tone = "#4ade80"; title = "● Broadcasting live";
+                          detail = `Followers are seeing you. Last update confirmed ${Math.max(0, Math.round(ackAge/1000))}s ago.`;
+                        }
+                        return (
+                          <div style={{ ...S.card, borderColor: tone + "66", background: tone + "12" }}>
+                            <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, letterSpacing:2, color: tone, lineHeight:1.1 }}>
+                              {title}
+                            </div>
+                            <div style={{ fontSize:12, color:"#c8d8e8", marginTop:5, lineHeight:1.5 }}>{detail}</div>
+                            <div style={{ ...S.row, gap:14, marginTop:10, flexWrap:"wrap", fontSize:11, color:"#5a86a8" }}>
+                              <span>✓ {bikePubStats.ok} sent</span>
+                              {bikePubStats.fail > 0 && <span style={{ color:"#f87171" }}>✕ {bikePubStats.fail} failed</span>}
+                              <span>{bikeConnected ? "Server reachable" : "Offline"}</span>
+                              {bikeRideTrailPtsRef.current.length > 0 && <span>{bikeRideTrailPtsRef.current.length} trail points</span>}
+                            </div>
+                            {bikeLastError && (
+                              <div style={{ fontSize:11, color:"#f87171", marginTop:8 }}>Last error: {bikeLastError}</div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* The rider's own map — proof the dot is where they are */}
+                      <div style={{ ...S.card, padding:0, overflow:"hidden" }}>
+                        <div ref={initBikeRideMap} style={{ height:240, background:"#0c2240" }} />
                       </div>
 
                       <div style={{ ...S.row, gap:8, justifyContent:"center", marginBottom:16 }}>
