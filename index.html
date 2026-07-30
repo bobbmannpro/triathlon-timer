@@ -92,7 +92,20 @@
       const BIKE_PUBLISH_MS      = 1000;  // while moving
       const BIKE_IDLE_PUBLISH_MS = 5000;  // while stopped — nothing is changing
       const BIKE_MOVING_MPS      = 0.5;   // below this we treat the rider as stopped
-      const BIKE_CRUMB_MIN_M     = 40;    // breadcrumb spacing for the stored trail
+      // Breadcrumb spacing grows with distance so the stored trail stays bounded:
+      // a viewer loads the whole trail once, and a multi-day ride would otherwise
+      // run to tens of thousands of points. Starts tight so the trail is visible
+      // within the first block of riding.
+      const BIKE_CRUMB_MIN_M     = 20;    // spacing at the start of a ride
+      const BIKE_CRUMB_MAX_M     = 200;   // ceiling once the ride gets long
+      const BIKE_CRUMB_TARGET    = 1500;  // roughly this many points, whatever the length
+      const bikeCrumbSpacing = (distM) =>
+        Math.max(BIKE_CRUMB_MIN_M, Math.min(BIKE_CRUMB_MAX_M, distM / BIKE_CRUMB_TARGET));
+
+      // A Strava GPX export can carry tens of thousands of points. Simplify hard
+      // before storing: viewers download the route with the feed metadata.
+      const BIKE_ROUTE_MAX_PTS   = 1200;
+      const BIKE_ROUTE_TOL_M     = 8;     // starting Douglas-Peucker tolerance
       const BIKE_STALE_MS        = 20000; // no frame for this long ⇒ show "signal lost"
       // Sources tick at roughly, not exactly, 1 Hz. Without slack a fix arriving at
       // 995ms is rejected and the effective rate halves, so allow a small tolerance.
@@ -119,6 +132,106 @@
         scopes: "user_read workouts_read routes_read offline_data",
         authUrl: "https://api.wahooligan.com/oauth/authorize",
       };
+
+      // ── Route geometry (Bike Live Feed) ──────────────────────────────────────
+      // Local flat-earth projection around an anchor; plenty accurate over the few
+      // hundred metres these calculations span.
+      function bikeToXY(p, anchor) {
+        const k = Math.cos(anchor[0] * Math.PI / 180);
+        return [(p[1] - anchor[1]) * 111320 * k, (p[0] - anchor[0]) * 110540];
+      }
+      function bikePerpDistM(p, a, b) {
+        const P = bikeToXY(p, a), A = [0, 0], B = bikeToXY(b, a);
+        const dx = B[0] - A[0], dy = B[1] - A[1];
+        const len2 = dx * dx + dy * dy;
+        if (len2 === 0) return Math.hypot(P[0], P[1]);
+        let t = (P[0] * dx + P[1] * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(P[0] - dx * t, P[1] - dy * t);
+      }
+      // Closest point on segment a→b to p, plus how far along the segment it sits.
+      function bikeClosestOnSeg(p, a, b) {
+        const P = bikeToXY(p, a), B = bikeToXY(b, a);
+        const len2 = B[0] * B[0] + B[1] * B[1];
+        if (len2 === 0) return { point: a, alongM: 0, distM: Math.hypot(P[0], P[1]) };
+        let t = (P[0] * B[0] + P[1] * B[1]) / len2;
+        t = Math.max(0, Math.min(1, t));
+        return {
+          point: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+          alongM: Math.sqrt(len2) * t,
+          distM: Math.hypot(P[0] - B[0] * t, P[1] - B[1] * t),
+        };
+      }
+      // Ramer–Douglas–Peucker, iterative so a huge track can't blow the stack.
+      function bikeSimplify(pts, tolM) {
+        if (pts.length < 3) return pts.slice();
+        const keep = new Uint8Array(pts.length);
+        keep[0] = 1; keep[pts.length - 1] = 1;
+        const stack = [[0, pts.length - 1]];
+        while (stack.length) {
+          const [a, b] = stack.pop();
+          let maxD = -1, idx = -1;
+          for (let i = a + 1; i < b; i++) {
+            const d = bikePerpDistM(pts[i], pts[a], pts[b]);
+            if (d > maxD) { maxD = d; idx = i; }
+          }
+          if (maxD > tolM && idx > 0) { keep[idx] = 1; stack.push([a, idx], [idx, b]); }
+        }
+        return pts.filter((_, i) => keep[i]);
+      }
+      // Simplify to at most maxPts by loosening tolerance until it fits.
+      function bikeSimplifyTo(pts, maxPts, startTol) {
+        let tol = startTol, out = bikeSimplify(pts, tol), guard = 0;
+        while (out.length > maxPts && guard++ < 24) { tol *= 1.8; out = bikeSimplify(pts, tol); }
+        return { points: out, toleranceM: Math.round(tol) };
+      }
+
+      // Total ascent from route elevations, ignoring sub-metre jitter.
+      function bikeElevGain(pts) {
+        let gain = 0;
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i-1][2], b = pts[i][2];
+          if (a == null || b == null || isNaN(a) || isNaN(b)) continue;
+          const d = b - a;
+          if (d > 0.5) gain += d;
+        }
+        return Math.round(gain);
+      }
+
+      // Parse a Strava/Garmin/Komoot export. GPX (<trkpt>/<rtept>) and TCX
+      // (<Trackpoint>) cover essentially every route export these tools produce.
+      // FIT is binary and not handled here.
+      function parseRouteFile(text) {
+        let doc;
+        try { doc = new DOMParser().parseFromString(text, "application/xml"); } catch (_) { return null; }
+        if (!doc || doc.getElementsByTagName("parsererror").length) return null;
+        const pts = [];
+        const grab = (tag) => Array.from(doc.getElementsByTagName(tag));
+        let nodes = grab("trkpt");
+        if (!nodes.length) nodes = grab("rtept");
+        if (nodes.length) {
+          for (const n of nodes) {
+            const lat = parseFloat(n.getAttribute("lat"));
+            const lng = parseFloat(n.getAttribute("lon"));
+            if (isNaN(lat) || isNaN(lng)) continue;
+            const ele = n.getElementsByTagName("ele")[0];
+            pts.push([lat, lng, ele ? parseFloat(ele.textContent) : null]);
+          }
+        } else {
+          for (const tp of grab("Trackpoint")) {
+            const la = tp.getElementsByTagName("LatitudeDegrees")[0];
+            const lo = tp.getElementsByTagName("LongitudeDegrees")[0];
+            if (!la || !lo) continue;
+            const lat = parseFloat(la.textContent), lng = parseFloat(lo.textContent);
+            if (isNaN(lat) || isNaN(lng)) continue;
+            const al = tp.getElementsByTagName("AltitudeMeters")[0];
+            pts.push([lat, lng, al ? parseFloat(al.textContent) : null]);
+          }
+        }
+        if (pts.length < 2) return null;
+        const nameEl = doc.getElementsByTagName("name")[0];
+        return { name: nameEl ? (nameEl.textContent || "").trim().slice(0, 80) : "", points: pts };
+      }
 
       // ── Formatting helpers ───────────────────────────────────────────────────
       function formatTime(ms) {
@@ -1096,6 +1209,8 @@
         const [bikeWatchLive, setBikeWatchLive] = useState(null);
         const [bikeWatchTrack, setBikeWatchTrack] = useState([]);
         const [bikeWatchStatus, setBikeWatchStatus] = useState(null);
+        const [bikeWatchProgress, setBikeWatchProgress] = useState(null); // multi-day totals
+        const [bikeRouteProg, setBikeRouteProg] = useState(null);         // position along route
         const [bikeWatchError, setBikeWatchError]   = useState("");
         const [bikeFollowing, setBikeFollowing]     = useState(true);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
@@ -1114,8 +1229,16 @@
         const bikeMapRef       = useRef(null);
         const bikeMarkerRef    = useRef(null);
         const bikeTrailLineRef = useRef(null);
-        const bikeRouteLineRef = useRef(null);
+        const bikeRouteLineRef = useRef(null);   // full planned course (faint)
+        const bikeRouteDoneRef = useRef(null);   // portion already covered (bright)
+        const bikeRouteCumRef  = useRef(null);   // cached cumulative distances
         const bikeCpLayerRef   = useRef([]);
+        // Multi-day: distance and riding time completed before the current session,
+        // so resuming on day 2 continues the totals instead of restarting them.
+        const bikeDistBaseRef    = useRef(0);
+        const bikeElapsedBaseRef = useRef(0);
+        const bikeDayRef         = useRef(1);
+        const bikeRouteFileRef   = useRef(null);
         const bikeSimTimerRef  = useRef(null);
         const bikeSimLastRef   = useRef(0);
         const bikeSimCenterRef = useRef([30.2672, -97.7431]);
@@ -3666,11 +3789,14 @@
         function newBikeFeed() {
           return {
             code: Math.random().toString(36).substring(2, 8).toUpperCase(),
-            riderId: null,     // → bikeRiders profile
+            riderId: null,        // → bikeRiders profile
             eventName: "",
             units: "mi",
-            checkpoints: [],   // { name, lat, lng, note }
-            route: [],         // [[lat,lng], ...] optional planned course
+            rideMode: "free",     // "free" = just trace the ride | "route" = follow a planned course
+            multiDay: false,      // multi-day tours get stages, overnight stops and resume
+            checkpoints: [],      // { name, lat, lng, note, kind: checkpoint|stop|goal, day }
+            route: [],            // [[lat,lng], ...] simplified planned course
+            routeMeta: null,      // { name, source, distM, points, elevGainM, toleranceM }
             createdAt: Date.now(),
           };
         }
@@ -3716,10 +3842,69 @@
             photoUrl: r?.photoUrl || "",
             bioLink: r?.bioLink || "",
             units: feed.units || "mi",
+            rideMode: feed.rideMode || (feed.route && feed.route.length > 1 ? "route" : "free"),
+            multiDay: !!feed.multiDay,
             checkpoints: feed.checkpoints || [],
             route: feed.route || [],
+            routeMeta: feed.routeMeta || null,
             updatedAt: Date.now(),
           }).catch(console.error);
+        }
+
+        // Cumulative distance along a route, so progress can be reported in metres.
+        function bikeRouteCumulative(route) {
+          const cum = [0];
+          for (let i = 1; i < route.length; i++) {
+            cum.push(cum[i-1] + haversineM(route[i-1][0], route[i-1][1], route[i][0], route[i][1]));
+          }
+          return cum;
+        }
+
+        // Project a position onto the route: how far along, how far off, and where to
+        // split the line into "done" and "remaining".
+        function bikeRouteProgress(route, cum, lat, lng) {
+          if (!route || route.length < 2) return null;
+          let best = null;
+          for (let i = 1; i < route.length; i++) {
+            const r = bikeClosestOnSeg([lat, lng], route[i-1], route[i]);
+            if (!best || r.distM < best.offRouteM) {
+              best = { offRouteM: r.distM, alongM: cum[i-1] + r.alongM, segIdx: i, point: r.point };
+            }
+          }
+          const totalM = cum[cum.length - 1];
+          return { ...best, totalM, pct: totalM > 0 ? Math.min(100, (best.alongM / totalM) * 100) : 0 };
+        }
+
+        async function importBikeRouteFile(file) {
+          try {
+            const text = await file.text();
+            const parsed = parseRouteFile(text);
+            if (!parsed) {
+              alert("Couldn't read that file. Export the route from Strava as GPX (or TCX) and try again — .fit files aren't supported.");
+              return;
+            }
+            const raw = parsed.points;
+            const { points, toleranceM } = bikeSimplifyTo(raw, BIKE_ROUTE_MAX_PTS, BIKE_ROUTE_TOL_M);
+            const latlng = points.map(p => [+p[0].toFixed(5), +p[1].toFixed(5)]);
+            const distM = bikeRouteCumulative(latlng).pop() || 0;
+            setBikeDraft(d => ({
+              ...d,
+              rideMode: "route",
+              route: latlng,
+              routeMeta: {
+                name: parsed.name || file.name.replace(/\.[^.]+$/, ""),
+                source: file.name.toLowerCase().endsWith(".tcx") ? "TCX" : "GPX",
+                distM: Math.round(distM),
+                points: latlng.length,
+                rawPoints: raw.length,
+                elevGainM: bikeElevGain(points),
+                toleranceM,
+              },
+              eventName: d.eventName || parsed.name || "",
+            }));
+          } catch (e) {
+            alert("Couldn't read that file: " + e.message);
+          }
         }
 
         // Editing a profile must refresh every event that rider appears in, so live
@@ -3756,7 +3941,7 @@
         useEffect(() => {
           if (!bikeRiding) return;
           const id = setInterval(() => {
-            setBikeElapsedMs(Date.now() - (bikeStartedAtRef.current || Date.now()));
+            setBikeElapsedMs(bikeElapsedBaseRef.current + (Date.now() - (bikeStartedAtRef.current || Date.now())));
           }, 500);
           return () => clearInterval(id);
         }, [bikeRiding]);
@@ -3811,7 +3996,8 @@
             acc: extra.acc ?? null,
             mv:  moving,
             sim: extra.sim ? true : null,
-            el:  now - (bikeStartedAtRef.current || now),
+            day: bikeDayRef.current > 1 ? bikeDayRef.current : null,
+            el:  bikeElapsedBaseRef.current + (now - (bikeStartedAtRef.current || now)),
             t:   now,
           };
           setBikeLive(frame);
@@ -3825,32 +4011,54 @@
           rtdb.ref(`bikeFeeds/${code}/live`).set(frame).catch(console.error);
 
           // Breadcrumbs are appended (never rewritten) and spaced by distance so
-          // the stored trail stays small on a multi-hour ride.
+          // the stored trail stays small on a multi-day ride. The first crumb drops
+          // immediately so a trail is visible from the outset.
           const lc = bikeLastCrumbRef.current;
-          if (!lc || haversineM(lc[0], lc[1], lat, lng) >= BIKE_CRUMB_MIN_M) {
+          if (!lc || haversineM(lc[0], lc[1], lat, lng) >= bikeCrumbSpacing(bikeDistMRef.current)) {
             bikeLastCrumbRef.current = [lat, lng];
             rtdb.ref(`bikeFeeds/${code}/track`).push([+lat.toFixed(5), +lng.toFixed(5)]).catch(console.error);
           }
         }
 
-        function startBikeRide(feed) {
+        async function startBikeRide(feed, resume) {
           if (!feed?.code) { setBikeGpsStatus("No feed selected."); return; }
           if (!bikeSimulate && !navigator.geolocation) { setBikeGpsStatus("Geolocation not supported on this device."); return; }
-          bikeDistMRef.current   = 0;
+
+          // Resuming a multi-day tour continues the running totals and keeps the
+          // trail already laid down; a fresh start wipes both.
+          let baseDist = 0, baseElapsed = 0, day = 1;
+          if (resume) {
+            try {
+              const snap = await rtdb.ref(`bikeFeeds/${feed.code}/progress`).once("value");
+              const p = snap.val() || {};
+              baseDist    = p.distM || 0;
+              baseElapsed = p.elapsedMs || 0;
+              day         = (p.day || 1) + 1;
+            } catch(_) {}
+          }
+          bikeDistBaseRef.current    = baseDist;
+          bikeElapsedBaseRef.current = baseElapsed;
+          bikeDayRef.current         = day;
+          bikeDistMRef.current   = baseDist;
           bikePrevFixRef.current = null;
           bikeLastCrumbRef.current = null;
           bikeLastPubRef.current = 0;
           bikeStartedAtRef.current = Date.now();
           bikeSimLastRef.current   = Date.now();
-          setBikeElapsedMs(0);
+          setBikeElapsedMs(baseElapsed);
           setBikeRideCode(feed.code);
           setBikeRiding(true);
           acquireWakeLock();
 
-          // Fresh ride: clear the previous trail so viewers don't see last ride's line
-          rtdb.ref(`bikeFeeds/${feed.code}/track`).remove().catch(console.error);
+          if (!resume) {
+            // Fresh ride: clear the previous trail so viewers don't see last ride's line
+            rtdb.ref(`bikeFeeds/${feed.code}/track`).remove().catch(console.error);
+          }
           rtdb.ref(`bikeFeeds/${feed.code}`).update({
             status: "live", startedAt: bikeStartedAtRef.current, finishedAt: null,
+          }).catch(console.error);
+          rtdb.ref(`bikeFeeds/${feed.code}/progress`).update({
+            distM: baseDist, elapsedMs: baseElapsed, day, updatedAt: Date.now(),
           }).catch(console.error);
           // Only the feed's owner may write meta. A rider who joined with just a
           // code doesn't own it — the organiser already published it at setup.
@@ -3918,7 +4126,7 @@
           { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
         }
 
-        function stopBikeRide() {
+        function stopBikeRide(finish) {
           if (bikeGpsWatchRef.current !== null) {
             navigator.geolocation.clearWatch(bikeGpsWatchRef.current);
             bikeGpsWatchRef.current = null;
@@ -3928,11 +4136,21 @@
             bikeSimTimerRef.current = null;
           }
           const code = bikeRideCodeRef.current;
+          const totalDist    = Math.round(bikeDistMRef.current);
+          const totalElapsed = bikeElapsedBaseRef.current + (Date.now() - (bikeStartedAtRef.current || Date.now()));
           if (code) {
-            rtdb.ref(`bikeFeeds/${code}`).update({ status: "finished", finishedAt: Date.now() }).catch(console.error);
+            // Always record the totals: a paused tour needs them to resume, and a
+            // finished ride keeps them for the summary.
+            rtdb.ref(`bikeFeeds/${code}/progress`).update({
+              distM: totalDist, elapsedMs: totalElapsed, day: bikeDayRef.current, updatedAt: Date.now(),
+            }).catch(console.error);
+            rtdb.ref(`bikeFeeds/${code}`).update(finish
+              ? { status: "finished", finishedAt: Date.now() }
+              : { status: "paused" }
+            ).catch(console.error);
           }
           setBikeRiding(false);
-          setBikeGpsStatus("Ride ended.");
+          setBikeGpsStatus(finish ? "Ride finished." : "Paused for the day — resume when you set off again.");
         }
 
         // ── Viewer subscription ─────────────────────────────────────────────────
@@ -3952,6 +4170,8 @@
           }, e => setBikeWatchError(e.message));
           const lFn = liveRef.on("value", s => { if (s.exists()) setBikeWatchLive(s.val()); });
           const sFn = statRef.on("value", s => setBikeWatchStatus(s.val()));
+          const progRef = rtdb.ref(`bikeFeeds/${code}/progress`);
+          const pFn = progRef.on("value", s => setBikeWatchProgress(s.exists() ? s.val() : null));
           // Load the trail incrementally: child_added replays existing crumbs once,
           // then streams new ones — far cheaper than re-reading a growing array.
           const tFn = trackRef.on("child_added", s => {
@@ -3972,7 +4192,7 @@
           return () => {
             metaRef.off("value", mFn); liveRef.off("value", lFn);
             statRef.off("value", sFn); trackRef.off("child_added", tFn);
-            startRef.off("value", stFn);
+            startRef.off("value", stFn); progRef.off("value", pFn);
           };
         }, [appMode, bikeView, bikeWatchCode]);
 
@@ -4037,6 +4257,8 @@
             bikeMarkerRef.current = null;
             bikeTrailLineRef.current = null;
             bikeRouteLineRef.current = null;
+            bikeRouteDoneRef.current = null;
+            bikeRouteCumRef.current = null;
             bikeCpLayerRef.current = [];
             bikeInterpRef.current = { from: null, to: null, t0: 0, dur: BIKE_PUBLISH_MS };
           }
@@ -4049,19 +4271,48 @@
           try {
             const route = bikeWatchMeta.route || [];
             if (route.length > 1) {
+              bikeRouteCumRef.current = bikeRouteCumulative(route);
               if (bikeRouteLineRef.current) bikeRouteLineRef.current.setLatLngs(route);
-              else bikeRouteLineRef.current = L.polyline(route, { color: "#5a86a8", weight: 3, dashArray: "8 6", opacity: 0.6 }).addTo(map);
+              else bikeRouteLineRef.current = L.polyline(route, { color: "#5a86a8", weight: 4, dashArray: "8 6", opacity: 0.55 }).addTo(map);
+            } else {
+              bikeRouteCumRef.current = null;
             }
             bikeCpLayerRef.current.forEach(l => { try { map.removeLayer(l); } catch(_) {} });
+            const KIND = {
+              stop: { color: "#f472b6", radius: 9, icon: "🛏" },
+              goal: { color: "#4ade80", radius: 9, icon: "🏁" },
+              checkpoint: { color: "#ffd166", radius: 7, icon: "📍" },
+            };
             bikeCpLayerRef.current = (bikeWatchMeta.checkpoints || [])
               .filter(cp => cp.lat != null && cp.lng != null)
-              .map((cp, i) => L.circleMarker([cp.lat, cp.lng], {
-                  radius: 7, color: "#ffd166", fillColor: "#ffd166", fillOpacity: 0.85, weight: 2,
-                })
-                .bindTooltip(cp.name || `Checkpoint ${i + 1}`, { permanent: false, direction: "top" })
-                .addTo(map));
+              .map((cp, i) => {
+                const k = KIND[cp.kind] || KIND.checkpoint;
+                const label = [cp.day ? `Day ${cp.day}` : null, cp.name || `Checkpoint ${i + 1}`]
+                  .filter(Boolean).join(" · ");
+                return L.circleMarker([cp.lat, cp.lng], {
+                    radius: k.radius, color: k.color, fillColor: k.color, fillOpacity: 0.85, weight: 2,
+                  })
+                  .bindTooltip(`${k.icon} ${label}`, { permanent: false, direction: "top" })
+                  .addTo(map);
+              });
           } catch(_) {}
         }, [bikeWatchMeta, bikeView]);
+
+        // Project the rider onto the planned course and light up the covered part.
+        useEffect(() => {
+          const map = bikeMapRef.current;
+          const route = bikeWatchMeta?.route || [];
+          const cum = bikeRouteCumRef.current;
+          if (!bikeWatchLive || route.length < 2 || !cum) { setBikeRouteProg(null); return; }
+          const p = bikeRouteProgress(route, cum, bikeWatchLive.lat, bikeWatchLive.lng);
+          setBikeRouteProg(p);
+          if (!map || !p) return;
+          try {
+            const done = route.slice(0, p.segIdx).concat([p.point]);
+            if (bikeRouteDoneRef.current) bikeRouteDoneRef.current.setLatLngs(done);
+            else bikeRouteDoneRef.current = L.polyline(done, { color: "#4ade80", weight: 5, opacity: 0.9 }).addTo(map);
+          } catch(_) {}
+        }, [bikeWatchLive, bikeWatchMeta]);
 
         // Keep the breadcrumb trail line in sync.
         useEffect(() => {
@@ -4082,6 +4333,7 @@
             if (!bikeMarkerRef.current) {
               bikeMarkerRef.current = L.circleMarker(pos, {
                 radius: 11, color: "#00aeef", fillColor: "#00aeef", fillOpacity: 0.95, weight: 4,
+                className: "bike-rider-dot",
               })
                 .bindTooltip(bikeWatchMeta?.riderName || "Rider", {
                   permanent: true, direction: "top", offset: [0, -14], className: "leaflet-ath-label",
@@ -9329,17 +9581,49 @@
                                   color: bikeDraft.units === u ? "#ffd166" : "#5a86a8" }}>{u === "mi" ? "Miles" : "Kilometres"}</button>
                             ))}
                           </div>
+                          <div style={{ ...S.row, justifyContent:"space-between", paddingTop:6, borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+                            <div style={{ minWidth:0 }}>
+                              <div style={{ fontSize:12, color:"#e8f4fb", fontWeight:700 }}>Multi-day tour</div>
+                              <div style={{ fontSize:11, color:"#5a86a8", lineHeight:1.45 }}>
+                                Adds overnight stops and a Pause button, so distance and time carry over between days instead of resetting.
+                              </div>
+                            </div>
+                            <button onClick={() => setBikeDraft(d => ({ ...d, multiDay: !d.multiDay }))}
+                              style={{ flexShrink:0, padding:"7px 13px", fontSize:12, fontWeight:700, borderRadius:6, cursor:"pointer",
+                                background: bikeDraft.multiDay ? "rgba(244,114,182,0.18)" : "transparent",
+                                border: bikeDraft.multiDay ? "1px solid rgba(244,114,182,0.7)" : "1px solid rgba(255,255,255,0.12)",
+                                color: bikeDraft.multiDay ? "#f472b6" : "#5a86a8" }}>
+                              {bikeDraft.multiDay ? "● On" : "Off"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={S.card}>
+                        <div style={S.label}>Ride type</div>
+                        <div style={{ ...S.row, gap:8, flexWrap:"wrap" }}>
+                          {[["free","🧭 Free ride","Just traces wherever they go"],
+                            ["route","🗺 Planned route","Follows a course you import"]].map(([m, label, hint]) => (
+                            <button key={m} onClick={() => setBikeDraft(d => ({ ...d, rideMode: m }))}
+                              style={{ flex:"1 1 150px", textAlign:"left", padding:"10px 12px", borderRadius:8, cursor:"pointer",
+                                background: bikeDraft.rideMode === m ? "rgba(255,209,102,0.14)" : "transparent",
+                                border: bikeDraft.rideMode === m ? "1px solid rgba(255,209,102,0.6)" : "1px solid rgba(255,255,255,0.1)" }}>
+                              <div style={{ fontSize:13, fontWeight:700, color: bikeDraft.rideMode === m ? "#ffd166" : "#e8f4fb" }}>{label}</div>
+                              <div style={{ fontSize:10, color:"#5a86a8", marginTop:2 }}>{hint}</div>
+                            </button>
+                          ))}
                         </div>
                       </div>
 
                       <div style={S.card}>
                         <div style={{ ...S.row, justifyContent:"space-between" }}>
                           <div style={{ ...S.label, marginBottom:0 }}>Checkpoints</div>
-                          <button onClick={() => setBikeDraft(d => ({ ...d, checkpoints: [...(d.checkpoints||[]), { name:"", lat:null, lng:null, note:"" }] }))}
+                          <button onClick={() => setBikeDraft(d => ({ ...d, checkpoints: [...(d.checkpoints||[]), { name:"", lat:null, lng:null, note:"", kind:"checkpoint", day:null }] }))}
                             style={{ ...btnStyle("#ffd166", true), padding:"5px 11px", fontSize:11 }}>+ Add</button>
                         </div>
-                        <div style={{ fontSize:11, color:"#5a86a8", margin:"6px 0 10px" }}>
-                          Shown as markers on the viewer's map — rest stops, water, the finish. These are labels only; they don't trigger anything.
+                        <div style={{ fontSize:11, color:"#5a86a8", margin:"6px 0 10px", lineHeight:1.5 }}>
+                          Markers on the viewer's map — water stops, the finish line, or where they're sleeping.
+                          Labels only; they don't trigger anything.{bikeDraft.multiDay ? " Tag each one with a day so followers can see the plan." : ""}
                         </div>
                         {(bikeDraft.checkpoints || []).length === 0 && (
                           <div style={{ fontSize:12, color:"#3a6080" }}>No checkpoints yet.</div>
@@ -9371,14 +9655,63 @@
                             <input value={cp.note || ""} onChange={e => setBikeDraft(d => {
                               const c = [...d.checkpoints]; c[i] = { ...c[i], note: e.target.value }; return { ...d, checkpoints: c };
                             })} placeholder="Note (optional)" style={{ ...S.input, marginTop:6, fontSize:12 }} />
+                            <div style={{ ...S.row, gap:6, marginTop:6, flexWrap:"wrap" }}>
+                              {[["checkpoint","📍 Checkpoint","#ffd166"],["stop","🛏 Overnight stop","#f472b6"],["goal","🏁 Goal","#4ade80"]].map(([k, label, col]) => (
+                                <button key={k} onClick={() => setBikeDraft(d => {
+                                  const c = [...d.checkpoints]; c[i] = { ...c[i], kind: k }; return { ...d, checkpoints: c };
+                                })} style={{ padding:"4px 9px", fontSize:10, fontWeight:700, borderRadius:5, cursor:"pointer",
+                                  background: (cp.kind || "checkpoint") === k ? col + "26" : "transparent",
+                                  border: (cp.kind || "checkpoint") === k ? `1px solid ${col}` : "1px solid rgba(255,255,255,0.1)",
+                                  color: (cp.kind || "checkpoint") === k ? col : "#5a86a8" }}>{label}</button>
+                              ))}
+                              {bikeDraft.multiDay && (
+                                <input value={cp.day ?? ""} onChange={e => setBikeDraft(d => {
+                                  const c = [...d.checkpoints];
+                                  c[i] = { ...c[i], day: e.target.value === "" ? null : Math.max(1, parseInt(e.target.value, 10) || 1) };
+                                  return { ...d, checkpoints: c };
+                                })} placeholder="Day" type="number" min="1"
+                                  style={{ ...S.input, width:70, fontSize:11, padding:"4px 8px" }} />
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
 
+                      {bikeDraft.rideMode === "route" && (
                       <div style={S.card}>
-                        <div style={S.label}>Planned route (optional)</div>
+                        <div style={S.label}>Planned route</div>
+                        <div style={{ fontSize:11, color:"#5a86a8", marginBottom:8, lineHeight:1.5 }}>
+                          In Strava open the route → <strong>Export GPX</strong>, then load the file here.
+                          Garmin Connect, Komoot and RideWithGPS all export GPX too. TCX works as well.
+                        </div>
+                        <input ref={bikeRouteFileRef} type="file" accept=".gpx,.GPX,.tcx,.TCX,.xml" style={{ display:"none" }}
+                          onChange={e => { if (e.target.files[0]) importBikeRouteFile(e.target.files[0]); e.target.value = ""; }} />
+                        <button onClick={() => bikeRouteFileRef.current && bikeRouteFileRef.current.click()}
+                          style={{ ...btnStyle("#48cae4"), fontSize:13, width:"100%" }}>
+                          📂 Load GPX / TCX route file
+                        </button>
+                        {bikeDraft.routeMeta && (
+                          <div style={{ marginTop:10, padding:"10px 12px", background:"#071829", border:"1px solid rgba(74,222,128,0.3)", borderRadius:6 }}>
+                            <div style={{ fontSize:13, fontWeight:700, color:"#4ade80" }}>{bikeDraft.routeMeta.name || "Imported route"}</div>
+                            <div style={{ fontSize:11, color:"#5a86a8", marginTop:4, lineHeight:1.6 }}>
+                              {fmtDist(bikeDraft.routeMeta.distM)}
+                              {bikeDraft.routeMeta.elevGainM > 0 ? `  ·  ${bikeDraft.routeMeta.elevGainM.toLocaleString()} m climb` : ""}
+                              <br />
+                              {bikeDraft.routeMeta.points} points
+                              {bikeDraft.routeMeta.rawPoints > bikeDraft.routeMeta.points
+                                ? ` (simplified from ${bikeDraft.routeMeta.rawPoints.toLocaleString()}, ±${bikeDraft.routeMeta.toleranceM}m)`
+                                : ""}
+                              {bikeDraft.multiDay && bikeDraft.routeMeta.distM > 0 ? (
+                                <><br />Multi-day: add an overnight stop for each night below.</>
+                              ) : null}
+                            </div>
+                            <button onClick={() => setBikeDraft(d => ({ ...d, route: [], routeMeta: null }))}
+                              style={{ ...btnStyle("#f87171", true), padding:"4px 10px", fontSize:11, marginTop:8 }}>Remove route</button>
+                          </div>
+                        )}
+                        <div style={{ ...S.label, marginTop:14, marginBottom:6 }}>Or paste coordinates</div>
                         <div style={{ fontSize:11, color:"#5a86a8", marginBottom:8 }}>
-                          Draws a dashed line of the intended course. Paste GeoJSON coordinates or a list of <code>lat,lng</code> lines.
+                          One <code>lat,lng</code> per line — handy for a quick test course.
                         </div>
                         <textarea
                           defaultValue={(bikeDraft.route || []).map(p => p.join(",")).join("\n")}
@@ -9414,6 +9747,7 @@
                           </button>
                         </div>
                       </div>
+                      )}
 
                       <div style={{ ...S.row, gap:8, flexWrap:"wrap", marginBottom:24 }}>
                         <button onClick={() => {
@@ -9539,17 +9873,35 @@
                       </div>
 
                       <div style={{ ...S.row, gap:8, justifyContent:"center", marginBottom:16 }}>
-                        {!bikeRiding ? (
-                          <button onClick={() => {
-                            const code = (bikeRideCode || "").trim().toUpperCase();
+                        {(() => {
+                          const code = (bikeRideCode || "").trim().toUpperCase();
+                          const feed = bikeFeedList.find(f => f.code === code);
+                          const multi = !!feed?.multiDay;
+                          const begin = (resume) => {
                             if (code.length < 4) { alert("Enter the follow code for this ride first."); return; }
-                            const feed = bikeFeedList.find(f => f.code === code) || { ...newBikeFeed(), code };
-                            startBikeRide(feed);
-                          }} style={{ ...btnStyle("#4ade80"), fontSize:16, padding:"14px 32px" }}>▶ Start Ride</button>
-                        ) : (
-                          <button onClick={() => { if (confirm("End the live feed for this ride?")) stopBikeRide(); }}
-                            style={{ ...btnStyle("#f87171"), fontSize:16, padding:"14px 32px" }}>■ End Ride</button>
-                        )}
+                            startBikeRide(feed || { ...newBikeFeed(), code }, resume);
+                          };
+                          if (!bikeRiding) return (
+                            <div style={{ ...S.row, gap:8, flexWrap:"wrap", justifyContent:"center" }}>
+                              <button onClick={() => begin(false)}
+                                style={{ ...btnStyle("#4ade80"), fontSize:16, padding:"14px 28px" }}>▶ Start Ride</button>
+                              {multi && (
+                                <button onClick={() => begin(true)}
+                                  style={{ ...btnStyle("#f472b6"), fontSize:16, padding:"14px 28px" }}>⏭ Resume Tour</button>
+                              )}
+                            </div>
+                          );
+                          return (
+                            <div style={{ ...S.row, gap:8, flexWrap:"wrap", justifyContent:"center" }}>
+                              {multi && (
+                                <button onClick={() => { if (confirm("Pause for the day? Distance and time are kept, and the trail stays on the map.")) stopBikeRide(false); }}
+                                  style={{ ...btnStyle("#f472b6"), fontSize:16, padding:"14px 24px" }}>⏸ Pause for Day</button>
+                              )}
+                              <button onClick={() => { if (confirm(multi ? "Finish the whole tour? This ends the feed for good." : "End the live feed for this ride?")) stopBikeRide(true); }}
+                                style={{ ...btnStyle("#f87171"), fontSize:16, padding:"14px 24px" }}>■ {multi ? "Finish Tour" : "End Ride"}</button>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       <div style={{ ...S.card, borderColor:"rgba(72,202,228,0.25)" }}>
@@ -9601,8 +9953,10 @@
                               </div>
                               <div style={{ ...S.row, gap:8, marginTop:5 }}>
                                 <span style={{ fontSize:10, letterSpacing:1, textTransform:"uppercase", fontWeight:700,
-                                  color: bikeWatchStatus === "live" ? "#4ade80" : "#5a86a8" }}>
-                                  {bikeWatchStatus === "live" ? "● Live" : bikeWatchStatus === "finished" ? "Finished" : "Not started"}
+                                  color: bikeWatchStatus === "live" ? "#4ade80" : bikeWatchStatus === "paused" ? "#f472b6" : "#5a86a8" }}>
+                                  {bikeWatchStatus === "live" ? "● Live"
+                                    : bikeWatchStatus === "paused" ? "⏸ Resting"
+                                    : bikeWatchStatus === "finished" ? "Finished" : "Not started"}
                                 </span>
                                 <span style={{ fontSize:10, color:"#5a86a8" }}>{bikeWatchLive ? "updated " + ago(bikeWatchLive.t) : ""}</span>
                                 {bikeWatchLive?.sim && (
@@ -9618,6 +9972,58 @@
                           {bikeWatchLive && bikeWatchStatus === "live" && (Date.now() - bikeWatchLive.t) > BIKE_STALE_MS && (
                             <div style={{ ...S.card, borderColor:"rgba(255,209,102,0.5)", background:"rgba(255,209,102,0.07)", fontSize:12, color:"#ffd166" }}>
                               ⚠ No update for {ago(bikeWatchLive.t).replace(" ago","")} — likely out of mobile coverage. The dot is holding at the last known position.
+                            </div>
+                          )}
+
+                          {/* Route progress */}
+                          {bikeWatchMeta?.rideMode === "route" && bikeRouteProg && (
+                            <div style={S.card}>
+                              <div style={{ ...S.row, justifyContent:"space-between", marginBottom:8 }}>
+                                <div style={{ ...S.label, marginBottom:0 }}>
+                                  {bikeWatchMeta?.routeMeta?.name || "Planned route"}
+                                </div>
+                                <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, letterSpacing:1, color:"#4ade80" }}>
+                                  {bikeRouteProg.pct.toFixed(1)}%
+                                </div>
+                              </div>
+                              <div style={{ height:10, background:"#071829", borderRadius:5, overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
+                                <div style={{ width:`${bikeRouteProg.pct}%`, height:"100%", background:"linear-gradient(90deg,#4ade80,#ffd166)", transition:"width 0.4s linear" }} />
+                              </div>
+                              <div style={{ ...S.row, justifyContent:"space-between", marginTop:8, fontSize:11, color:"#5a86a8", flexWrap:"wrap", gap:6 }}>
+                                <span>{fmtDist(bikeRouteProg.alongM)} done</span>
+                                <span>{fmtDist(Math.max(0, bikeRouteProg.totalM - bikeRouteProg.alongM))} to go</span>
+                                <span>{fmtDist(bikeRouteProg.totalM)} total</span>
+                              </div>
+                              {bikeRouteProg.offRouteM > 150 && (
+                                <div style={{ fontSize:11, color:"#ffd166", marginTop:8 }}>
+                                  ⚠ {fmtDist(bikeRouteProg.offRouteM)} off the planned route — detour, or the route file doesn't match the ride.
+                                </div>
+                              )}
+                              {(() => {
+                                // Simple ETA from the average pace achieved so far.
+                                const el = bikeWatchLive?.el, done = bikeRouteProg.alongM;
+                                if (!el || el < 120000 || done < 500) return null;
+                                const mps = done / (el / 1000);
+                                if (mps <= 0.3) return null;
+                                const remainS = (bikeRouteProg.totalM - done) / mps;
+                                if (remainS <= 0) return null;
+                                const h = Math.floor(remainS / 3600), m = Math.round((remainS % 3600) / 60);
+                                return (
+                                  <div style={{ fontSize:11, color:"#5a86a8", marginTop:6 }}>
+                                    At the pace so far, about {h > 0 ? `${h}h ${m}m` : `${m}m`} of riding left.
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+
+                          {bikeWatchMeta?.multiDay && (bikeWatchProgress?.day || bikeWatchLive?.day) && (
+                            <div style={{ ...S.card, ...S.row, justifyContent:"space-between" }}>
+                              <div style={{ ...S.label, marginBottom:0 }}>Multi-day tour</div>
+                              <div style={{ fontSize:13, fontWeight:700, color:"#f472b6" }}>
+                                Day {bikeWatchLive?.day || bikeWatchProgress?.day || 1}
+                                {bikeWatchStatus === "paused" ? " · resting" : ""}
+                              </div>
                             </div>
                           )}
 
@@ -9674,12 +10080,20 @@
                           {(bikeWatchMeta?.checkpoints || []).length > 0 && (
                             <div style={S.card}>
                               <div style={S.label}>Checkpoints</div>
-                              {bikeWatchMeta.checkpoints.map((cp, i) => (
-                                <div key={i} style={{ ...S.row, justifyContent:"space-between", padding:"5px 0", borderTop: i ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
-                                  <span style={{ fontSize:12, color:"#e8f4fb" }}>📍 {cp.name || `Checkpoint ${i+1}`}</span>
-                                  <span style={{ fontSize:11, color:"#5a86a8" }}>{cp.note || ""}</span>
-                                </div>
-                              ))}
+                              {bikeWatchMeta.checkpoints.map((cp, i) => {
+                                const icon = cp.kind === "stop" ? "🛏" : cp.kind === "goal" ? "🏁" : "📍";
+                                const col  = cp.kind === "stop" ? "#f472b6" : cp.kind === "goal" ? "#4ade80" : "#ffd166";
+                                return (
+                                  <div key={i} style={{ ...S.row, justifyContent:"space-between", gap:8, padding:"5px 0", borderTop: i ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+                                    <span style={{ fontSize:12, color:"#e8f4fb", minWidth:0 }}>
+                                      <span style={{ color: col }}>{icon}</span>{" "}
+                                      {cp.day ? <span style={{ fontSize:10, color:"#f472b6", fontWeight:700 }}>DAY {cp.day} · </span> : null}
+                                      {cp.name || `Checkpoint ${i+1}`}
+                                    </span>
+                                    <span style={{ fontSize:11, color:"#5a86a8" }}>{cp.note || ""}</span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
 

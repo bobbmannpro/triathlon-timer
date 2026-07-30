@@ -91,6 +91,14 @@
           "$field": { ".validate": true }
         },
 
+        "progress": {
+          ".write": "auth != null",
+          "distM": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "elapsedMs": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "day": { ".validate": "newData.isNumber() && newData.val() >= 1" },
+          "$field": { ".validate": true }
+        },
+
         "track": {
           ".write": "auth != null",
           "$crumb": {
