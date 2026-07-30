@@ -94,6 +94,9 @@
       const BIKE_MOVING_MPS      = 0.5;   // below this we treat the rider as stopped
       const BIKE_CRUMB_MIN_M     = 40;    // breadcrumb spacing for the stored trail
       const BIKE_STALE_MS        = 20000; // no frame for this long ⇒ show "signal lost"
+      // Sources tick at roughly, not exactly, 1 Hz. Without slack a fix arriving at
+      // 995ms is rejected and the effective rate halves, so allow a small tolerance.
+      const BIKE_PUBLISH_SLACK_MS = 100;
 
       // ── Wahoo Cloud API (post-ride only — NOT live) ──────────────────────────
       // The Wahoo Cloud API has no live-position endpoint: workout data (including
@@ -1096,6 +1099,9 @@
         const [bikeWatchError, setBikeWatchError]   = useState("");
         const [bikeFollowing, setBikeFollowing]     = useState(true);
         const [bikeTick, setBikeTick]               = useState(0); // 1 Hz repaint for "x ago"
+        // Trainer/indoor mode: sensors are real, movement is synthesised. Lets a
+        // smart trainer drive the whole feed with no GPS and no outdoor ride.
+        const [bikeSimulate, setBikeSimulate]       = useState(false);
 
         const bikeGpsWatchRef  = useRef(null);
         const bikeLastPubRef   = useRef(0);
@@ -1110,6 +1116,9 @@
         const bikeTrailLineRef = useRef(null);
         const bikeRouteLineRef = useRef(null);
         const bikeCpLayerRef   = useRef([]);
+        const bikeSimTimerRef  = useRef(null);
+        const bikeSimLastRef   = useRef(0);
+        const bikeSimCenterRef = useRef([30.2672, -97.7431]);
         const bikeInterpRef    = useRef({ from: null, to: null, t0: 0, dur: BIKE_PUBLISH_MS });
         const bikeFollowRef    = useRef(true);
         const bikeMapElRef     = useRef(null);
@@ -3749,18 +3758,90 @@
           return () => clearInterval(id);
         }, [bikeRiding]);
 
+        // Walk a polyline and return the point `distM` along it, looping at the end
+        // so a simulated ride can keep going indefinitely.
+        function bikePointAlong(route, distM) {
+          let total = 0;
+          const segs = [];
+          for (let i = 1; i < route.length; i++) {
+            const d = haversineM(route[i-1][0], route[i-1][1], route[i][0], route[i][1]);
+            segs.push(d); total += d;
+          }
+          if (total <= 0) return route[0];
+          let want = distM % total, acc = 0;
+          for (let i = 0; i < segs.length; i++) {
+            if (acc + segs[i] >= want) {
+              const k = segs[i] > 0 ? (want - acc) / segs[i] : 0;
+              return [route[i][0] + (route[i+1][0] - route[i][0]) * k,
+                      route[i][1] + (route[i+1][1] - route[i][1]) * k];
+            }
+            acc += segs[i];
+          }
+          return route[route.length - 1];
+        }
+
+        // Fallback synthetic course when no route is set: a loop around a centre.
+        function bikeSimCircle(center, radiusM, distM) {
+          const ang = (distM % (2 * Math.PI * radiusM)) / radiusM;
+          return [
+            center[0] + (radiusM * Math.cos(ang)) / 111320,
+            center[1] + (radiusM * Math.sin(ang)) / (111320 * Math.cos(center[0] * Math.PI / 180)),
+          ];
+        }
+
+        // Single publish path shared by real GPS and trainer simulation, so both
+        // exercise identical throttling, breadcrumb and framing logic.
+        function bikePublishFrame(code, lat, lng, extra) {
+          const now = Date.now();
+          const s   = bikeSensorRef.current;
+          const mps = extra.mps;
+          const moving = (mps ?? 0) > BIKE_MOVING_MPS;
+          const frame = {
+            lat: +lat.toFixed(6), lng: +lng.toFixed(6),
+            hdg: extra.hdg ?? null,
+            spd: mps != null ? +mps.toFixed(2) : null,
+            dst: Math.round(bikeDistMRef.current),
+            cad: s.cadence ?? null,
+            pwr: s.power ?? null,
+            hr:  s.hr ?? null,
+            alt: extra.alt ?? null,
+            acc: extra.acc ?? null,
+            mv:  moving,
+            sim: extra.sim ? true : null,
+            el:  now - (bikeStartedAtRef.current || now),
+            t:   now,
+          };
+          setBikeLive(frame);
+
+          // Throttle: 1 Hz moving, 0.2 Hz stopped.
+          const interval = (moving ? BIKE_PUBLISH_MS : BIKE_IDLE_PUBLISH_MS) - BIKE_PUBLISH_SLACK_MS;
+          if (now - bikeLastPubRef.current < interval) return;
+          bikeLastPubRef.current = now;
+          // /live is a single small object overwritten each tick — the only node
+          // viewers subscribe to, so cost stays flat no matter how long the ride.
+          rtdb.ref(`bikeFeeds/${code}/live`).set(frame).catch(console.error);
+
+          // Breadcrumbs are appended (never rewritten) and spaced by distance so
+          // the stored trail stays small on a multi-hour ride.
+          const lc = bikeLastCrumbRef.current;
+          if (!lc || haversineM(lc[0], lc[1], lat, lng) >= BIKE_CRUMB_MIN_M) {
+            bikeLastCrumbRef.current = [lat, lng];
+            rtdb.ref(`bikeFeeds/${code}/track`).push([+lat.toFixed(5), +lng.toFixed(5)]).catch(console.error);
+          }
+        }
+
         function startBikeRide(feed) {
-          if (!navigator.geolocation) { setBikeGpsStatus("Geolocation not supported on this device."); return; }
           if (!feed?.code) { setBikeGpsStatus("No feed selected."); return; }
+          if (!bikeSimulate && !navigator.geolocation) { setBikeGpsStatus("Geolocation not supported on this device."); return; }
           bikeDistMRef.current   = 0;
           bikePrevFixRef.current = null;
           bikeLastCrumbRef.current = null;
           bikeLastPubRef.current = 0;
           bikeStartedAtRef.current = Date.now();
+          bikeSimLastRef.current   = Date.now();
           setBikeElapsedMs(0);
           setBikeRideCode(feed.code);
           setBikeRiding(true);
-          setBikeGpsStatus("Acquiring GPS signal…");
           acquireWakeLock();
 
           // Fresh ride: clear the previous trail so viewers don't see last ride's line
@@ -3770,51 +3851,64 @@
           }).catch(console.error);
           publishBikeMeta(feed);
 
+          // ── Trainer / indoor mode ────────────────────────────────────────────
+          if (bikeSimulate) {
+            const route = (feed.route && feed.route.length > 1) ? feed.route : null;
+            if (route) bikeSimCenterRef.current = route[0];
+            else {
+              const cp = (feed.checkpoints || []).find(c => c.lat != null && c.lng != null);
+              if (cp) bikeSimCenterRef.current = [cp.lat, cp.lng];
+              // Otherwise take one real fix just to place the loop somewhere sensible.
+              else navigator.geolocation?.getCurrentPosition(
+                p => { bikeSimCenterRef.current = [p.coords.latitude, p.coords.longitude]; }, () => {},
+                { enableHighAccuracy: false, timeout: 5000 });
+            }
+            setBikeGpsStatus("Trainer mode · movement simulated from sensor speed");
+            bikeSimTimerRef.current = setInterval(() => {
+              const now = Date.now();
+              const s   = bikeSensorRef.current;
+              // Real wheel speed from the trainer drives the dot. No sensor yet?
+              // hold at a plausible pace so the feed is still visibly alive.
+              const mps = s.sensorSpeed != null ? s.sensorSpeed / 3.6 : 7.5;
+              const dt  = Math.min(5, Math.max(0, (now - bikeSimLastRef.current) / 1000));
+              bikeSimLastRef.current = now;
+              bikeDistMRef.current += mps * dt;
+              const pos = route
+                ? bikePointAlong(route, bikeDistMRef.current)
+                : bikeSimCircle(bikeSimCenterRef.current, 500, bikeDistMRef.current);
+              bikePublishFrame(bikeRideCodeRef.current || feed.code, pos[0], pos[1],
+                               { mps, sim: true, acc: null, alt: null, hdg: null });
+            }, BIKE_PUBLISH_MS);
+            return;
+          }
+
+          // ── Real GPS ─────────────────────────────────────────────────────────
+          setBikeGpsStatus("Acquiring GPS signal…");
           bikeGpsWatchRef.current = navigator.geolocation.watchPosition(pos => {
             const { latitude: lat, longitude: lng, heading, speed, altitude, accuracy } = pos.coords;
-            const now = Date.now();
+            const now  = Date.now();
             const prev = bikePrevFixRef.current;
-            // Ignore junk fixes that would inflate distance
-            if (prev && accuracy != null && accuracy > 50) return;
-            if (prev) bikeDistMRef.current += haversineM(prev.lat, prev.lng, lat, lng);
+            if (prev) {
+              // Reject implausible jumps rather than merely imprecise fixes — indoors
+              // or among tall buildings accuracy is often 50m+ yet still usable.
+              const dM  = haversineM(prev.lat, prev.lng, lat, lng);
+              const dtS = (now - prev.t) / 1000;
+              // Reject teleports only — a bad almanac or stale A-GPS fix can land
+              // hundreds of km away. Ordinary GPS wander (tens of metres between
+              // consecutive fixes) must survive, or the dot freezes in city streets;
+              // that noise is what the accuracy gate below is for.
+              if (dM > 500 && dM / Math.max(dtS, 1) > 50) return;
+              if (accuracy != null && accuracy > 150) return;       // unusable fix
+              bikeDistMRef.current += dM;
+            }
             bikePrevFixRef.current = { lat, lng, t: now };
-
-            const mps    = (speed != null && speed >= 0) ? speed : null;
-            const moving = (mps ?? 0) > BIKE_MOVING_MPS;
-            const s      = bikeSensorRef.current;
-            const frame = {
-              lat: +lat.toFixed(6), lng: +lng.toFixed(6),
+            setBikeGpsStatus(`GPS active · ±${Math.round(accuracy || 0)}m`);
+            bikePublishFrame(bikeRideCodeRef.current || feed.code, lat, lng, {
+              mps: (speed != null && speed >= 0) ? speed : null,
               hdg: (heading != null && !isNaN(heading)) ? Math.round(heading) : null,
-              spd: mps != null ? +mps.toFixed(2) : null,
-              dst: Math.round(bikeDistMRef.current),
-              cad: s.cadence ?? null,
-              pwr: s.power ?? null,
-              hr:  s.hr ?? null,
               alt: altitude != null ? Math.round(altitude) : null,
               acc: accuracy != null ? Math.round(accuracy) : null,
-              mv:  moving,
-              el:  now - (bikeStartedAtRef.current || now),
-              t:   now,
-            };
-            setBikeLive(frame);
-            setBikeGpsStatus(`GPS active · ±${Math.round(accuracy || 0)}m`);
-
-            // Throttle: 1 Hz moving, 0.2 Hz stopped.
-            const interval = moving ? BIKE_PUBLISH_MS : BIKE_IDLE_PUBLISH_MS;
-            if (now - bikeLastPubRef.current < interval) return;
-            bikeLastPubRef.current = now;
-            const code = bikeRideCodeRef.current || feed.code;
-            // /live is a single small object overwritten each tick — the only node
-            // viewers subscribe to, so cost stays flat no matter how long the ride.
-            rtdb.ref(`bikeFeeds/${code}/live`).set(frame).catch(console.error);
-
-            // Breadcrumbs are appended (never rewritten) and spaced by distance so
-            // the stored trail stays small on a multi-hour ride.
-            const lc = bikeLastCrumbRef.current;
-            if (!lc || haversineM(lc[0], lc[1], lat, lng) >= BIKE_CRUMB_MIN_M) {
-              bikeLastCrumbRef.current = [lat, lng];
-              rtdb.ref(`bikeFeeds/${code}/track`).push([+lat.toFixed(5), +lng.toFixed(5)]).catch(console.error);
-            }
+            });
           }, err => setBikeGpsStatus("GPS error: " + err.message),
           { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
         }
@@ -3823,6 +3917,10 @@
           if (bikeGpsWatchRef.current !== null) {
             navigator.geolocation.clearWatch(bikeGpsWatchRef.current);
             bikeGpsWatchRef.current = null;
+          }
+          if (bikeSimTimerRef.current !== null) {
+            clearInterval(bikeSimTimerRef.current);
+            bikeSimTimerRef.current = null;
           }
           const code = bikeRideCodeRef.current;
           if (code) {
@@ -3991,7 +4089,7 @@
 
         // Stop GPS if the rider navigates away from bike mode entirely.
         useEffect(() => {
-          if (appMode !== "bike" && bikeGpsWatchRef.current !== null) stopBikeRide();
+          if (appMode !== "bike" && (bikeGpsWatchRef.current !== null || bikeSimTimerRef.current !== null)) stopBikeRide();
         }, [appMode]);
 
         // A shared follow link shouldn't demand an account. Anonymous auth keeps the
@@ -9394,6 +9492,33 @@
                         )}
                       </div>
 
+                      <div style={S.card}>
+                        <div style={{ ...S.row, justifyContent:"space-between", gap:10 }}>
+                          <div style={{ minWidth:0 }}>
+                            <div style={{ ...S.label, marginBottom:2 }}>Trainer mode</div>
+                            <div style={{ fontSize:11, color:"#5a86a8", lineHeight:1.5 }}>
+                              For indoor testing on a smart trainer. Sensor data stays real — watts,
+                              cadence and speed come off the trainer — and the dot is moved along the
+                              planned route at whatever speed you're actually pedalling.
+                            </div>
+                          </div>
+                          <button onClick={() => { if (!bikeRiding) setBikeSimulate(v => !v); }}
+                            disabled={bikeRiding}
+                            style={{ flexShrink:0, padding:"8px 14px", fontSize:12, fontWeight:700, borderRadius:6,
+                              cursor: bikeRiding ? "not-allowed" : "pointer", opacity: bikeRiding ? 0.5 : 1,
+                              background: bikeSimulate ? "rgba(167,139,250,0.2)" : "transparent",
+                              border: bikeSimulate ? "1px solid rgba(167,139,250,0.7)" : "1px solid rgba(255,255,255,0.12)",
+                              color: bikeSimulate ? "#a78bfa" : "#5a86a8" }}>
+                            {bikeSimulate ? "● On" : "Off"}
+                          </button>
+                        </div>
+                        {bikeSimulate && (
+                          <div style={{ fontSize:11, color:"#a78bfa", marginTop:8 }}>
+                            Viewers will see a "simulated" badge, so a test ride can't be mistaken for a real one.
+                          </div>
+                        )}
+                      </div>
+
                       <div style={{ ...S.card, background: bikeRiding ? "rgba(74,222,128,0.07)" : "#0c2240" }}>
                         <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                           {metricTile("Elapsed", fmtRideClock(bikeElapsedMs), "#ffd166")}
@@ -9475,6 +9600,12 @@
                                   {bikeWatchStatus === "live" ? "● Live" : bikeWatchStatus === "finished" ? "Finished" : "Not started"}
                                 </span>
                                 <span style={{ fontSize:10, color:"#5a86a8" }}>{bikeWatchLive ? "updated " + ago(bikeWatchLive.t) : ""}</span>
+                                {bikeWatchLive?.sim && (
+                                  <span style={{ fontSize:9, letterSpacing:1, textTransform:"uppercase", fontWeight:700,
+                                    color:"#a78bfa", border:"1px solid rgba(167,139,250,0.6)", borderRadius:4, padding:"1px 5px" }}>
+                                    Simulated
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
