@@ -266,14 +266,14 @@
           url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
           subdomains: "abcd", maxZoom: 20,
           attribution: '&copy; OpenStreetMap &copy; CARTO',
-          routeColor: "#4E6B85", trailColor: "#FFCB45",
+          routeColor: "#5AA9FF", trailColor: "#FFCB45",
         },
         minimal: {
           label: "Minimal",
           url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
           subdomains: "abcd", maxZoom: 20,
           attribution: '&copy; OpenStreetMap &copy; CARTO',
-          routeColor: "#8FB0CC", trailColor: "#7DF9C4",
+          routeColor: "#5AA9FF", trailColor: "#7DF9C4",
         },
         satellite: {
           label: "Satellite",
@@ -282,7 +282,7 @@
           attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
           // Roads/place names on top of the imagery, otherwise it's unreadable.
           labels: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
-          routeColor: "#ffffff", trailColor: "#FFCB45",
+          routeColor: "#7BC4FF", trailColor: "#FFCB45",
         },
       };
 
@@ -4660,10 +4660,19 @@
               if (accuracy != null && accuracy > 150) return;       // unusable fix
               bikeDistMRef.current += dM;
             }
+            // Plenty of phones report coords.speed as null. Without a fallback the
+            // rider looks stationary — which drops publishing to the idle rate and
+            // leaves every breadcrumb uncoloured — so derive it from the fixes.
+            let mps = (speed != null && speed >= 0 && !isNaN(speed)) ? speed : null;
+            if (mps == null && prev) {
+              const dM  = haversineM(prev.lat, prev.lng, lat, lng);
+              const dtS = (now - prev.t) / 1000;
+              if (dtS > 0.2 && dtS < 30) mps = dM / dtS;
+            }
             bikePrevFixRef.current = { lat, lng, t: now };
             setBikeGpsStatus(`GPS active · ±${Math.round(accuracy || 0)}m`);
             bikePublishFrame(bikeRideCodeRef.current || feed.code, lat, lng, {
-              mps: (speed != null && speed >= 0) ? speed : null,
+              mps,
               hdg: (heading != null && !isNaN(heading)) ? Math.round(heading) : null,
               alt: altitude != null ? Math.round(altitude) : null,
               acc: accuracy != null ? Math.round(accuracy) : null,
@@ -5271,7 +5280,7 @@
                 bikeRouteLineRef.current.setStyle({ color: theme.routeColor });
               } else {
                 bikeRouteLineRef.current = L.polyline(route, {
-                  color: theme.routeColor, weight: 4, dashArray: "8 6", opacity: 0.75,
+                  color: theme.routeColor, weight: 5, dashArray: "10 7", opacity: 0.95,
                 }).addTo(map);
               }
             } else {
@@ -5327,9 +5336,15 @@
           setBikeRouteProg(p);
           if (!map || !p) return;
           try {
-            const done = route.slice(0, p.segIdx).concat([p.point]);
-            if (bikeRouteDoneRef.current) bikeRouteDoneRef.current.setLatLngs(done);
-            else bikeRouteDoneRef.current = L.polyline(done, { color: "#7DF9C4", weight: 5, opacity: 0.9 }).addTo(map);
+            // Only the part still to ride stays on the map. The covered portion is
+            // dropped so the speed-coloured trail takes its place rather than the
+            // two lines stacking on top of each other.
+            const remaining = [p.point].concat(route.slice(p.segIdx));
+            if (bikeRouteLineRef.current) bikeRouteLineRef.current.setLatLngs(remaining);
+            if (bikeRouteDoneRef.current) {
+              try { map.removeLayer(bikeRouteDoneRef.current); } catch(_) {}
+              bikeRouteDoneRef.current = null;
+            }
           } catch(_) {}
         }, [bikeWatchLive, bikeWatchMeta, bikeMapReady]);
 
@@ -11371,12 +11386,24 @@
                                   {bikeRouteProg.pct.toFixed(1)}%
                                 </div>
                               </div>
+                              {/* Distance remaining is the number a follower actually
+                                  wants, so it leads rather than sitting in a footnote. */}
+                              <div style={{ ...S.row, alignItems:"baseline", gap:9, marginBottom:10 }}>
+                                <div className="tm-metric" style={{ fontSize:34, fontWeight:700, color:"#00E5CC", lineHeight:1 }}>
+                                  {fmtDist(Math.max(0, bikeRouteProg.totalM - bikeRouteProg.alongM))}
+                                </div>
+                                <div style={{ fontSize:11, letterSpacing:2, textTransform:"uppercase", color:"#8FB0CC", fontWeight:700 }}>to go</div>
+                                <div style={{ marginLeft:"auto", textAlign:"right" }}>
+                                  <div className="tm-metric" style={{ fontSize:17, fontWeight:700, color:"#EAF4FF", lineHeight:1.1 }}>
+                                    {fmtDist(bikeRouteProg.alongM)}
+                                  </div>
+                                  <div style={{ fontSize:9, letterSpacing:1.5, textTransform:"uppercase", color:"#4E6B85" }}>done</div>
+                                </div>
+                              </div>
                               <div style={{ height:10, background:"#0A1628", borderRadius:5, overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
                                 <div style={{ width:`${bikeRouteProg.pct}%`, height:"100%", background:"linear-gradient(90deg,#7DF9C4,#FFCB45)", transition:"width 0.4s linear" }} />
                               </div>
-                              <div style={{ ...S.row, justifyContent:"space-between", marginTop:8, fontSize:11, color:"#8FB0CC", flexWrap:"wrap", gap:6 }}>
-                                <span>{fmtDist(bikeRouteProg.alongM)} done</span>
-                                <span>{fmtDist(Math.max(0, bikeRouteProg.totalM - bikeRouteProg.alongM))} to go</span>
+                              <div style={{ ...S.row, justifyContent:"flex-end", marginTop:6, fontSize:10, color:"#4E6B85" }}>
                                 <span>{fmtDist(bikeRouteProg.totalM)} total</span>
                               </div>
                               {bikeRouteProg.offRouteM > 150 && (
