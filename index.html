@@ -84,6 +84,37 @@
       .tm-lane { height:1px; background: repeating-linear-gradient(90deg,
                  var(--tm-line) 0 18px, transparent 18px 30px); }
 
+      /* Nav strip: tabs size to their own content and the strip scrolls. Sharing
+         the width equally squeezed 9 swim tabs into unreadable slivers on a phone
+         while still overflowing. */
+      .tm-nav-wrap { position: relative; }
+      .tm-nav {
+        display: flex; overflow-x: auto; overflow-y: hidden;
+        scrollbar-width: none; -ms-overflow-style: none;
+        -webkit-overflow-scrolling: touch; scroll-behavior: smooth;
+        background: var(--tm-bg-raised);
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+      }
+      .tm-nav::-webkit-scrollbar { display: none; }
+      /* Fade on the right edge so it's obvious there's more to scroll to. */
+      .tm-nav-wrap::after {
+        content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: 26px;
+        background: linear-gradient(90deg, rgba(13,34,64,0), var(--tm-bg-raised));
+        pointer-events: none;
+      }
+      .tm-nav-btn {
+        flex: 0 0 auto; min-height: 44px; padding: 0 14px;
+        background: none; border: none; border-bottom: 3px solid transparent;
+        font-family: var(--tm-font-display); font-size: 13px; letter-spacing: 0.5px;
+        text-transform: uppercase; cursor: pointer; white-space: nowrap;
+        color: var(--tm-text-dim);
+      }
+      .tm-nav-btn[data-active="1"] { color: var(--tm-accent-1); border-bottom-color: var(--tm-accent-1); }
+      .tm-nav-btn[data-home="1"]   { color: var(--tm-text-faint); font-size: 16px; padding: 0 12px; }
+      @media (max-width: 380px) {
+        .tm-nav-btn { padding: 0 11px; font-size: 12px; }
+      }
+
       #splash { position:fixed; inset:0; background:var(--tm-bg); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:9999; transition:opacity 0.3s; }
       #splash.hide { opacity:0; pointer-events:none; }
       #splash-mark { width:132px; height:auto; margin-bottom:22px; filter: drop-shadow(0 0 22px rgba(0,198,255,0.35)); }
@@ -154,7 +185,7 @@
       // Run is the final segment — logging it ends the race for that athlete
       const SEGMENTS   = ["Swim", "T1", "Bike", "T2", "Run"];
       const segColors  = ["#00C6FF", "#00E5CC", "#FFCB45", "#00E5CC", "#7DF9C4"];
-      const WP_COLORS  = ["#FFCB45","#06d6a0","#00C6FF","#7DF9C4","#a78bfa","#f472b6","#34d399","#fb923c","#60a5fa","#facc15"];
+      const WP_COLORS  = ["#FFCB45","#00E5CC","#00C6FF","#7DF9C4","#5AA9FF","#FF8FB1","#7DF9C4","#FFCB45","#5AA9FF","#FFCB45"];
       const DEFAULT_AGE_GROUPS = ["8 & Under", "9-10", "11-12", "13-14", "15+"];
 
       // ── Brand lockup ─────────────────────────────────────────────────────────
@@ -339,6 +370,39 @@
         // when rotated; capping trades a sliver of corner for a usable zoom level.
         // On a phone held upright the honest figure is ~1.4, well under the cap.
         return Math.min(need, 2.5);
+      }
+
+      // ── Speed-coloured trail ─────────────────────────────────────────────────
+      // Cycling convention: cool = slow, warm = fast. Blue through teal, green,
+      // gold, orange, red. Cyclists read a red segment as "flat out", which also
+      // matches how heat maps are read elsewhere in the sport.
+      // Thresholds are in km/h and sized for road riding: a 32 km/h cruise sits in
+      // the green/gold middle, so the whole scale gets used on a real ride.
+      const BIKE_SPEED_STOPS = [
+        [0,  "#3E7BD1"],   // stopped / crawling
+        [12, "#00C6FF"],   // easy spin
+        [20, "#00E5CC"],   // steady
+        [28, "#7DF9C4"],   // brisk
+        [34, "#FFCB45"],   // quick
+        [42, "#FF9A3C"],   // hard
+        [52, "#FF5C7A"],   // flat out
+      ];
+      function bikeSpeedColor(kmh) {
+        if (kmh == null || isNaN(kmh)) return "#8FB0CC";
+        const S = BIKE_SPEED_STOPS;
+        if (kmh <= S[0][0]) return S[0][1];
+        if (kmh >= S[S.length - 1][0]) return S[S.length - 1][1];
+        for (let i = 1; i < S.length; i++) {
+          if (kmh <= S[i][0]) {
+            const [a, ca] = S[i - 1], [b, cb] = S[i];
+            const t = (kmh - a) / (b - a);
+            const hex = (c) => [parseInt(c.slice(1,3),16), parseInt(c.slice(3,5),16), parseInt(c.slice(5,7),16)];
+            const A = hex(ca), B = hex(cb);
+            const mix = A.map((v, j) => Math.round(v + (B[j] - v) * t));
+            return "#" + mix.map(v => v.toString(16).padStart(2, "0")).join("");
+          }
+        }
+        return S[S.length - 1][1];
       }
 
       // ── Map orientation ──────────────────────────────────────────────────────
@@ -1096,6 +1160,14 @@
           if (wps.length > 1) {
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#7DF9C4", weight: 3, opacity: 0.7 }).addTo(map);
           }
+          // Drawn courses, one per leg, in their segment colours.
+          (() => {
+            const rr = (liveRace && liveRace.raceRoutes) || {};
+            [["swim",0],["bike",2],["run",4]].forEach(([leg, si]) => {
+              const pts = rr[leg] || [];
+              if (pts.length > 1) L.polyline(pts, { color: segColors[si], weight: 4, opacity: 0.85 }).addTo(map);
+            });
+          })();
           wps.forEach(wp => {
             L.circleMarker([wp.lat, wp.lng], { radius: 8, color: "#7DF9C4", fillColor: "#7DF9C4", fillOpacity: 0.3, weight: 2 })
               .bindTooltip(wp.label, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" }).addTo(map);
@@ -1184,6 +1256,27 @@
           { id: "finish",  label: "Finish",   lat: null, lng: null, radiusM: 30, action: "split",  fixed: true, segIdx: 4, enabled: true },
         ];
         const [waypoints, setWaypoints] = useState(DEFAULT_WAYPOINTS);
+        // Drawn courses, one per leg, so athletes can see where they're meant to go.
+        // Bike and run snap to roads; swim stays straight because open water has
+        // nothing to route along.
+        const [raceRoutes, setRaceRoutes] = useState({ swim: [], bike: [], run: [] });
+        const [raceDrawLeg, setRaceDrawLeg] = useState(null);   // null = not drawing
+        const [raceDrawSnap, setRaceDrawSnap] = useState(true);
+        const [raceSnapping, setRaceSnapping] = useState(0);
+        const raceDrawLegRef  = useRef(null);
+        const raceDrawSnapRef = useRef(true);
+        const raceRoutesRef   = useRef({ swim: [], bike: [], run: [] });
+        const raceRouteLinesRef = useRef({});
+        const RACE_LEGS = [["swim", "Swim", 0], ["bike", "Bike", 2], ["run", "Run", 4]];
+        function raceRouteDist(pts) {
+          if (!pts || pts.length < 2) return 0;
+          let m = 0;
+          for (let i = 1; i < pts.length; i++) m += haversineM(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
+          return m;
+        }
+        const fmtRaceDist = (m) => units === "mi"
+          ? (m / 1609.344).toFixed(2) + " mi"
+          : (m / 1000).toFixed(2) + " km";
         const [joinCode, setJoinCode] = useState("");
         const [joinRace, setJoinRace] = useState(null);
         const [joinAthIdx, setJoinAthIdx] = useState(null);
@@ -1303,6 +1396,33 @@
             else { map.setView([39.5, -98.35], 4); navigator.geolocation?.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 15), null, { enableHighAccuracy: false }); }
           }
           map.on("click", e => {
+            // Drawing a leg takes priority over placing a waypoint.
+            const leg = raceDrawLegRef.current;
+            if (leg) {
+              const pt = [+e.latlng.lat.toFixed(5), +e.latlng.lng.toFixed(5)];
+              const cur = (raceRoutesRef.current[leg] || []);
+              const from = cur.length ? cur[cur.length - 1] : null;
+              // Swim legs are open water — routing along roads would be nonsense.
+              const snap = raceDrawSnapRef.current && leg !== "swim" && !!from;
+              setRaceRoutes(r => ({ ...r, [leg]: [...(r[leg] || []), pt] }));
+              if (snap) {
+                const idx = cur.length;   // this point's index in the leg
+                setRaceSnapping(n => n + 1);
+                snapBikeSegment(from, pt, leg === "run" ? "trekking" : "fastbike")
+                  .then(({ points }) => {
+                    setRaceRoutes(r => {
+                      const arr = [...(r[leg] || [])];
+                      if (arr.length <= idx) return r;      // undone while in flight
+                      // Replace the straight hop with the routed geometry.
+                      arr.splice(idx, 1, ...points.slice(1));
+                      return { ...r, [leg]: arr };
+                    });
+                  })
+                  .catch(() => {})
+                  .finally(() => setRaceSnapping(n => n - 1));
+              }
+              return;
+            }
             const id = activePlacementRef.current;
             if (!id) return;
             setWaypoints(wps => wps.map(wp => wp.id === id ? { ...wp, lat: +e.latlng.lat.toFixed(6), lng: +e.latlng.lng.toFixed(6) } : wp));
@@ -1329,6 +1449,28 @@
 
         // Keep waypointsRef current so initSetupMap (stable useCallback) can read latest waypoints
         useEffect(() => { waypointsRef.current = waypoints; }, [waypoints]);
+        useEffect(() => { raceDrawLegRef.current = raceDrawLeg; }, [raceDrawLeg]);
+        useEffect(() => { raceDrawSnapRef.current = raceDrawSnap; }, [raceDrawSnap]);
+        useEffect(() => { raceRoutesRef.current = raceRoutes; }, [raceRoutes]);
+
+        // Draw each leg's course on the setup map in its segment colour.
+        useEffect(() => {
+          const map = setupMapRef.current;
+          if (!map) return;
+          RACE_LEGS.forEach(([leg, , segIdx]) => {
+            const pts = raceRoutes[leg] || [];
+            const existing = raceRouteLinesRef.current[leg];
+            if (pts.length > 1) {
+              if (existing) existing.setLatLngs(pts);
+              else raceRouteLinesRef.current[leg] = L.polyline(pts, {
+                color: segColors[segIdx], weight: 5, opacity: 0.9, lineCap: "round",
+              }).addTo(map);
+            } else if (existing) {
+              try { map.removeLayer(existing); } catch(_) {}
+              delete raceRouteLinesRef.current[leg];
+            }
+          });
+        }, [raceRoutes, view]);
 
         // Saved athlete roster (persisted to localStorage — separate from race-specific athletes)
         const [savedAthletes, setSavedAthletes] = useState(() => {
@@ -1482,6 +1624,12 @@
         // Bumped when the feed map is (re)created. Overlay effects depend on it, so
         // data that arrived before the map existed still gets drawn.
         const [bikeMapReady, setBikeMapReady]      = useState(0);
+        const [bikeTrailSpeed, setBikeTrailSpeed] = useState(() => {
+          try { return localStorage.getItem("bike-trail-speed") !== "0"; } catch(_) { return true; }
+        });
+        // Nav strip scrolls horizontally, so keep the active tab in view — otherwise
+        // switching to a later tab leaves the highlight off-screen.
+        const navStripRef = useRef(null);
         const [bikeRideMapReady, setBikeRideMapReady] = useState(0);
         // Where the rider is when they're NOT yet broadcasting, so the Ride map
         // shows them from the moment they open it rather than only after Start.
@@ -1549,6 +1697,7 @@
         const bikeLabelRef     = useRef(null);   // label overlay (satellite only)
         const bikeRouteLineRef = useRef(null);   // full planned course (faint)
         const bikeRouteDoneRef = useRef(null);   // portion already covered (bright)
+        const bikeTrailSegsRef  = useRef([]);   // per-leg polylines when colouring by speed
         const bikeWatchStartRef = useRef(null);
         const bikeWatchEndRef   = useRef(null);
         const bikeRouteCumRef  = useRef(null);   // cached cumulative distances
@@ -1968,6 +2117,14 @@
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#8FB0CC", weight: 2, dashArray: "6 4", opacity: 0.5 }).addTo(map);
             try { map.fitBounds(wps.map(w => [w.lat, w.lng]), { padding: [20, 20] }); } catch(_) {}
           }
+          // The course the athlete is meant to follow, per leg.
+          (() => {
+            const rr = (joinLiveData && joinLiveData.raceRoutes) || (joinRace && joinRace.raceRoutes) || {};
+            [["swim",0],["bike",2],["run",4]].forEach(([leg, si]) => {
+              const pts = rr[leg] || [];
+              if (pts.length > 1) L.polyline(pts, { color: segColors[si], weight: 4, opacity: 0.85 }).addTo(map);
+            });
+          })();
           wps.forEach(wp => {
             const col = wp.action === "start" ? "#7DF9C4" : wp.action === "split" && wp.segIdx === 4 ? "#7DF9C4" : "#FFCB45";
             L.circleMarker([wp.lat, wp.lng], { radius: 7, color: col, fillColor: col, fillOpacity: 0.85, weight: 2 })
@@ -2004,7 +2161,7 @@
                 const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
                 const theirSplits = ath.splits || [];
                 const theirSeg = theirSplits.findIndex(s => s === null);
-                const theirCol = segColors[theirSeg === -1 ? SEGMENTS.length - 1 : theirSeg] || "#a78bfa";
+                const theirCol = segColors[theirSeg === -1 ? SEGMENTS.length - 1 : theirSeg] || "#5AA9FF";
                 if (joinAllMarkersRef.current[markerId]) {
                   joinAllMarkersRef.current[markerId].setLatLng(pos);
                   joinAllMarkersRef.current[markerId].setStyle({ color: theirCol, fillColor: theirCol });
@@ -2313,6 +2470,7 @@
             ageGroups,
             segments: SEGMENTS,
             waypoints: waypoints.filter(wp => wp.lat !== null),
+            raceRoutes,
             updatedAt: Date.now(),
             registrations: {}
           };
@@ -2362,7 +2520,7 @@
           const code = registrationCode || generateRaceCode();
           const id = Date.now();
           const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null }));
-          const entry = { id, name, code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, athletes: raceAthletes };
+          const entry = { id, name, code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes };
           persistRaces([...savedRaces, entry]);
           mergeAthletesToLibrary(athletes);
           setLoadedRaceId(id);
@@ -2477,7 +2635,8 @@
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
             courses,
-            waypoints: waypoints.filter(wp => wp.lat !== null)
+            waypoints: waypoints.filter(wp => wp.lat !== null),
+            raceRoutes
           };
           try {
             const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
@@ -2496,7 +2655,8 @@
           const updates = {
             clockMs, clockRunning,
             updatedAt: Date.now(),
-            waypoints: waypoints.filter(wp => wp.lat !== null)
+            waypoints: waypoints.filter(wp => wp.lat !== null),
+            raceRoutes
           };
           athletes.forEach((ath, i) => {
             updates[`athletes/${i}/id`]          = ath.id;
@@ -2605,7 +2765,7 @@
         }
 
         function printArchivedCert(race, targetAth) {
-          const medalEmoji = ["🥇","🥈","🥉"], medalColors = ["#FFCB45","#8a9ba8","#D98A4B"];
+          const medalEmoji = ["🥇","🥈","🥉"], medalColors = ["#FFCB45","#8FB0CC","#D98A4B"];
           const cfg = race.certConfig || { eventName: race.name, orgName: "", customLogoB64: null };
           const raceUnits = race.units || units;
           const segs = race.segments || SEGMENTS;
@@ -2624,7 +2784,7 @@
             return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">Chip Time</div><div class="time-val">${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div></div>`;
           }).join("");
           const win = window.open("", "_blank");
-          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;900&family=Inter:wght@400;600;800&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:landscape;margin:0;}body{background:#fff;font-family:var(--tm-font-body);}.cert{width:100vw;height:100vh;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:5px solid #00C6FF;background:linear-gradient(150deg,#f0f8ff 0%,#ffffff 55%,#EAF4FF 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:52px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00C6FF,transparent);}.event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#8FB0CC;text-align:center;}.org{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#00C6FF;text-align:center;margin-top:-4px;}.medal-emoji{font-size:48px;line-height:1;}.place{font-family:var(--tm-font-display);font-size:30px;letter-spacing:4px;}.ag-place{font-size:12px;letter-spacing:2px;color:#113052;font-weight:700;text-align:center;}.name{font-family:var(--tm-font-display);font-size:68px;letter-spacing:5px;color:#0A1628;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#8FB0CC;font-weight:700;}.time-val{font-family:var(--tm-font-display);font-size:38px;letter-spacing:3px;color:#0A1628;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#8FB0CC;font-weight:700;}.seg-time{font-family:var(--tm-font-display);font-size:20px;letter-spacing:2px;color:#113052;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:11px;color:#8FB0CC;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,198,255,.3);border-radius:20px;padding:3px 12px;}.bib-num{font-size:12px;letter-spacing:3px;color:#a855f7;font-weight:700;text-transform:uppercase;margin-top:-4px;}</style></head><body>${certHTML}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;900&family=Inter:wght@400;600;800&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:landscape;margin:0;}body{background:#fff;font-family:var(--tm-font-body);}.cert{width:100vw;height:100vh;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:5px solid #00C6FF;background:linear-gradient(150deg,#f0f8ff 0%,#ffffff 55%,#EAF4FF 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:52px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#00C6FF,transparent);}.event{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#8FB0CC;text-align:center;}.org{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#00C6FF;text-align:center;margin-top:-4px;}.medal-emoji{font-size:48px;line-height:1;}.place{font-family:var(--tm-font-display);font-size:30px;letter-spacing:4px;}.ag-place{font-size:12px;letter-spacing:2px;color:#113052;font-weight:700;text-align:center;}.name{font-family:var(--tm-font-display);font-size:68px;letter-spacing:5px;color:#0A1628;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#8FB0CC;font-weight:700;}.time-val{font-family:var(--tm-font-display);font-size:38px;letter-spacing:3px;color:#0A1628;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#8FB0CC;font-weight:700;}.seg-time{font-family:var(--tm-font-display);font-size:20px;letter-spacing:2px;color:#113052;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:11px;color:#8FB0CC;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,198,255,.3);border-radius:20px;padding:3px 12px;}.bib-num{font-size:12px;letter-spacing:3px;color:#5AA9FF;font-weight:700;text-transform:uppercase;margin-top:-4px;}</style></head><body>${certHTML}<script>window.onload=()=>{window.print();}<\/script></body></html>`);
           win.document.close();
         }
 
@@ -2654,7 +2814,7 @@
           const allSwimmers = ev.heats.flatMap(h => h.lanes.map(sw => ({...sw, heatNum: h.heatNum})));
           const finishers = allSwimmers.filter(s => s.finalMs != null && !s.dq && !s.scratch).sort((a,b) => a.finalMs - b.finalMs).slice(0, 8);
           const places = ["1st","2nd","3rd","4th","5th","6th","7th","8th"];
-          const placeColors = ["#FFCB45","#8a9ba8","#D98A4B","#555","#555","#555","#555","#555"];
+          const placeColors = ["#FFCB45","#8FB0CC","#D98A4B","#555","#555","#555","#555","#555"];
           const labels = finishers.map((sw, i) => `<div class="label"><div class="place" style="color:${placeColors[i]}">${places[i]} Place</div><div class="name">${sw.name||''}</div><div class="detail">${ev.distance} ${ev.stroke} &mdash; ${ev.gender} ${ev.ageGroup}</div><div class="detail">${sw.team||''} &middot; Heat ${sw.heatNum} &middot; Lane ${sw.lane}</div><div class="time">${formatSwimTime(sw.finalMs)}</div></div>`).join('');
           const win = window.open("","_blank");
           win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ribbon Labels</title><style>*{box-sizing:border-box;margin:0;padding:0}@page{size:landscape;margin:10mm}body{font-family:Arial,sans-serif;background:#fff}.grid{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,auto);gap:8px;padding:4px}.label{border:2px solid #ccc;border-radius:6px;padding:10px 14px;height:90px;display:flex;flex-direction:column;justify-content:center;gap:2px;page-break-inside:avoid}.place{font-size:18px;font-weight:900;letter-spacing:2px;text-transform:uppercase}.name{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.detail{font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.time{font-size:13px;font-weight:700;color:#00C6FF;margin-top:2px}@media print{button{display:none}}</style></head><body><div class="grid">${labels}</div><button onclick="window.print()" style="display:block;margin:16px auto;padding:8px 20px;cursor:pointer">Print Labels</button><script>window.onload=()=>{window.print();}<\/script></body></html>`);
@@ -2716,6 +2876,7 @@
             ageGroups, courses, units,
             certConfig,
             waypoints,
+            raceRoutes,
             athletes: raceAthletes,
           };
           persistRaces([...savedRaces, entry]);
@@ -2728,7 +2889,7 @@
           if (!loadedRaceId) return;
           const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId }));
           const updated = savedRaces.map(r => r.id === loadedRaceId
-            ? { ...r, ageGroups, courses, units, certConfig, waypoints, athletes: raceAthletes, savedAt: new Date().toLocaleString() }
+            ? { ...r, ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes, savedAt: new Date().toLocaleString() }
             : r);
           persistRaces(updated);
           mergeAthletesToLibrary(athletes);
@@ -2744,6 +2905,7 @@
             ...wp, lat: wp.lat ?? null, lng: wp.lng ?? null
           }));
           setWaypoints(loadedWaypoints);
+          setRaceRoutes(race.raceRoutes || { swim: [], bike: [], run: [] });
           // Re-center setup map to first placed waypoint if the map is already open
           const firstPlaced = loadedWaypoints.find(wp => wp.lat !== null);
           if (firstPlaced && setupMapRef.current) {
@@ -3117,6 +3279,8 @@
           resetClock();
           setCourses([{ id: 1, name: "Sprint", swimYards: 100, bikeMiles: 6, runMiles: 1.5, bikeType: "gps" }]);
           setWaypoints(DEFAULT_WAYPOINTS);
+          setRaceRoutes({ swim: [], bike: [], run: [] });
+          setRaceDrawLeg(null);
           setAgeGroups(DEFAULT_AGE_GROUPS);
           setCertConfig({ eventName: "Timeathon Race Event", accentColor: "#00C6FF", orgName: "", customLogoB64: null });
           setRegistrationCode(null);
@@ -3881,7 +4045,7 @@
 
         function printCertificates() {
           const medalEmoji  = ["🥇","🥈","🥉"];
-          const medalColors = ["#FFCB45","#8a9ba8","#D98A4B"];
+          const medalColors = ["#FFCB45","#8FB0CC","#D98A4B"];
           const certHTML = sorted.map((ath, place) => {
             const chip   = totalChipTime(ath);
             const gt     = gunTime(ath);
@@ -3965,7 +4129,7 @@
               .paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}
               .paces span{font-size:11px;color:#8FB0CC;font-weight:600;background:#f0f8ff;border:1px solid rgba(0,198,255,.3);border-radius:20px;padding:3px 12px;}
               .dist-note{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#8FB0CC;}
-              .bib-num{font-size:12px;letter-spacing:3px;color:#a855f7;font-weight:700;text-transform:uppercase;margin-top:-4px;}
+              .bib-num{font-size:12px;letter-spacing:3px;color:#5AA9FF;font-weight:700;text-transform:uppercase;margin-top:-4px;}
               @media print{.cert{break-after:page;}}
             </style>
           </head><body>${certHTML}<script>window.onload=()=>window.print();<\/script></body></html>`);
@@ -4366,7 +4530,13 @@
           const lc = bikeLastCrumbRef.current;
           if (!lc || haversineM(lc[0], lc[1], lat, lng) >= bikeCrumbSpacing(bikeDistMRef.current)) {
             bikeLastCrumbRef.current = [lat, lng];
-            rtdb.ref(`bikeFeeds/${code}/track`).push([+lat.toFixed(5), +lng.toFixed(5)]).catch(console.error);
+            // Third element is speed in km/h, so viewers can colour the trail by
+            // effort. Older two-element crumbs still render, just uncoloured.
+            const kmh = mps != null ? Math.round(mps * 3.6 * 10) / 10 : null;
+            rtdb.ref(`bikeFeeds/${code}/track`)
+              .push(kmh != null ? [+lat.toFixed(5), +lng.toFixed(5), kmh]
+                                : [+lat.toFixed(5), +lng.toFixed(5)])
+              .catch(console.error);
           }
           persistBikeSession();
         }
@@ -4575,7 +4745,7 @@
           // then streams new ones — far cheaper than re-reading a growing array.
           const tFn = trackRef.on("child_added", s => {
             const v = s.val();
-            if (Array.isArray(v) && v.length === 2) setBikeWatchTrack(p => [...p, v]);
+            if (Array.isArray(v) && v.length >= 2) setBikeWatchTrack(p => [...p, v]);
           });
           // If the rider starts a fresh ride mid-watch, the old breadcrumbs are gone
           // server-side — drop our local copy so we don't draw last ride's line.
@@ -4759,7 +4929,7 @@
           bikeEditPinsRef.current = {};
           (bikeDraft.checkpoints || []).forEach((cp, i) => {
             if (cp.lat == null || cp.lng == null) return;
-            const col = cp.kind === "stop" ? "#f472b6" : cp.kind === "goal" ? "#7DF9C4" : "#FFCB45";
+            const col = cp.kind === "stop" ? "#FF8FB1" : cp.kind === "goal" ? "#7DF9C4" : "#FFCB45";
             const icon = L.divIcon({ className: "", iconSize: [18,18], iconAnchor: [9,9],
               html: `<div style="background:${col};width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.7)"></div>` });
             const m = L.marker([cp.lat, cp.lng], { draggable: true, icon })
@@ -4921,7 +5091,7 @@
             bikeRideCpRef.current = ((bikeRideCourse && bikeRideCourse.checkpoints) || [])
               .filter(cp => cp.lat != null && cp.lng != null)
               .map((cp, i) => {
-                const col = cp.kind === "stop" ? "#f472b6" : cp.kind === "goal" ? "#7DF9C4" : "#FFCB45";
+                const col = cp.kind === "stop" ? "#FF8FB1" : cp.kind === "goal" ? "#7DF9C4" : "#FFCB45";
                 return L.circleMarker([cp.lat, cp.lng], {
                   radius: 6, color: col, fillColor: col, fillOpacity: 0.9, weight: 2,
                 }).bindTooltip(cp.name || `Checkpoint ${i + 1}`, { direction: "top" }).addTo(map);
@@ -5074,6 +5244,7 @@
             bikeMapRef.current = null;
             bikeMarkerRef.current = null;
             bikeTrailLineRef.current = null;
+            bikeTrailSegsRef.current = [];
             bikeTileRef.current = null;
             bikeLabelRef.current = null;
             bikeRouteLineRef.current = null;
@@ -5127,7 +5298,7 @@
                 }).bindTooltip(label, { direction: "top" }).addTo(map);
               });
             const KIND = {
-              stop: { color: "#f472b6", radius: 9, icon: "🛏" },
+              stop: { color: "#FF8FB1", radius: 9, icon: "🛏" },
               goal: { color: "#7DF9C4", radius: 9, icon: "🏁" },
               checkpoint: { color: "#FFCB45", radius: 7, icon: "📍" },
             };
@@ -5168,16 +5339,47 @@
           if (!map || bikeWatchTrack.length < 2) return;
           const theme = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
           try {
-            if (bikeTrailLineRef.current) {
-              bikeTrailLineRef.current.setLatLngs(bikeWatchTrack);
-              bikeTrailLineRef.current.setStyle({ color: theme.trailColor });
-            } else {
-              bikeTrailLineRef.current = L.polyline(bikeWatchTrack, {
-                color: theme.trailColor, weight: 4, opacity: 0.9,
-              }).addTo(map);
+            const hasSpeed = bikeWatchTrack.some(p => p.length > 2 && p[2] != null);
+            // Without speed data it's one plain line; with it, each leg is drawn
+            // separately so the trail reads as a heat map of effort.
+            if (!hasSpeed || !bikeTrailSpeed) {
+              (bikeTrailSegsRef.current || []).forEach(l => { try { map.removeLayer(l); } catch(_) {} });
+              bikeTrailSegsRef.current = [];
+              const pts = bikeWatchTrack.map(p => [p[0], p[1]]);
+              if (bikeTrailLineRef.current) {
+                bikeTrailLineRef.current.setLatLngs(pts);
+                bikeTrailLineRef.current.setStyle({ color: theme.trailColor });
+              } else {
+                bikeTrailLineRef.current = L.polyline(pts, { color: theme.trailColor, weight: 4, opacity: 0.9 }).addTo(map);
+              }
+              return;
             }
+            if (bikeTrailLineRef.current) {
+              try { map.removeLayer(bikeTrailLineRef.current); } catch(_) {}
+              bikeTrailLineRef.current = null;
+            }
+            const segs = bikeTrailSegsRef.current || [];
+            for (let i = 1; i < bikeWatchTrack.length; i++) {
+              const a = bikeWatchTrack[i - 1], b = bikeWatchTrack[i];
+              const kmh = b[2] != null ? b[2] : a[2];
+              const col = bikeSpeedColor(kmh);
+              if (segs[i - 1]) {
+                segs[i - 1].setLatLngs([[a[0], a[1]], [b[0], b[1]]]);
+                segs[i - 1].setStyle({ color: col });
+              } else {
+                segs[i - 1] = L.polyline([[a[0], a[1]], [b[0], b[1]]], {
+                  color: col, weight: 5, opacity: 0.95, lineCap: "round",
+                }).addTo(map);
+              }
+            }
+            // Drop any legs left over from a cleared trail.
+            for (let i = Math.max(0, bikeWatchTrack.length - 1); i < segs.length; i++) {
+              try { map.removeLayer(segs[i]); } catch(_) {}
+            }
+            segs.length = Math.max(0, bikeWatchTrack.length - 1);
+            bikeTrailSegsRef.current = segs;
           } catch(_) {}
-        }, [bikeWatchTrack, bikeBasemap, bikeMapReady]);
+        }, [bikeWatchTrack, bikeBasemap, bikeMapReady, bikeTrailSpeed]);
 
         // Create the rider marker on first frame and recentre once.
         useEffect(() => {
@@ -5217,6 +5419,16 @@
             setBikeWatchError("This follow link needs Anonymous sign-in enabled in Firebase Auth, or sign in below.");
           });
         }, [currentUser, authLoading]);
+
+        useEffect(() => {
+          const strip = navStripRef.current;
+          if (!strip) return;
+          const active = strip.querySelector('[data-active="1"]');
+          if (!active) return;
+          const l = active.offsetLeft, r = l + active.offsetWidth;
+          if (l < strip.scrollLeft + 8) strip.scrollLeft = Math.max(0, l - 12);
+          else if (r > strip.scrollLeft + strip.clientWidth - 8) strip.scrollLeft = r - strip.clientWidth + 12;
+        }, [view, bikeView, swimView, appMode]);
 
         // ── Survive a refresh mid-ride ──────────────────────────────────────────
         // Reloading the page (or the browser reclaiming the tab) must not break the
@@ -5482,8 +5694,8 @@
               }} style={{ cursor: "pointer" }}>
                 <TimeathonLockup size={30} wordSize={24} />
               </div>
-              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#8FB0CC", marginTop: 4 }}>
-                {appMode === "swim" ? "Swim Meet Timer" : appMode === "bike" ? "Bike Live Feed" : "Swim · Bike · Run"}
+              <div style={{ fontSize: 10, letterSpacing: 3, textTransform: "uppercase", color: "var(--tm-accent-2)", opacity: 0.7, marginTop: 5 }}>
+                {appMode === "swim" ? "Swim Meet Timer" : appMode === "bike" ? "Bike Live Feed" : "Triathlon Timer"}
               </div>
               <button onClick={() => setView("profile")} title="Profile" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(143,176,204,0.3)", borderRadius: 4, color: "#8FB0CC", fontSize: 11, cursor: "pointer", padding: "4px 8px", letterSpacing: 1 }}>
                 &#128100; {currentUser?.displayName ? currentUser.displayName.split(" ")[0] : currentUser?.email?.split("@")[0]}
@@ -5505,29 +5717,28 @@
                   ? [["__home__","⌂"],["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
                   : [["__home__","⌂"],["watch","👀 Watch"],["profile","👤 Profile"]];
               return (
-                <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#0D2240", overflowX: "auto" }}>
+                <div className="tm-nav-wrap">
+                <div className="tm-nav" ref={navStripRef}>
                   {navTabs.map(([v, label]) => {
                     const bikeTab = v.startsWith("__bike_") ? v.slice(7, -2) : null;
                     const isActive = bikeTab
                       ? (view === "bike" && bikeView === bikeTab)
                       : v === view || (v in swimNavMap && view === "swim" && swimView === swimNavMap[v]);
                     return (
-                      <button key={v} onClick={() => {
+                      <button key={v} className="tm-nav-btn"
+                        data-active={isActive ? "1" : "0"}
+                        data-home={v === "__home__" ? "1" : "0"}
+                        onClick={() => {
                         if (v === "__home__") { selectMode(null); }
                         else if (bikeTab) { setView("bike"); setBikeView(bikeTab); }
                         else if (v in swimNavMap) { setView("swim"); setSwimView(swimNavMap[v]); }
                         else { setView(v); }
-                      }} style={{
-                        flex: v === "__home__" ? "0 0 auto" : 1, padding: "11px 10px", background: "none", border: "none",
-                        borderBottom: isActive ? "3px solid #00C6FF" : "3px solid transparent",
-                        color: v === "__home__" ? "#4E6B85" : isActive ? "#00C6FF" : "#8FB0CC",
-                        fontFamily: "var(--tm-font-display)", fontSize: v === "__home__" ? 16 : 13, letterSpacing: 1,
-                        textTransform: "uppercase", cursor: "pointer", whiteSpace: "nowrap", minWidth: 56,
                       }}>
                         {label}
                       </button>
                     );
                   })}
+                </div>
                 </div>
               );
             })()}
@@ -5563,9 +5774,14 @@
               {/* ── HOME ── */}
               {view === "home" && (
                 <div style={{ padding: "10px 0 20px" }}>
-                  {/* Logo */}
-                  <div style={{ textAlign: "center", marginBottom: 28 }}>
-                    <TimeathonLockup size={62} wordSize={46} rule tagline="Swim · Bike · Run" />
+                  {/* Mode title — the brand lockup already sits in the header above,
+                      so repeating it here just read as the word twice. */}
+                  <div style={{ textAlign: "center", marginBottom: 26 }}>
+                    <div style={{ fontFamily: "var(--tm-font-display)", fontWeight: 900, fontSize: 30,
+                                  letterSpacing: -0.5, color: "var(--tm-text)", lineHeight: 1 }}>Triathlon Timer</div>
+                    <div className="tm-lane" style={{ maxWidth: 190, margin: "12px auto 0" }} />
+                    <div style={{ fontSize: 10, letterSpacing: 3, textTransform: "uppercase",
+                                  color: "var(--tm-accent-2)", opacity: 0.75, marginTop: 10 }}>Swim · Bike · Run</div>
                   </div>
 
                   {/* Cards */}
@@ -5575,17 +5791,17 @@
                     <button onClick={startNewRace} style={{ background: "linear-gradient(135deg,#0D2240,#113052)", border: "2px solid #00C6FF", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>🏁</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#00C6FF" }}>New Race</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#00C6FF" }}>New Race</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>Start fresh — set up athletes &amp; distances</div>
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#00C6FF" }}>&#8594;</div>
                     </button>
 
                     {/* Existing Race */}
-                    <button onClick={() => setHomeSection(homeSection === "races" ? null : "races")} style={{ background: "linear-gradient(135deg,#0D2240,#1a3a1a)", border: "2px solid #FFCB45", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setHomeSection(homeSection === "races" ? null : "races")} style={{ background: "linear-gradient(135deg,#0D2240,#113052)", border: "2px solid #FFCB45", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📋</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#FFCB45" }}>Existing Race</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#FFCB45" }}>Existing Race</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>
                           {savedRaces.length === 0 ? "No saved races yet" : `${savedRaces.length} saved race${savedRaces.length > 1 ? "s" : ""}`}
                         </div>
@@ -5621,10 +5837,10 @@
                     )}
 
                     {/* Athletes */}
-                    <button onClick={() => setView("athletes")} style={{ background: "linear-gradient(135deg,#0D2240,#0a2a1a)", border: "2px solid #7DF9C4", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("athletes")} style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid #7DF9C4", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>🏊</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#7DF9C4" }}>Athletes</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#7DF9C4" }}>Athletes</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>
                           {(() => { const cnt = allRaceAthletes().length; return cnt === 0 ? "Your athlete library" : `${cnt} athlete${cnt !== 1 ? "s" : ""} in library`; })()}
                         </div>
@@ -5633,10 +5849,10 @@
                     </button>
 
                     {/* Past Races */}
-                    <button onClick={() => setView("archive")} style={{ background: "linear-gradient(135deg,#0D2240,#1a0a2e)", border: "2px solid #7DF9C4", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("archive")} style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid #7DF9C4", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📁</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#7DF9C4" }}>Past Races</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#7DF9C4" }}>Past Races</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>
                           {savedArchive.length === 0 ? "No past races yet" : `${savedArchive.length} race${savedArchive.length !== 1 ? "s" : ""} saved`}
                         </div>
@@ -5645,34 +5861,34 @@
                     </button>
 
                     {/* Manual Entry */}
-                    <button onClick={() => setView("manual")} style={{ background: "linear-gradient(135deg,#0D2240,#2a0a1a)", border: "2px solid #f472b6", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("manual")} style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid #FF8FB1", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>✏️</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#f472b6" }}>Manual Entry</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#FF8FB1" }}>Manual Entry</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>Enter times from a race that already happened</div>
                       </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#f472b6" }}>&#8594;</div>
+                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#FF8FB1" }}>&#8594;</div>
                     </button>
 
                     {/* Watch a Race */}
-                    <button onClick={() => setView("watch")} style={{ background: "linear-gradient(135deg,#0D2240,#1a1a3a)", border: "2px solid #a78bfa", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("watch")} style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid #5AA9FF", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>👀</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#a78bfa" }}>Watch a Race</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#5AA9FF" }}>Watch a Race</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>Follow live with a race code</div>
                       </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#a78bfa" }}>&#8594;</div>
+                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#5AA9FF" }}>&#8594;</div>
                     </button>
 
                     {/* Race Photos */}
-                    <div style={{ background: "linear-gradient(135deg,#0D2240,#1a0f2e)", border: "2px solid #e879f9", borderRadius: 12, overflow: "hidden" }}>
+                    <div style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid #7BE0FF", borderRadius: 12, overflow: "hidden" }}>
                       <button onClick={() => setPhotoCodeSection(s => !s)} style={{ width: "100%", background: "none", border: "none", padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                         <div style={{ fontSize: 40, lineHeight: 1 }}>📷</div>
                         <div>
-                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#e879f9" }}>Race Photos</div>
+                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#7BE0FF" }}>Race Photos</div>
                           <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>View shared photos with a race code</div>
                         </div>
-                        <div style={{ marginLeft: "auto", fontSize: 22, color: "#e879f9" }}>{photoCodeSection ? "▲" : "▼"}</div>
+                        <div style={{ marginLeft: "auto", fontSize: 22, color: "#7BE0FF" }}>{photoCodeSection ? "▲" : "▼"}</div>
                       </button>
                       {photoCodeSection && (
                         <div style={{ padding: "0 24px 20px", borderTop: "1px solid rgba(232,121,249,0.2)" }}>
@@ -5681,9 +5897,9 @@
                               onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
                               placeholder="Enter race code"
                               onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) { loadPhotosByCode(photoCodeInput); setPhotoCodeSection(false); } }}
-                              style={{ flex: 1, background: "#0A1628", border: "1px solid rgba(232,121,249,0.4)", borderRadius: 6, padding: "10px 14px", color: "#EAF4FF", fontSize: 15, fontFamily: "var(--tm-font-display)", letterSpacing: 2, outline: "none" }} />
+                              style={{ flex: 1, background: "#0A1628", border: "1px solid rgba(232,121,249,0.4)", borderRadius: 6, padding: "10px 14px", color: "#EAF4FF", fontSize: 15, fontFamily: "var(--tm-font-display)", letterSpacing: 0.5, outline: "none" }} />
                             <button onClick={() => { if (photoCodeInput.trim()) { loadPhotosByCode(photoCodeInput); setPhotoCodeSection(false); } }}
-                              style={{ ...btnStyle("#e879f9"), padding: "10px 20px", fontSize: 13 }}>View</button>
+                              style={{ ...btnStyle("#7BE0FF"), padding: "10px 20px", fontSize: 13 }}>View</button>
                           </div>
                         </div>
                       )}
@@ -5873,7 +6089,7 @@
                     {manualAthletes.map((ma, i) => (
                       <div key={ma.id} style={{ marginBottom: 10, borderRadius: 6 }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                          <div style={{ background: "#0D2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--tm-font-display)", fontSize: 18, color: "#f472b6", flexShrink: 0 }}>{i + 1}</div>
+                          <div style={{ background: "#0D2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--tm-font-display)", fontSize: 18, color: "#FF8FB1", flexShrink: 0 }}>{i + 1}</div>
                           <input value={ma.firstName} onChange={e => {
                             const fn = e.target.value;
                             setManualAthletes(prev => prev.map(a => a.id === ma.id ? { ...a, firstName: fn, name: `${fn} ${a.lastName}`.trim() } : a));
@@ -5929,7 +6145,7 @@
                                       setManualResults(null);
                                     }} placeholder={totalPlaceholder}
                                       title="Total elapsed time at this checkpoint (MM:SS) — auto-calculates missing split"
-                                      style={{ background: "#0A1628", border: `1px solid ${totalInvalid ? "rgba(255,80,80,0.6)" : "rgba(244,114,182,0.2)"}`, borderRadius: 4, padding: "4px 8px", color: "#c084fc", fontSize: 11, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
+                                      style={{ background: "#0A1628", border: `1px solid ${totalInvalid ? "rgba(255,80,80,0.6)" : "rgba(244,114,182,0.2)"}`, borderRadius: 4, padding: "4px 8px", color: "#5AA9FF", fontSize: 11, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
                                     <div style={{ fontSize: 8, color: "#4E6B85", textAlign: "center", letterSpacing: 0.5 }}>Σ total</div>
                                   </div>
                                 );
@@ -5941,14 +6157,14 @@
                     ))}
                     <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                       <button onClick={() => { setManualAthletePickerSearch(""); setShowManualAthletePicker(true); }} style={btnStyle("#00E5CC", true)}>+ Add Athlete</button>
-                      <button onClick={() => setManualResults(computeManualRace())} style={btnStyle("#f472b6")}>Calculate Results</button>
+                      <button onClick={() => setManualResults(computeManualRace())} style={btnStyle("#FF8FB1")}>Calculate Results</button>
                     </div>
 
                     {/* Athlete picker modal */}
                     {showManualAthletePicker && (
                       <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.92)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
                         onClick={e => { if (e.target === e.currentTarget) { setShowManualAthletePicker(false); setManualAthletePickerSearch(""); } }}>
-                        <div style={{ background: "#0D2240", borderTop: "2px solid #f472b6", borderRadius: "12px 12px 0 0", width: "100%", maxWidth: 500, maxHeight: "70vh", display: "flex", flexDirection: "column", padding: "16px 16px 24px" }}>
+                        <div style={{ background: "#0D2240", borderTop: "2px solid #FF8FB1", borderRadius: "12px 12px 0 0", width: "100%", maxWidth: 500, maxHeight: "70vh", display: "flex", flexDirection: "column", padding: "16px 16px 24px" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                             <div style={{ fontSize: 13, fontWeight: 700, color: "#EAF4FF", letterSpacing: 1 }}>Add Athlete</div>
                             <button onClick={() => { setShowManualAthletePicker(false); setManualAthletePickerSearch(""); }} style={{ background: "none", border: "none", color: "#8FB0CC", fontSize: 20, cursor: "pointer", padding: 0 }}>&times;</button>
@@ -5957,7 +6173,7 @@
                             style={{ background: "#0A1628", border: "1px solid rgba(244,114,182,0.3)", borderRadius: 6, padding: "9px 12px", color: "#EAF4FF", fontSize: 13, outline: "none", marginBottom: 10, width: "100%", boxSizing: "border-box" }} />
                           <div style={{ overflowY: "auto", flex: 1 }}>
                             <button onClick={() => { addBlankManual(); setShowManualAthletePicker(false); setManualAthletePickerSearch(""); }}
-                              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "rgba(244,114,182,0.08)", border: "1px dashed rgba(244,114,182,0.3)", borderRadius: 6, padding: "10px 12px", color: "#f472b6", fontSize: 13, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
+                              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "rgba(244,114,182,0.08)", border: "1px dashed rgba(244,114,182,0.3)", borderRadius: 6, padding: "10px 12px", color: "#FF8FB1", fontSize: 13, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
                               <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
                               <span style={{ fontWeight: 700 }}>New Athlete</span>
                             </button>
@@ -5988,7 +6204,7 @@
                         {finishers.length > 0 ? (
                           <div style={{ background: "#0D2240", borderRadius: 10, border: "1px solid rgba(244,114,182,0.25)", padding: "16px", marginBottom: 14 }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#f472b6" }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#FF8FB1" }}>
                                 Results — {finishers.length} Finisher{finishers.length !== 1 ? "s" : ""}
                               </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -6016,12 +6232,12 @@
                                 <tbody>
                                   {finishers.map((ath, rank) => (
                                     <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                                      <td style={{ padding: "7px 8px", color: rank === 0 ? "#FFCB45" : rank === 1 ? "#a0aec0" : rank === 2 ? "#D98A4B" : "#EAF4FF", fontFamily: "var(--tm-font-display)", fontSize: 16 }}>{rank + 1}</td>
+                                      <td style={{ padding: "7px 8px", color: rank === 0 ? "#FFCB45" : rank === 1 ? "#8FB0CC" : rank === 2 ? "#D98A4B" : "#EAF4FF", fontFamily: "var(--tm-font-display)", fontSize: 16 }}>{rank + 1}</td>
                                       <td style={{ padding: "7px 8px", color: "#EAF4FF", fontWeight: 700 }}>{ath.name}</td>
                                       <td style={{ padding: "7px 8px", color: "#8FB0CC", textAlign: "center" }}>{ath.gender}</td>
                                       <td style={{ padding: "7px 8px", color: "#8FB0CC", textAlign: "center" }}>{ath.ageGroup}</td>
                                       {SEGMENTS.map((_, si) => { const dur = archiveSegDur(ath, si); return <td key={si} style={{ padding: "7px 8px", color: "#8FB0CC", textAlign: "center", fontFamily: "monospace" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>; })}
-                                      <td style={{ padding: "7px 8px", color: "#f472b6", fontWeight: 700, textAlign: "center", fontFamily: "monospace" }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</td>
+                                      <td style={{ padding: "7px 8px", color: "#FF8FB1", fontWeight: 700, textAlign: "center", fontFamily: "monospace" }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -6040,9 +6256,9 @@
                                       <div style={{ fontSize: 11, fontWeight: 700, color: "#00C6FF", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6, borderLeft: "3px solid #00C6FF", paddingLeft: 8 }}>{key}</div>
                                       {agMap[key].map((ath, i) => (
                                         <div key={ath.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent", borderRadius: 4 }}>
-                                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 18, color: i === 0 ? "#FFCB45" : i === 1 ? "#a0aec0" : i === 2 ? "#D98A4B" : "#4E6B85", minWidth: 22 }}>{i + 1}</div>
+                                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 18, color: i === 0 ? "#FFCB45" : i === 1 ? "#8FB0CC" : i === 2 ? "#D98A4B" : "#4E6B85", minWidth: 22 }}>{i + 1}</div>
                                           <div style={{ flex: 1, color: "#EAF4FF", fontWeight: 600, fontSize: 13 }}>{ath.name}</div>
-                                          <div style={{ fontFamily: "monospace", color: "#f472b6", fontSize: 12, fontWeight: 700 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                                          <div style={{ fontFamily: "monospace", color: "#FF8FB1", fontSize: 12, fontWeight: 700 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
                                         </div>
                                       ))}
                                     </div>
@@ -6094,8 +6310,8 @@
                                 {race.photoCode ? (
                                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                                     <span style={{ fontSize: 10, color: "#8FB0CC" }}>Photo code:</span>
-                                    <span style={{ fontFamily: "var(--tm-font-display)", fontSize: 16, color: "#e879f9", letterSpacing: 2 }}>{race.photoCode}</span>
-                                    <button onClick={() => navigator.clipboard.writeText(race.photoCode)} style={{ background: "none", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 3, color: "#e879f9", fontSize: 9, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
+                                    <span style={{ fontFamily: "var(--tm-font-display)", fontSize: 16, color: "#7BE0FF", letterSpacing: 0.5 }}>{race.photoCode}</span>
+                                    <button onClick={() => navigator.clipboard.writeText(race.photoCode)} style={{ background: "none", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 3, color: "#7BE0FF", fontSize: 9, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
                                   </div>
                                 ) : (
                                   <button onClick={() => assignPhotoCode(race.id)} style={{ marginTop: 4, background: "none", border: "1px solid rgba(143,176,204,0.3)", borderRadius: 3, color: "#8FB0CC", fontSize: 10, padding: "2px 8px", cursor: "pointer" }}>+ Assign photo code</button>
@@ -6124,7 +6340,7 @@
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer" }} onClick={() => setArchiveOpenAthId(athOpen ? null : `${race.id}-${ath.id}`)}>
                                         <div style={{ fontSize: 14 }}>{rank < 3 ? medals[rank] : `${rank + 1}.`}</div>
                                         <div style={{ flex: 1, fontSize: 13, color: "#EAF4FF", fontWeight: 600 }}>{ath.name}</div>
-                                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 18, color: "#7DF9C4", letterSpacing: 2 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 18, color: "#7DF9C4", letterSpacing: 0.5 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
                                         <button onClick={e => { e.stopPropagation(); printArchivedCert(race, ath); }} style={{ background: "none", border: "1px solid rgba(0,198,255,0.3)", borderRadius: 4, padding: "3px 8px", fontSize: 10, color: "#00C6FF", cursor: "pointer" }}>🏆</button>
                                       </div>
                                       {athOpen && (
@@ -6269,7 +6485,7 @@
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontWeight: 700, fontSize: 14, color: "#EAF4FF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{jr.raceName}</div>
                               <div style={{ fontSize: 11, color: "#8FB0CC", marginTop: 2 }}>
-                                {jr.hostName} &nbsp;·&nbsp; CODE: <span style={{ color: "#7DF9C4", fontFamily: "var(--tm-font-display)", letterSpacing: 2 }}>{jr.code}</span>
+                                {jr.hostName} &nbsp;·&nbsp; CODE: <span style={{ color: "#7DF9C4", fontFamily: "var(--tm-font-display)", letterSpacing: 0.5 }}>{jr.code}</span>
                               </div>
                             </div>
                             <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
@@ -6299,7 +6515,7 @@
                         <input value={joinCode} onChange={e => { setJoinCode(e.target.value.toUpperCase()); setRegError(""); }}
                           onKeyDown={e => e.key === "Enter" && joinRaceByCode()}
                           placeholder="e.g. ABC123" maxLength={6}
-                          style={{ flex: 1, background: "#0D2240", border: "2px solid rgba(125,249,196,0.4)", borderRadius: 8, padding: "12px 14px", color: "#7DF9C4", fontSize: 22, fontFamily: "var(--tm-font-display)", letterSpacing: 6, outline: "none", textAlign: "center" }} />
+                          style={{ flex: 1, background: "#0D2240", border: "2px solid rgba(125,249,196,0.4)", borderRadius: 8, padding: "12px 14px", color: "#7DF9C4", fontSize: 22, fontFamily: "var(--tm-font-display)", letterSpacing: 0.5, outline: "none", textAlign: "center" }} />
                         <button onClick={() => joinRaceByCode()} disabled={regWorking} style={{ ...btnStyle("#7DF9C4"), padding: "12px 20px", fontSize: 13, opacity: regWorking ? 0.6 : 1 }}>{regWorking ? "…" : "Find Race"}</button>
                       </div>
                       {regError && <div style={{ fontSize: 12, color: "#FF5C7A", marginTop: 8 }}>{regError}</div>}
@@ -6310,7 +6526,7 @@
                   {registrationStep === "confirm" && regRaceData && !joinRace && (
                     <div>
                       <div style={{ background: "#0D2240", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 3, color: "#7DF9C4" }}>{regRaceData.raceName || "Race"}</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 0.5, color: "#7DF9C4" }}>{regRaceData.raceName || "Race"}</div>
                         <div style={{ fontSize: 10, color: "#8FB0CC", letterSpacing: 1 }}>Host: {regRaceData.publisherName} &nbsp;·&nbsp; Code: {regRaceData.code}</div>
                       </div>
                       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#8FB0CC", marginBottom: 10 }}>CONFIRM YOUR INFO</div>
@@ -6400,7 +6616,7 @@
                     <div>
                       <div style={{ background: "#0D2240", borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 20, letterSpacing: 3, color: "#7DF9C4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 20, letterSpacing: 0.5, color: "#7DF9C4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {joinLiveData?.raceName || joinRace.raceName || joinRace.publisherName + "'s Race"}
                           </div>
                           <div style={{ fontSize: 10, color: "#8FB0CC", letterSpacing: 1 }}>
@@ -6611,7 +6827,7 @@
                                 ) : !watchConnected ? (
                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                     <div>
-                                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 24, letterSpacing: 8, color: "#00C6FF", lineHeight: 1 }}>
+                                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 24, letterSpacing: 0.5, color: "#00C6FF", lineHeight: 1 }}>
                                         {watchToken.slice(0, 4)} {watchToken.slice(4)}
                                       </div>
                                       <div style={{ fontSize: 10, color: "#8FB0CC" }}>Enter this code on your Garmin watch</div>
@@ -6686,7 +6902,7 @@
               {/* ── DEVICES ── */}
               {view === "devices" && (
                 <div style={{ paddingTop: 8, maxWidth: 480, margin: "0 auto" }}>
-                  <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 30, letterSpacing: 4, color: "#EAF4FF", marginBottom: 18 }}>
+                  <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 30, letterSpacing: 0.5, color: "#EAF4FF", marginBottom: 18 }}>
                     Devices
                   </div>
 
@@ -6753,7 +6969,7 @@
                                   {dev.readings.power != null && (
                                     <div style={{ background: "#0D2240", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
                                       <div style={{ fontSize: 9, letterSpacing: 2, color: "#8FB0CC", textTransform: "uppercase" }}>Power</div>
-                                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: "#a78bfa", letterSpacing: 1 }}>
+                                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: "#5AA9FF", letterSpacing: 1 }}>
                                         {dev.readings.power}<span style={{ fontSize: 10, color: "#8FB0CC", marginLeft: 2 }}>W</span>
                                       </div>
                                     </div>
@@ -6838,7 +7054,7 @@
                         <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#8FB0CC", marginBottom: 8 }}>
                           ⌚ Garmin Watch Code
                         </div>
-                        <div style={{ fontFamily: "var(--tm-font-display), monospace", fontSize: 38, letterSpacing: 10, color: "#00C6FF", marginBottom: 2 }}>
+                        <div style={{ fontFamily: "var(--tm-font-display), monospace", fontSize: 38, letterSpacing: 0.5, color: "#00C6FF", marginBottom: 2 }}>
                           {watchToken.slice(0, 4)} {watchToken.slice(4)}
                         </div>
                         <div style={{ fontSize: 10, color: "#4E6B85", marginBottom: 12 }}>
@@ -6874,13 +7090,13 @@
                             { key: "heartRate", label: "Heart Rate", unit: "bpm",  color: "#7DF9C4" },
                             { key: "cadence",   label: "Cadence",    unit: "rpm",  color: "#FFCB45" },
                             { key: "speed",     label: "Speed",      unit: "km/h", color: "#00C6FF" },
-                            { key: "power",     label: "Power",      unit: "W",    color: "#a78bfa" },
+                            { key: "power",     label: "Power",      unit: "W",    color: "#5AA9FF" },
                           ].map(({ key, label, unit, color }) => {
                             const val = allReadings[key];
                             return (
                               <div key={key} style={{ background: "#0A1628", borderRadius: 8, padding: "14px 10px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
                                 <div style={{ fontSize: 9, letterSpacing: 2, textTransform: "uppercase", color: "#8FB0CC", marginBottom: 4 }}>{label}</div>
-                                <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 32, color: val != null ? color : "#1e3a52", letterSpacing: 1 }}>
+                                <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 32, color: val != null ? color : "#113052", letterSpacing: 1 }}>
                                   {val != null ? val : "--"}
                                 </div>
                                 <div style={{ fontSize: 9, color: "#4E6B85" }}>{unit}</div>
@@ -7043,15 +7259,15 @@
                       <div style={{ maxWidth: 400, margin: "0 auto" }}>
                         <div style={{ textAlign: "center", marginBottom: 24 }}>
                           <div style={{ fontSize: 44, marginBottom: 10 }}>👀</div>
-                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 3, color: "#EAF4FF" }}>Watch a Race</div>
+                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#EAF4FF" }}>Watch a Race</div>
                           <div style={{ fontSize: 13, color: "#8FB0CC", marginTop: 4 }}>Enter the code from the race organizer</div>
                         </div>
                         <input value={spectatorCode} onChange={e => setSpectatorCode(e.target.value.toUpperCase())}
                           onKeyDown={e => e.key === "Enter" && watchRace(spectatorCode)}
                           placeholder="RACE CODE" maxLength={6}
-                          style={{ width: "100%", boxSizing: "border-box", background: "#0D2240", border: "2px solid rgba(167,139,250,0.4)", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#a78bfa", fontSize: 28, fontFamily: "var(--tm-font-display)", letterSpacing: 8, outline: "none", textAlign: "center", display: "block" }} />
+                          style={{ width: "100%", boxSizing: "border-box", background: "#0D2240", border: "2px solid rgba(167,139,250,0.4)", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#5AA9FF", fontSize: 28, fontFamily: "var(--tm-font-display)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
                         <button onClick={() => watchRace(spectatorCode)} disabled={liveRaceLoading}
-                          style={{ width: "100%", background: "#a78bfa", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#0A1628", cursor: "pointer", letterSpacing: 1 }}>
+                          style={{ width: "100%", background: "#5AA9FF", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#0A1628", cursor: "pointer", letterSpacing: 1 }}>
                           {liveRaceLoading ? "Connecting…" : "Watch Race"}
                         </button>
                         {liveRaceError && <div style={{ marginTop: 12, fontSize: 13, color: "#FF5C7A", textAlign: "center" }}>{liveRaceError}</div>}
@@ -7064,15 +7280,15 @@
 
                         <div style={{ textAlign: "center", marginBottom: 16 }}>
                           <div style={{ fontSize: 28, marginBottom: 6 }}>📷</div>
-                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 3, color: "#e879f9" }}>View Race Photos</div>
+                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 0.5, color: "#7BE0FF" }}>View Race Photos</div>
                           <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 3 }}>Enter the photo code from the race organizer</div>
                         </div>
                         <input value={photoCodeInput} onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
                           onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                           placeholder="PHOTO CODE"
-                          style={{ width: "100%", boxSizing: "border-box", background: "#0D2240", border: "2px solid rgba(232,121,249,0.4)", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#e879f9", fontSize: 28, fontFamily: "var(--tm-font-display)", letterSpacing: 8, outline: "none", textAlign: "center", display: "block" }} />
+                          style={{ width: "100%", boxSizing: "border-box", background: "#0D2240", border: "2px solid rgba(232,121,249,0.4)", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#7BE0FF", fontSize: 28, fontFamily: "var(--tm-font-display)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
                         <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
-                          style={{ width: "100%", background: "#e879f9", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#0A1628", cursor: "pointer", letterSpacing: 1 }}>
+                          style={{ width: "100%", background: "#7BE0FF", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#0A1628", cursor: "pointer", letterSpacing: 1 }}>
                           View Photos
                         </button>
                       </div>
@@ -7080,7 +7296,7 @@
                       <div>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                           <div>
-                            <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 20, letterSpacing: 3, color: "#EAF4FF", lineHeight: 1 }}>{liveRace.publisherName}'s Race</div>
+                            <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 20, letterSpacing: 0.5, color: "#EAF4FF", lineHeight: 1 }}>{liveRace.publisherName}'s Race</div>
                             <div style={{ fontSize: 10, color: "#8FB0CC", letterSpacing: 1, marginTop: 3 }}>
                               CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{wFinished} finished&nbsp;&nbsp;·&nbsp;&nbsp;{wOnCourse} on course
                             </div>
@@ -7090,7 +7306,7 @@
                         </div>
                         <div style={{ background: "linear-gradient(135deg,#0D2240,#113052)", borderRadius: 10, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "1px solid rgba(0,198,255,0.25)" }}>
                           <div style={{ fontSize: 10, letterSpacing: 3, color: "#8FB0CC", marginBottom: 2 }}>RACE CLOCK</div>
-                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 52, letterSpacing: 4, color: "#00C6FF", lineHeight: 1 }}>{formatTime(spectatorClockMs || liveRace.clockMs || 0)}</div>
+                          <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 52, letterSpacing: 0.5, color: "#00C6FF", lineHeight: 1 }}>{formatTime(spectatorClockMs || liveRace.clockMs || 0)}</div>
                         </div>
                         {/* Athlete personal dashboard */}
                         {isAthlete && (() => {
@@ -7112,13 +7328,13 @@
                             return prev !== null ? s - prev : null;
                           });
                           return (
-                            <div style={{ background: "linear-gradient(135deg,#0D2240,#0a1e38)", border: "2px solid rgba(125,249,196,0.4)", borderRadius: 12, padding: "14px 16px", marginBottom: 18 }}>
+                            <div style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid rgba(125,249,196,0.4)", borderRadius: 12, padding: "14px 16px", marginBottom: 18 }}>
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                   <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, color: "#7DF9C4" }}>YOUR RACE</div>
-                                  {myAth.raceNumber != null && <span style={{ background: "rgba(125,249,196,0.15)", border: "1px solid rgba(125,249,196,0.4)", borderRadius: 4, padding: "1px 7px", fontSize: 11, fontFamily: "var(--tm-font-display)", letterSpacing: 2, color: "#7DF9C4" }}>#{myAth.raceNumber}</span>}
+                                  {myAth.raceNumber != null && <span style={{ background: "rgba(125,249,196,0.15)", border: "1px solid rgba(125,249,196,0.4)", borderRadius: 4, padding: "1px 7px", fontSize: 11, fontFamily: "var(--tm-font-display)", letterSpacing: 0.5, color: "#7DF9C4" }}>#{myAth.raceNumber}</span>}
                                 </div>
-                                <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 3, color: myAth.finished ? "#7DF9C4" : "#00C6FF" }}>
+                                <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 0.5, color: myAth.finished ? "#7DF9C4" : "#00C6FF" }}>
                                   {myAth.finished ? formatElapsed(myFinishMs) : myChipMs !== null ? formatElapsed(myChipMs) : "—"}
                                 </div>
                               </div>
@@ -7137,8 +7353,8 @@
                                   const curSegMs = isCur && myAth.startOffset !== null ? (si === 0 ? clock - myAth.startOffset : clock - myAth.splits[si - 1]) : null;
                                   return (
                                     <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCur ? `${col}10` : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCur ? col + "40" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "5px 4px 6px", textAlign: "center" }}>
-                                      <div style={{ fontSize: 8, color: done ? col : isCur ? col : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
-                                      <div style={{ fontSize: 11, color: done ? "#EAF4FF" : isCur ? col : "#1a3050", fontFamily: (done || isCur) ? "var(--tm-font-display)" : "inherit", letterSpacing: (done || isCur) ? 1 : 0 }}>
+                                      <div style={{ fontSize: 8, color: done ? col : isCur ? col : "#113052", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                      <div style={{ fontSize: 11, color: done ? "#EAF4FF" : isCur ? col : "#113052", fontFamily: (done || isCur) ? "var(--tm-font-display)" : "inherit", letterSpacing: (done || isCur) ? 1 : 0 }}>
                                         {done ? formatElapsed(mySplitDurs[si]) : isCur && curSegMs !== null ? formatElapsed(curSegMs) : "—"}
                                       </div>
                                     </div>
@@ -7165,13 +7381,13 @@
                           return (
                             <div key={ath.id}
                               onClick={() => { const next = isSelected ? null : ath.id; setWatchSelectedAthId(next); watchSelectedAthIdRef.current = next; }}
-                              style={{ background: "#0D2240", borderRadius: 10, marginBottom: 10, border: `1px solid ${isSelected ? "rgba(167,139,250,0.6)" : borderColor}`, borderTop: `3px solid ${isSelected ? "#a78bfa" : topAccent}`, overflow: "hidden", cursor: "pointer" }}>
+                              style={{ background: "#0D2240", borderRadius: 10, marginBottom: 10, border: `1px solid ${isSelected ? "rgba(167,139,250,0.6)" : borderColor}`, borderTop: `3px solid ${isSelected ? "#5AA9FF" : topAccent}`, overflow: "hidden", cursor: "pointer" }}>
                               <div style={{ padding: "12px 14px" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                                   <div style={{ minWidth: 40, textAlign: "center", flexShrink: 0 }}>
                                     {medal && ath.finished
                                       ? <div style={{ fontSize: 28, lineHeight: 1 }}>{medal}</div>
-                                      : <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 30, color: ath.finished ? "#7DF9C4" : ath.started ? "#00C6FF" : "#2a4060", lineHeight: 1 }}>{place}</div>}
+                                      : <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 30, color: ath.finished ? "#7DF9C4" : ath.started ? "#00C6FF" : "#113052", lineHeight: 1 }}>{place}</div>}
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontWeight: 700, fontSize: 15, color: "#EAF4FF", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -7184,14 +7400,14 @@
                                     {ath.finished ? (
                                       <div>
                                         <div style={{ fontSize: 9, fontWeight: 700, color: "#7DF9C4", letterSpacing: 1 }}>FINISHED</div>
-                                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 24, color: "#7DF9C4", letterSpacing: 2, lineHeight: 1.2 }}>{formatElapsed(ath.finishMs)}</div>
+                                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 24, color: "#7DF9C4", letterSpacing: 0.5, lineHeight: 1.2 }}>{formatElapsed(ath.finishMs)}</div>
                                       </div>
                                     ) : ath.started ? (
                                       <div>
                                         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: curSeg !== null ? segColors[curSeg % segColors.length] : "#00C6FF", background: curSeg !== null ? `${segColors[curSeg % segColors.length]}18` : "transparent", borderRadius: 3, padding: "1px 6px", display: "inline-block", marginBottom: 2 }}>
                                           {curSeg !== null ? watchSegs[curSeg] : "RACING"}
                                         </div>
-                                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 24, color: "#00C6FF", letterSpacing: 2, lineHeight: 1 }}>{formatElapsed(ath.chipMs)}</div>
+                                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 24, color: "#00C6FF", letterSpacing: 0.5, lineHeight: 1 }}>{formatElapsed(ath.chipMs)}</div>
                                       </div>
                                     ) : (
                                       <div style={{ fontSize: 11, color: "#4E6B85" }}>Waiting…</div>
@@ -7208,8 +7424,8 @@
                                       const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (spectatorClockMs || liveRace.clockMs || 0) - prevMs : null;
                                       return (
                                         <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? `${col}10` : "rgba(255,255,255,0.03)", border: `1px solid ${done ? col + "50" : isCurrent ? col + "40" : "rgba(255,255,255,0.06)"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
-                                          <div style={{ fontSize: 8, color: done ? col : isCurrent ? col : "#2a4060", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
-                                          <div style={{ fontSize: 11, color: done ? "#EAF4FF" : isCurrent ? col : "#1a3050", fontFamily: (done || isCurrent) ? "var(--tm-font-display)" : "inherit", letterSpacing: (done || isCurrent) ? 1 : 0 }}>
+                                          <div style={{ fontSize: 8, color: done ? col : isCurrent ? col : "#113052", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                          <div style={{ fontSize: 11, color: done ? "#EAF4FF" : isCurrent ? col : "#113052", fontFamily: (done || isCurrent) ? "var(--tm-font-display)" : "inherit", letterSpacing: (done || isCurrent) ? 1 : 0 }}>
                                             {done ? formatElapsed(splitDurs[si]) : isCurrent && curSegMs !== null ? formatElapsed(curSegMs) : "—"}
                                           </div>
                                         </div>
@@ -7222,7 +7438,7 @@
                                   if (!gps && !ath.hr) return null;
                                   return (
                                     <div style={{ borderTop: "1px solid rgba(167,139,250,0.2)", padding: "10px 14px", background: "rgba(167,139,250,0.05)" }}>
-                                      <div style={{ fontSize: 10, color: "#a78bfa", letterSpacing: 2, marginBottom: 6 }}>📍 LIVE DATA</div>
+                                      <div style={{ fontSize: 10, color: "#5AA9FF", letterSpacing: 2, marginBottom: 6 }}>📍 LIVE DATA</div>
                                       <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#8FB0CC", flexWrap: "wrap" }}>
                                         {gps?.distanceMi != null && <span>Distance: <strong style={{ color: "#EAF4FF" }}>{gps.distanceMi.toFixed(2)} mi</strong></span>}
                                         {gps?.speed != null && gps.speed > 0 && <span>Speed: <strong style={{ color: "#EAF4FF" }}>{(gps.speed * 2.237).toFixed(1)} mph</strong></span>}
@@ -7323,7 +7539,7 @@
                           title="Drag to reorder">⠿</div>
                         <div style={{ background: "#0D2240", borderRadius: 4, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--tm-font-display)", fontSize: 18, color: "#00C6FF", flexShrink: 0 }}>{i + 1}</div>
                         <input value={ath.raceNumber != null ? ath.raceNumber : ""} onChange={e => updateRaceNumber(i, e.target.value)} placeholder="#" title="Bib #"
-                          style={{ width: 40, flexShrink: 0, background: "#0D2240", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 4, padding: "8px 4px", color: "#e879f9", fontSize: 13, fontFamily: "var(--tm-font-display)", letterSpacing: 1, outline: "none", textAlign: "center" }} />
+                          style={{ width: 40, flexShrink: 0, background: "#0D2240", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 4, padding: "8px 4px", color: "#7BE0FF", fontSize: 13, fontFamily: "var(--tm-font-display)", letterSpacing: 1, outline: "none", textAlign: "center" }} />
                         <input value={ath.firstName || ""} onChange={e => updateFirstName(i, e.target.value)} placeholder="First"
                           style={{ flex: 1, minWidth: 0, background: "#0D2240", border: "1px solid rgba(0,198,255,0.25)", borderRadius: 4, padding: "8px 8px", color: "#EAF4FF", fontSize: 14, outline: "none" }} />
                         <input value={ath.lastName || ""} onChange={e => updateLastName(i, e.target.value)} placeholder="Last"
@@ -7390,7 +7606,7 @@
                     {registrationOpen && (
                       <div style={{ marginTop: 12, background: "rgba(125,249,196,0.06)", borderRadius: 6, padding: "12px 14px" }}>
                         <div style={{ fontSize: 10, color: "#8FB0CC", letterSpacing: 1, marginBottom: 4 }}>SHARE THIS CODE WITH ATHLETES</div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 40, letterSpacing: 8, color: "#7DF9C4" }}>{registrationCode}</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 40, letterSpacing: 0.5, color: "#7DF9C4" }}>{registrationCode}</div>
                         <div style={{ fontSize: 11, color: "#8FB0CC", marginTop: 2, marginBottom: 8 }}>Athletes enter this in the Join tab to join</div>
                         {athletes.filter(a => a.uid).length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -7601,10 +7817,56 @@
 
                     {/* Sticky map + heading — stays visible while scrolling waypoint list */}
                     <div style={{ position: "sticky", top: clockBannerH, zIndex: 50, background: "#0D2240", borderRadius: "8px 8px 0 0", padding: "10px 16px 0", boxShadow: "0 -20px 0 20px #0A1628" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#7DF9C4" }}>📍 GPS Waypoints</div>
-                        <div style={{ fontSize: 10, color: "#8FB0CC" }}>— tap map to place pins</div>
+                        <div style={{ fontSize: 10, color: "#8FB0CC" }}>
+                          {raceDrawLeg ? `— tap to draw the ${raceDrawLeg} course` : "— tap map to place pins"}
+                        </div>
                       </div>
+
+                      {/* Course drawing — one route per leg so athletes can see the way round */}
+                      <div style={{ display:"flex", alignItems:"center", gap:5, flexWrap:"wrap", marginBottom:8 }}>
+                        <span style={{ fontSize:10, letterSpacing:1.5, textTransform:"uppercase", color:"#8FB0CC", fontWeight:700 }}>Draw course</span>
+                        {RACE_LEGS.map(([leg, label, segIdx]) => {
+                          const on = raceDrawLeg === leg;
+                          const n = (raceRoutes[leg] || []).length;
+                          return (
+                            <button key={leg} onClick={() => setRaceDrawLeg(on ? null : leg)}
+                              style={{ padding:"5px 10px", fontSize:11, fontWeight:700, borderRadius:6, cursor:"pointer",
+                                background: on ? segColors[segIdx] + "26" : "transparent",
+                                border: on ? `1px solid ${segColors[segIdx]}` : "1px solid rgba(255,255,255,0.12)",
+                                color: on ? segColors[segIdx] : "#8FB0CC" }}>
+                              {label}{n > 1 ? ` · ${fmtRaceDist(raceRouteDist(raceRoutes[leg]))}` : ""}
+                            </button>
+                          );
+                        })}
+                        {raceDrawLeg && (
+                          <>
+                            {raceDrawLeg !== "swim" && (
+                              <button onClick={() => setRaceDrawSnap(v => !v)}
+                                title="Route each leg along real roads"
+                                style={{ padding:"5px 9px", fontSize:10, fontWeight:700, borderRadius:6, cursor:"pointer",
+                                  background: raceDrawSnap ? "rgba(0,229,204,0.18)" : "transparent",
+                                  border: raceDrawSnap ? "1px solid #00E5CC" : "1px solid rgba(255,255,255,0.12)",
+                                  color: raceDrawSnap ? "#00E5CC" : "#8FB0CC" }}>
+                                {raceDrawSnap ? "● Roads" : "Roads off"}
+                              </button>
+                            )}
+                            <button onClick={() => setRaceRoutes(r => ({ ...r, [raceDrawLeg]: (r[raceDrawLeg] || []).slice(0, -1) }))}
+                              style={{ ...btnStyle("#00C6FF", true), padding:"4px 9px", fontSize:10 }}>↶ Undo</button>
+                            <button onClick={() => { if (confirm(`Clear the ${raceDrawLeg} course?`)) setRaceRoutes(r => ({ ...r, [raceDrawLeg]: [] })); }}
+                              style={{ ...btnStyle("#FF5C7A", true), padding:"4px 9px", fontSize:10 }}>Clear</button>
+                            <button onClick={() => setRaceDrawLeg(null)}
+                              style={{ ...btnStyle("#8FB0CC", true), padding:"4px 9px", fontSize:10 }}>Done</button>
+                            {raceSnapping > 0 && <span style={{ fontSize:10, color:"#FFCB45" }}>routing…</span>}
+                          </>
+                        )}
+                      </div>
+                      {raceDrawLeg === "swim" && (
+                        <div style={{ fontSize:10, color:"#8FB0CC", marginBottom:8 }}>
+                          Swim legs join in straight lines — open water has no roads to follow.
+                        </div>
+                      )}
 
                       {activePlacementId && (
                         <div style={{ fontSize: 11, color: "#FFCB45", background: "rgba(255,203,69,0.08)", border: "1px solid rgba(255,203,69,0.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 8, textAlign: "center" }}>
@@ -7780,7 +8042,7 @@
                     )}
                   </div>
 
-                  <div style={{ marginTop: 14, background: "#0a3358", borderLeft: "3px solid #00C6FF", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#7aa8c8" }}>
+                  <div style={{ marginTop: 14, background: "#113052", borderLeft: "3px solid #00C6FF", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#8FB0CC" }}>
                     {raceMode === "simultaneous"
                       ? <>All athletes start the moment you press <strong style={{ color: "#FFCB45" }}>START RACE</strong>. Tap segments in order — <strong style={{ color: "#7DF9C4" }}>Run</strong> ends their race. Use <strong style={{ color: "#00E5CC" }}>Edit Times</strong> to correct any mis-tap.</>
                       : <>Tap <strong style={{ color: "#00E5CC" }}>Send Off</strong> per athlete at dive-in, or <strong style={{ color: "#FFCB45" }}>Send Off All</strong> for a mass start. Tap segments in order — <strong style={{ color: "#7DF9C4" }}>Run</strong> ends their race. Use <strong style={{ color: "#00E5CC" }}>Edit Times</strong> to correct any mis-tap.</>
@@ -7793,12 +8055,12 @@
               {view === "race" && (
                 <div>
                   {!clockStarted && (
-                    <div style={{ background: "linear-gradient(135deg,#0a3358,#113052)", border: `2px solid ${raceMode === "simultaneous" ? "#FFCB45" : "#00C6FF"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
-                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 3, color: "#EAF4FF", marginBottom: 4 }}>Ready to Race?</div>
+                    <div style={{ background: "linear-gradient(135deg,#113052,#113052)", border: `2px solid ${raceMode === "simultaneous" ? "#FFCB45" : "#00C6FF"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
+                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 0.5, color: "#EAF4FF", marginBottom: 4 }}>Ready to Race?</div>
                       {raceMode === "simultaneous" && (
                         <div style={{ fontSize: 11, color: "#FFCB45", marginBottom: 10, letterSpacing: 1 }}>SIMULTANEOUS START — all athletes go at once</div>
                       )}
-                      <button onClick={startClock} style={{ ...btnStyle(raceMode === "simultaneous" ? "#FFCB45" : "#00C6FF"), fontSize: 18, padding: "14px 40px", letterSpacing: 3, fontFamily: "var(--tm-font-display)" }}>
+                      <button onClick={startClock} style={{ ...btnStyle(raceMode === "simultaneous" ? "#FFCB45" : "#00C6FF"), fontSize: 18, padding: "14px 40px", letterSpacing: 0.5, fontFamily: "var(--tm-font-display)" }}>
                         &#9654; START RACE
                       </button>
                     </div>
@@ -7831,7 +8093,7 @@
                       ) : (
                         <div style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "rgba(255,203,69,0.08)", border: "1px solid rgba(255,203,69,0.3)", borderRadius: 6, padding: "6px 12px" }}>
                           <span style={{ fontSize: 11, color: "#8FB0CC", letterSpacing: 1 }}>LIVE</span>
-                          <span style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: "#FFCB45", letterSpacing: 4 }}>{liveRaceCode}</span>
+                          <span style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: "#FFCB45", letterSpacing: 0.5 }}>{liveRaceCode}</span>
                           <span style={{ fontSize: 10, color: "#8FB0CC" }}>share with spectators</span>
                           <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); localStorage.removeItem("tri-active-live"); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
                             style={{ background: "none", border: "none", color: "#4E6B85", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>&times;</button>
@@ -7864,7 +8126,7 @@
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: done ? "#7DF9C4" : "#00C6FF", lineHeight: 1, minWidth: 24 }}>{i + 1}</div>
-                            {ath.raceNumber != null && <span style={{ background: "rgba(232,121,249,0.12)", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 4, padding: "1px 7px", fontSize: 12, fontFamily: "var(--tm-font-display)", letterSpacing: 1, color: "#e879f9", flexShrink: 0 }}>#{ath.raceNumber}</span>}
+                            {ath.raceNumber != null && <span style={{ background: "rgba(232,121,249,0.12)", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 4, padding: "1px 7px", fontSize: 12, fontFamily: "var(--tm-font-display)", letterSpacing: 1, color: "#7BE0FF", flexShrink: 0 }}>#{ath.raceNumber}</span>}
                             <div>
                               <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                                 <span style={{ fontWeight: 700, fontSize: 14, color: "#EAF4FF" }}>{ath.name}</span>
@@ -8035,7 +8297,7 @@
                   <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, padding: "12px 14px", background: "#0D2240", borderRadius: 8, border: "1px solid rgba(0,198,255,0.15)" }}>
                     <img src={certConfig.customLogoB64 || LOGO_B64} alt="Logo" style={{ height: 44, objectFit: "contain", flexShrink: 0 }} />
                     <div>
-                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 3, color: "#EAF4FF", lineHeight: 1 }}>{certConfig.eventName || "Timeathon Results"}</div>
+                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 0.5, color: "#EAF4FF", lineHeight: 1 }}>{certConfig.eventName || "Timeathon Results"}</div>
                       <div style={{ fontSize: 10, color: "#8FB0CC", letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Swim &middot; Bike &middot; Run</div>
                     </div>
                   </div>
@@ -8072,7 +8334,7 @@
                         <thead>
                           <tr style={{ borderBottom: "2px solid rgba(255,255,255,0.1)" }}>
                             <th style={thStyle("#8FB0CC")}>#</th>
-                            <th style={{ ...thStyle("#e879f9") }}>Bib</th>
+                            <th style={{ ...thStyle("#7BE0FF") }}>Bib</th>
                             <th style={{ ...thStyle("#8FB0CC"), textAlign: "left" }}>Athlete</th>
                             <th style={thStyle("#8FB0CC")}>Gender</th>
                             <th style={thStyle("#00E5CC")}>Age Grp</th>
@@ -8102,9 +8364,9 @@
                             return (
                               <tr key={ath.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: place === 0 && chip !== null ? "rgba(125,249,196,0.04)" : "transparent" }}>
                                 <td style={{ padding: "10px 8px", fontFamily: "var(--tm-font-display)", fontSize: 20, color: placeColor }}>{place + 1}</td>
-                                <td style={{ padding: "10px 6px", textAlign: "center", color: "#e879f9", fontFamily: "var(--tm-font-display)", fontSize: 14, whiteSpace: "nowrap" }}>{ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
+                                <td style={{ padding: "10px 6px", textAlign: "center", color: "#7BE0FF", fontFamily: "var(--tm-font-display)", fontSize: 14, whiteSpace: "nowrap" }}>{ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
                                 <td style={{ padding: "10px 8px", fontWeight: 700, color: "#EAF4FF", whiteSpace: "nowrap" }}>{ath.name}</td>
-                                <td style={{ padding: "10px 6px", textAlign: "center", color: ath.gender === "Female" ? "#f472b6" : "#00E5CC", fontSize: 11, whiteSpace: "nowrap" }}>{ath.gender}</td>
+                                <td style={{ padding: "10px 6px", textAlign: "center", color: ath.gender === "Female" ? "#FF8FB1" : "#00E5CC", fontSize: 11, whiteSpace: "nowrap" }}>{ath.gender}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#00E5CC", fontSize: 11, whiteSpace: "nowrap" }}>{ath.ageGroup}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#00E5CC", fontWeight: 700, whiteSpace: "nowrap" }}>{agp !== null ? agp : "--"}</td>
                                 {courses.length > 1 && <td style={{ padding: "10px 6px", textAlign: "center", color: "#FFCB45", fontSize: 11, whiteSpace: "nowrap" }}>{athleteCourse(ath).name}</td>}
@@ -8169,7 +8431,7 @@
 
             {/* ── PHOTO ALBUM OVERLAY ─────────────────────────────────────────── */}
             {photoAlbum && (
-            <div style={{ position: "fixed", inset: 0, background: "#040f1e", zIndex: 3000, display: "flex", flexDirection: "column" }}>
+            <div style={{ position: "fixed", inset: 0, background: "#05121F", zIndex: 3000, display: "flex", flexDirection: "column" }}>
               {/* Header */}
               <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -8210,7 +8472,7 @@
 
               {/* Upload & Share bar */}
               {!photoAlbum.loading && (
-                <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", padding: "12px 16px", flexShrink: 0, background: "#040f1e" }}>
+                <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", padding: "12px 16px", flexShrink: 0, background: "#05121F" }}>
                   {photoAlbum.uploading ? (
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <div style={{ flex: 1, background: "rgba(0,198,255,0.12)", borderRadius: 4, height: 6, overflow: "hidden" }}>
@@ -8221,7 +8483,7 @@
                   ) : photoAlbum.shareCode ? (
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                       <div style={{ fontSize: 11, color: "#8FB0CC" }}>Share code:</div>
-                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 28, color: "#00C6FF", letterSpacing: 4 }}>{photoAlbum.shareCode}</div>
+                      <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 28, color: "#00C6FF", letterSpacing: 0.5 }}>{photoAlbum.shareCode}</div>
                       <button onClick={() => navigator.clipboard.writeText(photoAlbum.shareCode)} style={{ ...btnStyle("#00C6FF", true), padding: "4px 12px", fontSize: 11 }}>Copy</button>
                       <div style={{ fontSize: 11, color: "#4E6B85" }}>Participants enter this code in the Race Photos section of the app.</div>
                       <button onClick={uploadAndSharePhotos} style={{ ...btnStyle("#8FB0CC", true), padding: "4px 12px", fontSize: 11, marginLeft: "auto" }}>Re-upload</button>
@@ -8263,11 +8525,11 @@
 
             {/* ── PARTICIPANT PHOTO VIEW OVERLAY ──────────────────────────────── */}
             {viewPhotoAlbum && (
-            <div style={{ position: "fixed", inset: 0, background: "#040f1e", zIndex: 3000, display: "flex", flexDirection: "column" }}>
+            <div style={{ position: "fixed", inset: 0, background: "#05121F", zIndex: 3000, display: "flex", flexDirection: "column" }}>
               {/* Header */}
               <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: "#e879f9", letterSpacing: 1 }}>&#128247; {viewPhotoAlbum.raceName || viewPhotoAlbum.code}</div>
+                  <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: "#7BE0FF", letterSpacing: 1 }}>&#128247; {viewPhotoAlbum.raceName || viewPhotoAlbum.code}</div>
                   <div style={{ fontSize: 11, color: "#4E6B85" }}>
                     {viewPhotoAlbum.loading ? "Loading…" : viewPhotoAlbum.error ? "Not found" : `${viewPhotoAlbum.photos.length} photo${viewPhotoAlbum.photos.length !== 1 ? "s" : ""} · Code: ${viewPhotoAlbum.code}`}
                   </div>
@@ -8695,7 +8957,7 @@
                     {swimView === "home" && (
                       <div style={{ padding:"10px 0 20px" }}>
                         <div style={{ textAlign:"center", marginBottom:28 }}>
-                          <div className="tm-clock" style={{ fontSize:52, fontWeight:700, color:"#00E5CC", lineHeight:1 }}>
+                          <div style={{ fontFamily:"var(--tm-font-display)", fontWeight:900, fontSize:44, letterSpacing:-0.5, color:"var(--tm-text)", lineHeight:1 }}>
                             <span style={{ color:"#00E5CC" }}>Swim</span> Meet
                           </div>
                           <div style={{ fontSize:11, letterSpacing:4, textTransform:"uppercase", color:"#8FB0CC", marginTop:6 }}>
@@ -8715,17 +8977,17 @@
                             style={{ background:"linear-gradient(135deg,#0D2240,#113052)", border:"2px solid #00E5CC", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>🏊</div>
                             <div>
-                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:3, color:"#00E5CC" }}>New Meet</div>
+                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:0.5, color:"#00E5CC" }}>New Meet</div>
                               <div style={{ fontSize:12, color:"#8FB0CC", marginTop:2 }}>Set up events, heats, and swimmers</div>
                             </div>
                             <div style={{ marginLeft:"auto", fontSize:22, color:"#00E5CC" }}>→</div>
                           </button>
 
                           <button onClick={() => setSwimHomeSection(swimHomeSection === "meets" ? null : "meets")}
-                            style={{ background:"linear-gradient(135deg,#0D2240,#1a3a1a)", border:"2px solid #FFCB45", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"linear-gradient(135deg,#0D2240,#113052)", border:"2px solid #FFCB45", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>📋</div>
                             <div>
-                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:3, color:"#FFCB45" }}>Existing Meets</div>
+                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:0.5, color:"#FFCB45" }}>Existing Meets</div>
                               <div style={{ fontSize:12, color:"#8FB0CC", marginTop:2 }}>
                                 {swimSavedMeets.length === 0 ? "No saved meets yet" : `${swimSavedMeets.length} saved meet${swimSavedMeets.length !== 1 ? "s" : ""}`}
                               </div>
@@ -8760,10 +9022,10 @@
                           )}
 
                           <button onClick={() => setSwimView("athletes")}
-                            style={{ background:"linear-gradient(135deg,#0D2240,#0a2a1a)", border:"2px solid #7DF9C4", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"linear-gradient(135deg,#0D2240,#0D2240)", border:"2px solid #7DF9C4", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>👥</div>
                             <div>
-                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:3, color:"#7DF9C4" }}>Swim Teams</div>
+                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:0.5, color:"#7DF9C4" }}>Swim Teams</div>
                               <div style={{ fontSize:12, color:"#8FB0CC", marginTop:2 }}>
                                 {swimAthletes.length === 0 ? "Manage swimmers and teams" : `${swimAthletes.length} swimmer${swimAthletes.length !== 1 ? "s" : ""} in library`}
                               </div>
@@ -8772,10 +9034,10 @@
                           </button>
 
                           <button onClick={() => setSwimView("archive")}
-                            style={{ background:"linear-gradient(135deg,#0D2240,#1a0a2e)", border:"2px solid #7DF9C4", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"linear-gradient(135deg,#0D2240,#0D2240)", border:"2px solid #7DF9C4", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>📁</div>
                             <div>
-                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:3, color:"#7DF9C4" }}>Past Meets</div>
+                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:0.5, color:"#7DF9C4" }}>Past Meets</div>
                               <div style={{ fontSize:12, color:"#8FB0CC", marginTop:2 }}>
                                 {swimArchive.length === 0 ? "No past meets yet" : `${swimArchive.length} meet${swimArchive.length !== 1 ? "s" : ""} archived`}
                               </div>
@@ -8784,13 +9046,13 @@
                           </button>
 
                           <button onClick={() => setView("swimwatch")}
-                            style={{ background:"linear-gradient(135deg,#0D2240,#1a1a3a)", border:"2px solid #a78bfa", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"linear-gradient(135deg,#0D2240,#0D2240)", border:"2px solid #5AA9FF", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>👀</div>
                             <div>
-                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:3, color:"#a78bfa" }}>Watch a Meet</div>
+                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:0.5, color:"#5AA9FF" }}>Watch a Meet</div>
                               <div style={{ fontSize:12, color:"#8FB0CC", marginTop:2 }}>Join a live meet as a viewer</div>
                             </div>
-                            <div style={{ marginLeft:"auto", fontSize:22, color:"#a78bfa" }}>→</div>
+                            <div style={{ marginLeft:"auto", fontSize:22, color:"#5AA9FF" }}>→</div>
                           </button>
 
                         </div>
@@ -9680,7 +9942,7 @@
                                             const label = `${parts[0]}y ${parts[1]} (${parts[2]})`;
                                             return (
                                               <div key={key} style={{ display:"flex", gap:8, fontSize:12, padding:"3px 0", borderBottom:"1px solid rgba(0,198,255,0.04)" }}>
-                                                <span style={{ flex:1, color:"#b0c8dc" }}>{label}</span>
+                                                <span style={{ flex:1, color:"#C7D4E0" }}>{label}</span>
                                                 <span style={{ color:"#7DF9C4", fontWeight:700 }}>{pb.time}</span>
                                                 <span style={{ color:"#4E6B85", fontSize:11 }}>{pb.meetName}</span>
                                                 <span style={{ color:"#4E6B85", fontSize:11 }}>{pb.date}</span>
@@ -9966,8 +10228,8 @@
                           borderRadius:16, marginBottom:16, userSelect:"none", WebkitUserSelect:"none",
                           cursor: status === "racing" && !swimLaneFinished ? "pointer" : "default",
                           background: swimLaneFinished ? "rgba(0,198,255,0.08)" : status === "racing" ? "rgba(239,68,68,0.18)" : "rgba(143,176,204,0.08)",
-                          border: `3px solid ${swimLaneFinished ? "#00C6FF" : status === "racing" ? "#ef4444" : "rgba(143,176,204,0.2)"}`,
-                          color: swimLaneFinished ? "#00C6FF" : status === "racing" ? "#fca5a5" : "#4E6B85",
+                          border: `3px solid ${swimLaneFinished ? "#00C6FF" : status === "racing" ? "#FF5C7A" : "rgba(143,176,204,0.2)"}`,
+                          color: swimLaneFinished ? "#00C6FF" : status === "racing" ? "#FF8FB1" : "#4E6B85",
                           boxShadow: status === "racing" && !swimLaneFinished ? "0 0 32px rgba(239,68,68,0.25)" : "none",
                           transition:"all 0.15s"
                         }}>
@@ -10293,7 +10555,7 @@
                             <button onClick={() => {
                               navigator.clipboard?.writeText(shareLink(f.code));
                               alert("Follow link copied:\n" + shareLink(f.code));
-                            }} style={{ ...btnStyle("#a78bfa", true), padding:"6px 12px", fontSize:12 }}>🔗 Copy link</button>
+                            }} style={{ ...btnStyle("#5AA9FF", true), padding:"6px 12px", fontSize:12 }}>🔗 Copy link</button>
                             <button onClick={() => {
                               if (!confirm(`Delete the "${f.eventName || f.code}" event? Viewers with the link will no longer see it. The rider's profile is kept.`)) return;
                               persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code));
@@ -10499,7 +10761,7 @@
                               style={{ flexShrink:0, padding:"7px 13px", fontSize:12, fontWeight:700, borderRadius:6, cursor:"pointer",
                                 background: bikeDraft.multiDay ? "rgba(244,114,182,0.18)" : "transparent",
                                 border: bikeDraft.multiDay ? "1px solid rgba(244,114,182,0.7)" : "1px solid rgba(255,255,255,0.12)",
-                                color: bikeDraft.multiDay ? "#f472b6" : "#8FB0CC" }}>
+                                color: bikeDraft.multiDay ? "#FF8FB1" : "#8FB0CC" }}>
                               {bikeDraft.multiDay ? "● On" : "Off"}
                             </button>
                           </div>
@@ -10684,7 +10946,7 @@
                               const c = [...d.checkpoints]; c[i] = { ...c[i], note: e.target.value }; return { ...d, checkpoints: c };
                             })} placeholder="Note (optional)" style={{ ...S.input, marginTop:6, fontSize:12 }} />
                             <div style={{ ...S.row, gap:6, marginTop:6, flexWrap:"wrap" }}>
-                              {[["checkpoint","📍 Checkpoint","#FFCB45"],["stop","🛏 Overnight stop","#f472b6"],["goal","🏁 Goal","#7DF9C4"]].map(([k, label, col]) => (
+                              {[["checkpoint","📍 Checkpoint","#FFCB45"],["stop","🛏 Overnight stop","#FF8FB1"],["goal","🏁 Goal","#7DF9C4"]].map(([k, label, col]) => (
                                 <button key={k} onClick={() => setBikeDraft(d => {
                                   const c = [...d.checkpoints]; c[i] = { ...c[i], kind: k }; return { ...d, checkpoints: c };
                                 })} style={{ padding:"4px 9px", fontSize:10, fontWeight:700, borderRadius:5, cursor:"pointer",
@@ -10851,7 +11113,7 @@
                           testing and fine for a steady ride; use a strap when the number matters.
                         </div>
                         <button onClick={() => scanBluetooth(true)} disabled={!btSupported || btScanning}
-                          style={{ ...btnStyle("#a78bfa", true), padding:"5px 11px", fontSize:11, marginTop:8,
+                          style={{ ...btnStyle("#5AA9FF", true), padding:"5px 11px", fontSize:11, marginTop:8,
                                    opacity: btSupported ? 1 : 0.5, cursor: btSupported ? "pointer" : "not-allowed" }}>
                           Can't see it? Show all nearby devices
                         </button>
@@ -10895,12 +11157,12 @@
                               cursor: bikeRiding ? "not-allowed" : "pointer", opacity: bikeRiding ? 0.5 : 1,
                               background: bikeSimulate ? "rgba(167,139,250,0.2)" : "transparent",
                               border: bikeSimulate ? "1px solid rgba(167,139,250,0.7)" : "1px solid rgba(255,255,255,0.12)",
-                              color: bikeSimulate ? "#a78bfa" : "#8FB0CC" }}>
+                              color: bikeSimulate ? "#5AA9FF" : "#8FB0CC" }}>
                             {bikeSimulate ? "● On" : "Off"}
                           </button>
                         </div>
                         {bikeSimulate && (
-                          <div style={{ fontSize:11, color:"#a78bfa", marginTop:8 }}>
+                          <div style={{ fontSize:11, color:"#5AA9FF", marginTop:8 }}>
                             Viewers will see a "simulated" badge, so a test ride can't be mistaken for a real one.
                           </div>
                         )}
@@ -10912,8 +11174,8 @@
                           {metricTile("Distance", fmtDist(bikeLive?.dst), "#FFCB45")}
                           {metricTile("Speed", fmtSpeed(bikeLive?.spd), "#00E5CC")}
                           {metricTile("Power", bikeLive?.pwr != null ? bikeLive.pwr + " W" : "—", "#7DF9C4")}
-                          {metricTile("Cadence", bikeLive?.cad != null ? bikeLive.cad + " rpm" : "—", "#a78bfa")}
-                          {metricTile("Heart", bikeLive?.hr != null ? bikeLive.hr + " bpm" : "—", "#f472b6")}
+                          {metricTile("Cadence", bikeLive?.cad != null ? bikeLive.cad + " rpm" : "—", "#5AA9FF")}
+                          {metricTile("Heart", bikeLive?.hr != null ? bikeLive.hr + " bpm" : "—", "#FF8FB1")}
                         </div>
                         <div style={{ fontSize:11, color: bikeRiding ? "#7DF9C4" : "#8FB0CC", marginTop:10, textAlign:"center" }}>
                           {bikeGpsStatus || "Not tracking."}
@@ -10950,7 +11212,7 @@
                         }
                         return (
                           <div style={{ ...S.card, borderColor: tone + "66", background: tone + "12" }}>
-                            <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:2, color: tone, lineHeight:1.1 }}>
+                            <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:0.5, color: tone, lineHeight:1.1 }}>
                               {title}
                             </div>
                             <div style={{ fontSize:12, color:"#C7D4E0", marginTop:5, lineHeight:1.5 }}>{detail}</div>
@@ -11010,7 +11272,7 @@
                                 style={{ ...btnStyle("#7DF9C4"), fontSize:16, padding:"14px 28px" }}>▶ Start Ride</button>
                               {multi && (
                                 <button onClick={() => begin(true)}
-                                  style={{ ...btnStyle("#f472b6"), fontSize:16, padding:"14px 28px" }}>⏭ Resume Tour</button>
+                                  style={{ ...btnStyle("#FF8FB1"), fontSize:16, padding:"14px 28px" }}>⏭ Resume Tour</button>
                               )}
                             </div>
                           );
@@ -11018,7 +11280,7 @@
                             <div style={{ ...S.row, gap:8, flexWrap:"wrap", justifyContent:"center" }}>
                               {multi && (
                                 <button onClick={() => { if (confirm("Pause for the day? Distance and time are kept, and the trail stays on the map.")) stopBikeRide(false); }}
-                                  style={{ ...btnStyle("#f472b6"), fontSize:16, padding:"14px 24px" }}>⏸ Pause for Day</button>
+                                  style={{ ...btnStyle("#FF8FB1"), fontSize:16, padding:"14px 24px" }}>⏸ Pause for Day</button>
                               )}
                               <button onClick={() => { if (confirm(multi ? "Finish the whole tour? This ends the feed for good." : "End the live feed for this ride?")) stopBikeRide(true); }}
                                 style={{ ...btnStyle("#FF5C7A"), fontSize:16, padding:"14px 24px" }}>■ {multi ? "Finish Tour" : "End Ride"}</button>
@@ -11068,7 +11330,7 @@
                                      style={{ width:64, height:64, borderRadius:"50%", objectFit:"cover", border:"2px solid #FFCB45", flexShrink:0 }} />
                               : <div style={{ width:64, height:64, borderRadius:"50%", background:"#0A1628", border:"2px solid rgba(255,203,69,0.4)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>🚴</div>}
                             <div style={{ minWidth:0, flex:1 }}>
-                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:2, color:"#EAF4FF", lineHeight:1.1 }}>
+                              <div style={{ fontFamily:"var(--tm-font-display)", fontSize:26, letterSpacing:0.5, color:"#EAF4FF", lineHeight:1.1 }}>
                                 {bikeWatchMeta?.riderName || "Rider"}
                               </div>
                               <div style={{ fontSize:12, color:"#FFCB45" }}>
@@ -11076,7 +11338,7 @@
                               </div>
                               <div style={{ ...S.row, gap:8, marginTop:5 }}>
                                 <span style={{ fontSize:10, letterSpacing:1, textTransform:"uppercase", fontWeight:700,
-                                  color: bikeWatchStatus === "live" ? "#7DF9C4" : bikeWatchStatus === "paused" ? "#f472b6" : "#8FB0CC" }}>
+                                  color: bikeWatchStatus === "live" ? "#7DF9C4" : bikeWatchStatus === "paused" ? "#FF8FB1" : "#8FB0CC" }}>
                                   {bikeWatchStatus === "live" ? "● Live"
                                     : bikeWatchStatus === "paused" ? "⏸ Resting"
                                     : bikeWatchStatus === "finished" ? "Finished" : "Not started"}
@@ -11084,7 +11346,7 @@
                                 <span style={{ fontSize:10, color:"#8FB0CC" }}>{bikeWatchLive ? "updated " + ago(bikeWatchLive.t) : ""}</span>
                                 {bikeWatchLive?.sim && (
                                   <span style={{ fontSize:9, letterSpacing:1, textTransform:"uppercase", fontWeight:700,
-                                    color:"#a78bfa", border:"1px solid rgba(167,139,250,0.6)", borderRadius:4, padding:"1px 5px" }}>
+                                    color:"#5AA9FF", border:"1px solid rgba(167,139,250,0.6)", borderRadius:4, padding:"1px 5px" }}>
                                     Simulated
                                   </span>
                                 )}
@@ -11143,7 +11405,7 @@
                           {bikeWatchMeta?.multiDay && (bikeWatchProgress?.day || bikeWatchLive?.day) && (
                             <div style={{ ...S.card, ...S.row, justifyContent:"space-between" }}>
                               <div style={{ ...S.label, marginBottom:0 }}>Multi-day tour</div>
-                              <div style={{ fontSize:13, fontWeight:700, color:"#f472b6" }}>
+                              <div style={{ fontSize:13, fontWeight:700, color:"#FF8FB1" }}>
                                 Day {bikeWatchLive?.day || bikeWatchProgress?.day || 1}
                                 {bikeWatchStatus === "paused" ? " · resting" : ""}
                               </div>
@@ -11155,8 +11417,8 @@
                             {metricTile("Distance", fmtDist(bikeWatchLive?.dst), "#FFCB45")}
                             {metricTile("Speed", fmtSpeed(bikeWatchLive?.spd), "#00E5CC")}
                             {metricTile("Power", bikeWatchLive?.pwr != null ? bikeWatchLive.pwr + " W" : "—", "#7DF9C4")}
-                            {metricTile("Cadence", bikeWatchLive?.cad != null ? bikeWatchLive.cad + " rpm" : "—", "#a78bfa")}
-                            {metricTile("Heart", bikeWatchLive?.hr != null ? bikeWatchLive.hr + " bpm" : "—", "#f472b6")}
+                            {metricTile("Cadence", bikeWatchLive?.cad != null ? bikeWatchLive.cad + " rpm" : "—", "#5AA9FF")}
+                            {metricTile("Heart", bikeWatchLive?.hr != null ? bikeWatchLive.hr + " bpm" : "—", "#FF8FB1")}
                             {metricTile("Elapsed", fmtRideClock(bikeWatchLive?.el), "#EAF4FF")}
                           </div>
 
@@ -11194,6 +11456,22 @@
                                     color: bikeWatchOrient === k ? "#0A1628" : "#C7D4E0" }}>{label}</button>
                               ))}
                             </div>
+                            {/* Speed legend — the coloured trail is meaningless without one */}
+                            <div onClick={() => setBikeTrailSpeed(v => { try { localStorage.setItem("bike-trail-speed", v ? "0" : "1"); } catch(_) {} return !v; })}
+                              title={bikeTrailSpeed ? "Trail coloured by speed — tap for a plain trail" : "Tap to colour the trail by speed"}
+                              style={{ position:"absolute", left:10, top:10, zIndex:500, cursor:"pointer",
+                                background:"rgba(10,22,40,0.88)", padding:"6px 9px", borderRadius:7,
+                                border:"1px solid rgba(255,255,255,0.14)", opacity: bikeTrailSpeed ? 1 : 0.5 }}>
+                              <div style={{ fontSize:9, letterSpacing:1.5, textTransform:"uppercase", color:"#8FB0CC", fontWeight:700, marginBottom:4 }}>
+                                {bikeTrailSpeed ? "Speed" : "Speed off"}
+                              </div>
+                              <div style={{ display:"flex", height:7, width:112, borderRadius:4, overflow:"hidden" }}>
+                                {BIKE_SPEED_STOPS.map(([kmh, col]) => <div key={kmh} style={{ flex:1, background:col }} />)}
+                              </div>
+                              <div style={{ display:"flex", justifyContent:"space-between", fontSize:8, color:"#4E6B85", marginTop:2 }}>
+                                <span>slow</span><span>{useKm ? "50+ km/h" : "32+ mph"}</span>
+                              </div>
+                            </div>
                           </div>
 
                           {!bikeWatchLive && !bikeWatchError && (
@@ -11224,12 +11502,12 @@
                               <div style={S.label}>Checkpoints</div>
                               {bikeWatchMeta.checkpoints.map((cp, i) => {
                                 const icon = cp.kind === "stop" ? "🛏" : cp.kind === "goal" ? "🏁" : "📍";
-                                const col  = cp.kind === "stop" ? "#f472b6" : cp.kind === "goal" ? "#7DF9C4" : "#FFCB45";
+                                const col  = cp.kind === "stop" ? "#FF8FB1" : cp.kind === "goal" ? "#7DF9C4" : "#FFCB45";
                                 return (
                                   <div key={i} style={{ ...S.row, justifyContent:"space-between", gap:8, padding:"5px 0", borderTop: i ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
                                     <span style={{ fontSize:12, color:"#EAF4FF", minWidth:0 }}>
                                       <span style={{ color: col }}>{icon}</span>{" "}
-                                      {cp.day ? <span style={{ fontSize:10, color:"#f472b6", fontWeight:700 }}>DAY {cp.day} · </span> : null}
+                                      {cp.day ? <span style={{ fontSize:10, color:"#FF8FB1", fontWeight:700 }}>DAY {cp.day} · </span> : null}
                                       {cp.name || `Checkpoint ${i+1}`}
                                     </span>
                                     <span style={{ fontSize:11, color:"#8FB0CC" }}>{cp.note || ""}</span>
