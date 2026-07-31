@@ -4,14 +4,26 @@
   "description": "Race timing and results — swim, bike, run",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#071829",
-  "theme_color": "#071829",
+  "background_color": "#0A1628",
+  "theme_color": "#0A1628",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><circle cx='256' cy='256' r='256' fill='%23071829'/><text x='256' y='330' text-anchor='middle' font-family='Arial Black,sans-serif' font-size='220' fill='%2300aeef'>T</text></svg>",
+      "src": "timeathon-brand/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "timeathon-brand/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "timeathon-brand/icons/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     }
   ]
 }

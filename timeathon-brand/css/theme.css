@@ -1,0 +1,84 @@
+/* ============================================================
+   TIMEATHON — App Theme
+   Triathlon Timer · Swim Meet Timer · Bike Route Timer
+   ============================================================ */
+
+:root {
+  /* Core palette */
+  --tm-bg:            #0A1628;  /* deep navy base (app background) */
+  --tm-bg-raised:     #0D2240;  /* cards, panels, raised surfaces */
+  --tm-bg-elev:       #113052;  /* modals, active rows */
+
+  /* Accent gradient (use for the mark, primary buttons, active states) */
+  --tm-accent-1:      #00C6FF;  /* cyan */
+  --tm-accent-2:      #00E5CC;  /* teal */
+  --tm-accent-grad:   linear-gradient(90deg, #00C6FF 0%, #00E5CC 100%);
+
+  /* Discipline coding (for the 3 tri legs / mode chips) */
+  --tm-swim:          #00C6FF;  /* swim   */
+  --tm-bike:          #00E5CC;  /* bike   */
+  --tm-run:           #7DF9C4;  /* run    */
+
+  /* Text */
+  --tm-text:          #EAF4FF;  /* primary text */
+  --tm-text-dim:      #8FB0CC;  /* secondary/labels */
+  --tm-text-faint:    #4E6B85;  /* captions, disabled */
+
+  /* Feedback */
+  --tm-live:          #00E5CC;  /* running timer / live */
+  --tm-warn:          #FFB020;  /* paused / caution */
+  --tm-danger:        #FF5C7A;  /* stop / DQ / reset */
+
+  /* Placement medals (results) */
+  --tm-gold:          #FFCB45;
+  --tm-silver:        #C7D4E0;
+  --tm-bronze:        #D98A4B;
+
+  /* Structure */
+  --tm-line:          rgba(0,229,204,0.14);  /* hairline dividers / lane lines */
+  --tm-radius:        16px;
+  --tm-radius-sm:     10px;
+  --tm-shadow:        0 8px 30px rgba(0,0,0,0.35);
+  --tm-glow:          0 0 18px rgba(0,198,255,0.35);
+
+  /* Type */
+  --tm-font-display:  'Archivo', 'Arial Black', 'Franklin Gothic Heavy', Impact, sans-serif;
+  --tm-font-body:     'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --tm-font-mono:     'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace; /* the big clock */
+}
+
+/* ---- Base ---- */
+body {
+  background: var(--tm-bg);
+  color: var(--tm-text);
+  font-family: var(--tm-font-body);
+}
+
+/* ---- The running clock (make it the hero) ---- */
+.tm-clock {
+  font-family: var(--tm-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -1px;
+  color: var(--tm-live);
+  text-shadow: var(--tm-glow);
+}
+
+/* ---- Primary button ---- */
+.tm-btn-primary {
+  background: var(--tm-accent-grad);
+  color: #05121F;
+  font-weight: 800;
+  border: none;
+  border-radius: var(--tm-radius-sm);
+  padding: 14px 22px;
+}
+.tm-btn-primary:active { filter: brightness(0.92); }
+
+/* ---- Mode chips (Triathlon / Swim Meet / Bike Route) ---- */
+.tm-chip            { border: 1px solid var(--tm-line); color: var(--tm-text-dim); border-radius: 999px; }
+.tm-chip[data-active] { background: var(--tm-accent-grad); color: #05121F; border-color: transparent; }
+
+/* ---- Lane-line divider (signature motif) ---- */
+.tm-lane { height: 1px; background: repeating-linear-gradient(90deg,
+           var(--tm-line) 0 18px, transparent 18px 30px); }

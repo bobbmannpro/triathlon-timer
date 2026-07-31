@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timeathon — Brand Preview</title>
+
+<!-- favicons + theme -->
+<link rel="icon" href="icons/favicon.ico" sizes="any">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="icons/site.webmanifest">
+<meta name="theme-color" content="#0A1628">
+<link rel="stylesheet" href="css/theme.css">
+
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px 20px 80px; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1.eyebrow { font-family: var(--tm-font-body); font-size: 12px; letter-spacing: 3px;
+               color: var(--tm-text-dim); text-transform: uppercase; font-weight: 600; margin: 0 0 24px; }
+  section { background: var(--tm-bg-raised); border: 1px solid var(--tm-line);
+            border-radius: var(--tm-radius); padding: 24px; margin-bottom: 20px; box-shadow: var(--tm-shadow); }
+  .label { font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+           color: var(--tm-text-faint); margin-bottom: 14px; }
+  img.logo { width: 100%; max-width: 460px; display: block; }
+  .icons-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .icons-row img { border-radius: 12px; }
+  .clock { font-size: 64px; text-align: center; margin: 6px 0 20px; }
+  .controls { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .chips { display: flex; gap: 10px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
+  .tm-chip { padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; background: none; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px,1fr)); gap: 10px; }
+  .sw { border-radius: var(--tm-radius-sm); padding: 10px; font-size: 10px; font-weight: 700;
+        color: #05121F; height: 64px; display: flex; align-items: flex-end; }
+  .sw.dark { color: var(--tm-text); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="eyebrow">Timeathon · Brand Preview</h1>
+
+  <section>
+    <div class="label">Primary Logo</div>
+    <img class="logo" src="assets/logo-primary.svg" alt="Timeathon logo">
+  </section>
+
+  <section>
+    <div class="label">Icons</div>
+    <div class="icons-row">
+      <img src="icons/icon-192.png" width="88" height="88" alt="app icon">
+      <img src="icons/apple-touch-icon.png" width="60" height="60" alt="touch icon">
+      <img src="icons/favicon-32.png" width="32" height="32" alt="favicon 32">
+      <img src="icons/favicon-16.png" width="16" height="16" alt="favicon 16">
+    </div>
+  </section>
+
+  <section>
+    <div class="label">Live Clock + Controls (theme in use)</div>
+    <div class="chips">
+      <button class="tm-chip" data-active>Triathlon</button>
+      <button class="tm-chip">Swim Meet</button>
+      <button class="tm-chip">Bike Route</button>
+    </div>
+    <div class="tm-clock clock" id="clk">00:00.0</div>
+    <div class="controls">
+      <button class="tm-btn-primary" id="startBtn">Start</button>
+      <button class="tm-btn-primary" id="splitBtn" style="background:var(--tm-bg-elev);color:var(--tm-text);">Split</button>
+      <button class="tm-btn-primary" id="resetBtn" style="background:none;border:1px solid var(--tm-danger);color:var(--tm-danger);">Reset</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="label">Palette</div>
+    <div class="swatches">
+      <div class="sw" style="background:var(--tm-accent-1)">CYAN<br>#00C6FF</div>
+      <div class="sw" style="background:var(--tm-accent-2)">TEAL<br>#00E5CC</div>
+      <div class="sw" style="background:var(--tm-run)">RUN<br>#7DF9C4</div>
+      <div class="sw dark" style="background:var(--tm-bg)">NAVY<br>#0A1628</div>
+      <div class="sw dark" style="background:var(--tm-bg-raised)">RAISED<br>#0D2240</div>
+      <div class="sw" style="background:var(--tm-gold)">GOLD<br>#FFCB45</div>
+    </div>
+  </section>
+</div>
+
+<script>
+  // tiny demo timer so the theme's clock style is visible in motion
+  let t0=null, raf=null;
+  const clk=document.getElementById('clk');
+  function fmt(ms){const m=Math.floor(ms/60000),s=Math.floor(ms%60000/1000),d=Math.floor(ms%1000/100);
+    return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+d;}
+  function tick(){clk.textContent=fmt(performance.now()-t0);raf=requestAnimationFrame(tick);}
+  document.getElementById('startBtn').onclick=()=>{if(raf)return;t0=performance.now();tick();};
+  document.getElementById('resetBtn').onclick=()=>{cancelAnimationFrame(raf);raf=null;clk.textContent='00:00.0';};
+  document.querySelectorAll('.tm-chip').forEach(c=>c.onclick=()=>{
+    document.querySelectorAll('.tm-chip').forEach(x=>x.removeAttribute('data-active'));
+    c.setAttribute('data-active','');});
+</script>
+</body>
+</html>

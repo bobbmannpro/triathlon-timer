@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 180" width="620" height="180">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A1628"/>
+      <stop offset="100%" stop-color="#0D2240"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00C6FF"/>
+      <stop offset="100%" stop-color="#00E5CC"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="70%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#00E5CC"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="620" height="180" rx="20" fill="url(#bg)"/>
+
+  <!-- MARK: three split-lines converging into a forward chevron / "T" post -->
+  <g transform="translate(56,90)" filter="url(#glow)">
+    <!-- three converging discipline lines (swim / bike / run) -->
+    <path d="M-28 -34 L6 0" fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
+    <path d="M-28 0 L6 0"   fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
+    <path d="M-28 34 L6 0"  fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round"/>
+    <!-- forward motion post (the "finish" tick) -->
+    <path d="M6 0 L40 0" fill="none" stroke="url(#accent)" stroke-width="9" stroke-linecap="round"/>
+    <!-- split node -->
+    <circle cx="6" cy="0" r="7.5" fill="#0A1628" stroke="url(#accent)" stroke-width="4"/>
+  </g>
+
+  <!-- WORDMARK -->
+  <text x="128" y="112"
+        font-family="'Arial Black','Franklin Gothic Heavy',Impact,sans-serif"
+        font-size="62" font-weight="900" letter-spacing="-2.5"
+        fill="url(#word)">TIMEATHON</text>
+
+  <!-- accent underline -->
+  <rect x="130" y="122" width="428" height="4.5" rx="2.5" fill="url(#accent)" opacity="0.9"/>
+
+  <!-- tagline -->
+  <text x="131" y="146"
+        font-family="Arial,Helvetica,sans-serif"
+        font-size="12" font-weight="400" letter-spacing="3.5"
+        fill="#00E5CC" opacity="0.7">TRIATHLON TIMER · SWIM MEET TIMER</text>
+</svg>
