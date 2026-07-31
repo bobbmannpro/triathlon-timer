@@ -372,6 +372,36 @@
         return Math.min(need, 2.5);
       }
 
+      // Distinct, brand-adjacent hues so several riders stay tellable apart at a
+      // glance, and so each one's trail reads as theirs.
+      const BIKE_RIDER_COLORS = ["#00C6FF", "#FFCB45", "#7DF9C4", "#FF8FB1", "#5AA9FF", "#FF9A3C", "#7BE0FF", "#C7D4E0"];
+
+      // A rider's own photo is the marker — the quickest way to tell who's who on
+      // a map with several dots. Falls back to initials when there's no picture.
+      function bikeRiderIcon({ photo, name, color, place, size = 44, dim = false }) {
+        const initials = (name || "?").split(/\s+/).slice(0, 2).map(w => w[0] || "").join("").toUpperCase();
+        const inner = photo
+          ? `<img src="${photo}" alt="" style="width:100%;height:100%;object-fit:cover;display:block"
+                 onerror="this.style.display='none';this.parentNode.classList.add('tm-noimg')"/>`
+          : "";
+        return L.divIcon({
+          className: "tm-rider-marker",
+          iconSize: [size, size], iconAnchor: [size / 2, size / 2],
+          html:
+            `<div style="position:relative;width:${size}px;height:${size}px;opacity:${dim ? 0.55 : 1}">
+               <div class="tm-avatar" style="width:100%;height:100%;border-radius:50%;overflow:hidden;
+                    border:3px solid ${color};background:#0D2240;box-shadow:0 2px 10px rgba(0,0,0,0.75);
+                    display:flex;align-items:center;justify-content:center;
+                    font:800 ${Math.round(size * 0.34)}px/1 Inter,Arial,sans-serif;color:${color}">
+                 ${inner}<span style="position:absolute">${photo ? "" : initials}</span>
+               </div>
+               ${place ? `<div style="position:absolute;right:-3px;bottom:-3px;min-width:18px;height:18px;
+                    border-radius:9px;background:${color};color:#05121F;font:800 11px/18px Inter,Arial,sans-serif;
+                    text-align:center;padding:0 4px;border:2px solid #0A1628">${place}</div>` : ""}
+             </div>`,
+        });
+      }
+
       // ── Speed-coloured trail ─────────────────────────────────────────────────
       // Cycling convention: cool = slow, warm = fast. Blue through teal, green,
       // gold, orange, red. Cyclists read a red segment as "flat out", which also
@@ -1613,11 +1643,20 @@
         const [bikeWatchCode, setBikeWatchCode] = useState(() => {
           try { return localStorage.getItem("bike-watch-code") || ""; } catch(_) { return ""; }
         });
-        const [bikeWatchMeta, setBikeWatchMeta] = useState(null);
-        const [bikeWatchLive, setBikeWatchLive] = useState(null);
-        const [bikeWatchTrack, setBikeWatchTrack] = useState([]);
-        const [bikeWatchStatus, setBikeWatchStatus] = useState(null);
-        const [bikeWatchProgress, setBikeWatchProgress] = useState(null); // multi-day totals
+        // Followers can watch several riders at once. Each code's data lives in the
+        // fleet; the single-rider panels below read whichever code is focused, so
+        // they keep working unchanged.
+        const [bikeWatchCodes, setBikeWatchCodes] = useState(() => {
+          try {
+            const v = JSON.parse(localStorage.getItem("bike-watch-codes") || "[]");
+            return Array.isArray(v) ? v.filter(c => typeof c === "string") : [];
+          } catch(_) { return []; }
+        });
+        const [bikeFleet, setBikeFleet] = useState({});   // code -> { meta, live, track, status, progress }
+        const [bikeFullscreen, setBikeFullscreen] = useState(false);
+        const [bikeAddOpen, setBikeAddOpen] = useState(false);
+        const [bikeAddCode, setBikeAddCode] = useState("");
+        const bikeLayersRef = useRef({});                 // code -> leaflet layers
         const [bikeRouteProg, setBikeRouteProg] = useState(null);         // position along route
         const [bikeWatchError, setBikeWatchError]   = useState("");
         const [bikeFollowing, setBikeFollowing]     = useState(true);
@@ -4731,48 +4770,105 @@
           setBikeGpsStatus(finish ? "Ride finished." : "Paused for the day — resume when you set off again.");
         }
 
-        // ── Viewer subscription ─────────────────────────────────────────────────
+        // ── Viewer subscription (one per followed rider) ────────────────────────
         useEffect(() => {
-          const code = (bikeWatchCode || "").trim().toUpperCase();
-          if (appMode !== "bike" || bikeView !== "feed" || code.length < 4) return;
+          if (appMode !== "bike" || bikeView !== "feed") return;
+          const codes = bikeWatchCodes.map(c => (c || "").trim().toUpperCase()).filter(c => c.length >= 4);
+          if (!codes.length) return;
           setBikeWatchError("");
-          setBikeWatchTrack([]);
-          const metaRef  = rtdb.ref(`bikeFeeds/${code}/meta`);
-          const liveRef  = rtdb.ref(`bikeFeeds/${code}/live`);
-          const statRef  = rtdb.ref(`bikeFeeds/${code}/status`);
-          const trackRef = rtdb.ref(`bikeFeeds/${code}/track`);
-          const startRef = rtdb.ref(`bikeFeeds/${code}/startedAt`);
-          const mFn = metaRef.on("value", s => {
-            if (s.exists()) setBikeWatchMeta(s.val());
-            else setBikeWatchError(`No live feed found for code ${code}.`);
-          }, e => setBikeWatchError(e.message));
-          const lFn = liveRef.on("value", s => { if (s.exists()) setBikeWatchLive(s.val()); });
-          const sFn = statRef.on("value", s => setBikeWatchStatus(s.val()));
-          const progRef = rtdb.ref(`bikeFeeds/${code}/progress`);
-          const pFn = progRef.on("value", s => setBikeWatchProgress(s.exists() ? s.val() : null));
-          // Load the trail incrementally: child_added replays existing crumbs once,
-          // then streams new ones — far cheaper than re-reading a growing array.
-          const tFn = trackRef.on("child_added", s => {
-            const v = s.val();
-            if (Array.isArray(v) && v.length >= 2) setBikeWatchTrack(p => [...p, v]);
+          const offs = [];
+          codes.forEach(code => {
+            const patch = (fn) => setBikeFleet(f => ({ ...f, [code]: fn(f[code] || { code, track: [] }) }));
+            const metaRef  = rtdb.ref(`bikeFeeds/${code}/meta`);
+            const liveRef  = rtdb.ref(`bikeFeeds/${code}/live`);
+            const statRef  = rtdb.ref(`bikeFeeds/${code}/status`);
+            const progRef  = rtdb.ref(`bikeFeeds/${code}/progress`);
+            const trackRef = rtdb.ref(`bikeFeeds/${code}/track`);
+            const startRef = rtdb.ref(`bikeFeeds/${code}/startedAt`);
+            const mFn = metaRef.on("value", s2 => {
+              if (s2.exists()) patch(d => ({ ...d, meta: s2.val() }));
+              else setBikeWatchError(`No live feed found for code ${code}.`);
+            }, e => setBikeWatchError(e.message));
+            const lFn = liveRef.on("value", s2 => { if (s2.exists()) patch(d => ({ ...d, live: s2.val() })); });
+            const sFn = statRef.on("value", s2 => patch(d => ({ ...d, status: s2.val() })));
+            const pFn = progRef.on("value", s2 => patch(d => ({ ...d, progress: s2.exists() ? s2.val() : null })));
+            // child_added replays existing crumbs once then streams new ones — far
+            // cheaper than re-reading a growing array every update.
+            const tFn = trackRef.on("child_added", s2 => {
+              const v = s2.val();
+              if (Array.isArray(v) && v.length >= 2) patch(d => ({ ...d, track: [...(d.track || []), v] }));
+            });
+            // A fresh ride wipes the crumbs server-side; drop our copy to match.
+            let firstStart = true;
+            const stFn = startRef.on("value", () => {
+              if (firstStart) { firstStart = false; return; }
+              patch(d => ({ ...d, track: [] }));
+              const L2 = bikeLayersRef.current[code];
+              if (L2 && bikeMapRef.current) {
+                (L2.trailSegs || []).forEach(l => { try { bikeMapRef.current.removeLayer(l); } catch(_) {} });
+                L2.trailSegs = [];
+                if (L2.trail) { try { bikeMapRef.current.removeLayer(L2.trail); } catch(_) {} L2.trail = null; }
+              }
+            });
+            offs.push(() => {
+              metaRef.off("value", mFn); liveRef.off("value", lFn);
+              statRef.off("value", sFn); progRef.off("value", pFn);
+              trackRef.off("child_added", tFn); startRef.off("value", stFn);
+            });
           });
-          // If the rider starts a fresh ride mid-watch, the old breadcrumbs are gone
-          // server-side — drop our local copy so we don't draw last ride's line.
-          let firstStart = true;
-          const stFn = startRef.on("value", () => {
-            if (firstStart) { firstStart = false; return; }
-            setBikeWatchTrack([]);
-            if (bikeTrailLineRef.current && bikeMapRef.current) {
-              try { bikeMapRef.current.removeLayer(bikeTrailLineRef.current); } catch(_) {}
-              bikeTrailLineRef.current = null;
+          return () => offs.forEach(f => f());
+        }, [appMode, bikeView, bikeWatchCodes]);
+
+        // Keep the followed list persisted, and keep focus pointing at a real rider.
+        useEffect(() => {
+          try { localStorage.setItem("bike-watch-codes", JSON.stringify(bikeWatchCodes)); } catch(_) {}
+          if (bikeWatchCodes.length && !bikeWatchCodes.includes(bikeWatchCode)) setBikeWatchCode(bikeWatchCodes[0]);
+        }, [bikeWatchCodes]);
+
+        // Typing a code into the single-rider box follows it.
+        useEffect(() => {
+          const c = (bikeWatchCode || "").trim().toUpperCase();
+          if (c.length >= 4 && !bikeWatchCodes.includes(c)) setBikeWatchCodes(l => [...l, c]);
+        }, [bikeWatchCode]);
+
+        // The focused rider drives every single-rider panel below, unchanged.
+        const bikeFocus        = bikeFleet[(bikeWatchCode || "").trim().toUpperCase()] || {};
+        const bikeWatchMeta    = bikeFocus.meta || null;
+        const bikeWatchLive    = bikeFocus.live || null;
+        const bikeWatchTrack   = bikeFocus.track || [];
+        const bikeWatchStatus  = bikeFocus.status || null;
+        const bikeWatchProgress = bikeFocus.progress || null;
+
+        // Standings: furthest along the course leads; without a route, by distance.
+        const bikeStandings = (() => {
+          const rows = bikeWatchCodes.map(code => {
+            const d = bikeFleet[code] || {};
+            const route = (d.meta && d.meta.route) || [];
+            let alongM = null, totalM = null;
+            if (route.length > 1 && d.live) {
+              const cum = bikeRouteCumulative(route);
+              const pr = bikeRouteProgress(route, cum, d.live.lat, d.live.lng);
+              if (pr) { alongM = pr.alongM; totalM = pr.totalM; }
             }
+            return {
+              code, meta: d.meta, live: d.live, status: d.status,
+              name: (d.meta && d.meta.riderName) || code,
+              photo: (d.meta && d.meta.photoUrl) || "",
+              distM: d.live ? d.live.dst : 0,
+              alongM, totalM,
+              rank: alongM != null ? alongM : (d.live ? d.live.dst : 0),
+            };
           });
-          return () => {
-            metaRef.off("value", mFn); liveRef.off("value", lFn);
-            statRef.off("value", sFn); trackRef.off("child_added", tFn);
-            startRef.off("value", stFn); progRef.off("value", pFn);
-          };
-        }, [appMode, bikeView, bikeWatchCode]);
+          rows.sort((a, b) => b.rank - a.rank);
+          const lead = rows.length ? rows[0].rank : 0;
+          rows.forEach((r, i) => { r.place = i + 1; r.gapM = Math.max(0, lead - r.rank); });
+          return rows;
+        })();
+
+        const bikeRiderColor = (code) => {
+          const i = Math.max(0, bikeWatchCodes.indexOf(code));
+          return BIKE_RIDER_COLORS[i % BIKE_RIDER_COLORS.length];
+        };
 
         // Feed a new target into the interpolator whenever a frame arrives.
         useEffect(() => {
@@ -5347,6 +5443,82 @@
             }
           } catch(_) {}
         }, [bikeWatchLive, bikeWatchMeta, bikeMapReady]);
+
+        // Draw every followed rider: their photo marker and their own trail.
+        useEffect(() => {
+          const map = bikeMapRef.current;
+          if (!map) return;
+          const theme = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
+          const layers = bikeLayersRef.current;
+          const focusCode = (bikeWatchCode || "").trim().toUpperCase();
+
+          // Drop riders that are no longer followed.
+          Object.keys(layers).forEach(code => {
+            if (bikeWatchCodes.includes(code)) return;
+            const L2 = layers[code];
+            [L2.marker, L2.trail].concat(L2.trailSegs || []).forEach(l => {
+              if (l) { try { map.removeLayer(l); } catch(_) {} }
+            });
+            delete layers[code];
+          });
+
+          bikeWatchCodes.forEach(code => {
+            const d = bikeFleet[code];
+            if (!d || !d.live) return;
+            const L2 = layers[code] || (layers[code] = { trailSegs: [] });
+            const colour = bikeRiderColor(code);
+            const standing = bikeStandings.find(r => r.code === code);
+            const focused = code === focusCode;
+            const pos = [d.live.lat, d.live.lng];
+
+            // Marker: the rider's own picture, ringed in their colour, with their
+            // place badge. Unfocused riders sit back a little.
+            const icon = bikeRiderIcon({
+              photo: (d.meta && d.meta.photoUrl) || "",
+              name: (d.meta && d.meta.riderName) || code,
+              color: colour,
+              place: bikeWatchCodes.length > 1 && standing ? standing.place : null,
+              size: focused ? 46 : 38,
+              dim: bikeWatchCodes.length > 1 && !focused,
+            });
+            if (L2.marker) { L2.marker.setLatLng(pos); L2.marker.setIcon(icon); }
+            else {
+              L2.marker = L.marker(pos, { icon, zIndexOffset: focused ? 800 : 400 })
+                .bindTooltip((d.meta && d.meta.riderName) || code,
+                             { direction: "top", offset: [0, -26], className: "leaflet-ath-label" })
+                .addTo(map);
+              L2.marker.on("click", () => setBikeWatchCode(code));
+              if (bikeWatchCodes.length === 1) map.setView(pos, 15, { animate: true });
+            }
+            if (focused) bikeMarkerRef.current = L2.marker;
+
+            // Trail: speed-coloured per leg, or the rider's own colour when the
+            // colouring is switched off or no speed was recorded.
+            const track = d.track || [];
+            const hasSpeed = track.some(pt => pt.length > 2 && pt[2] != null);
+            if (track.length < 2) return;
+            if (bikeTrailSpeed && hasSpeed) {
+              if (L2.trail) { try { map.removeLayer(L2.trail); } catch(_) {} L2.trail = null; }
+              const segs = L2.trailSegs || (L2.trailSegs = []);
+              for (let i = 1; i < track.length; i++) {
+                const p0 = track[i-1], p1 = track[i];
+                const col = bikeSpeedColor(p1[2] != null ? p1[2] : p0[2]);
+                if (segs[i-1]) { segs[i-1].setLatLngs([[p0[0],p0[1]],[p1[0],p1[1]]]); segs[i-1].setStyle({ color: col, opacity: focused ? 0.95 : 0.6 }); }
+                else segs[i-1] = L.polyline([[p0[0],p0[1]],[p1[0],p1[1]]],
+                  { color: col, weight: focused ? 5 : 3.5, opacity: focused ? 0.95 : 0.6, lineCap: "round" }).addTo(map);
+              }
+              for (let i = track.length - 1; i < segs.length; i++) { try { map.removeLayer(segs[i]); } catch(_) {} }
+              segs.length = Math.max(0, track.length - 1);
+            } else {
+              (L2.trailSegs || []).forEach(l => { try { map.removeLayer(l); } catch(_) {} });
+              L2.trailSegs = [];
+              const pts = track.map(pt => [pt[0], pt[1]]);
+              const col = bikeWatchCodes.length > 1 ? colour : theme.trailColor;
+              if (L2.trail) { L2.trail.setLatLngs(pts); L2.trail.setStyle({ color: col }); }
+              else L2.trail = L.polyline(pts, { color: col, weight: focused ? 4 : 3, opacity: focused ? 0.9 : 0.6 }).addTo(map);
+            }
+          });
+        }, [bikeFleet, bikeWatchCodes, bikeWatchCode, bikeBasemap, bikeMapReady, bikeTrailSpeed]);
 
         // Keep the breadcrumb trail line in sync.
         useEffect(() => {
@@ -11338,6 +11510,68 @@
                             </div>
                           )}
 
+                          {/* Standings — who's where, and the gap to the leader.
+                              Shown from the first rider onwards, or there'd be no way
+                              to reach "Add rider" and get to a second. */}
+                          {bikeWatchCodes.length >= 1 && (
+                            <div style={S.card}>
+                              <div style={{ ...S.row, justifyContent:"space-between", marginBottom:8 }}>
+                                <div style={{ ...S.label, marginBottom:0 }}>Following {bikeWatchCodes.length}</div>
+                                <button onClick={() => setBikeAddOpen(v => !v)}
+                                  style={{ ...btnStyle("#00C6FF", true), padding:"4px 10px", fontSize:11 }}>+ Add rider</button>
+                              </div>
+                              {bikeStandings.map(r => {
+                                const focused = r.code === (bikeWatchCode || "").toUpperCase();
+                                const col = bikeRiderColor(r.code);
+                                const left = r.totalM != null ? Math.max(0, r.totalM - r.alongM) : null;
+                                return (
+                                  <div key={r.code} onClick={() => setBikeWatchCode(r.code)}
+                                    style={{ ...S.row, gap:9, padding:"7px 6px", borderRadius:8, cursor:"pointer",
+                                      background: focused ? "rgba(0,198,255,0.10)" : "transparent",
+                                      borderTop:"1px solid rgba(255,255,255,0.05)" }}>
+                                    <span style={{ fontFamily:"var(--tm-font-display)", fontWeight:900, fontSize:15, color:col, width:18 }}>{r.place}</span>
+                                    {r.photo
+                                      ? <img src={r.photo} alt="" style={{ width:30, height:30, borderRadius:"50%", objectFit:"cover", border:`2px solid ${col}`, flexShrink:0 }} />
+                                      : <div style={{ width:30, height:30, borderRadius:"50%", border:`2px solid ${col}`, color:col, flexShrink:0,
+                                          display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800 }}>
+                                          {(r.name||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase()}
+                                        </div>}
+                                    <div style={{ flex:1, minWidth:0 }}>
+                                      <div style={{ fontSize:13, fontWeight:700, color:"#EAF4FF", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.name}</div>
+                                      <div style={{ fontSize:10, color:"#8FB0CC" }}>
+                                        {left != null ? `${fmtDist(left)} to go` : fmtDist(r.distM)}
+                                        {r.place > 1 && r.gapM > 0 ? `  ·  ${fmtDist(r.gapM)} behind` : r.place === 1 && bikeStandings.length > 1 ? "  ·  leading" : ""}
+                                      </div>
+                                    </div>
+                                    <div style={{ textAlign:"right" }}>
+                                      <div className="tm-metric" style={{ fontSize:14, fontWeight:700, color:col }}>
+                                        {r.live?.spd != null ? fmtSpeed(r.live.spd).replace(/ (mph|km\/h)/, "") : "—"}
+                                      </div>
+                                      <div style={{ fontSize:8, color:"#4E6B85", letterSpacing:1 }}>{useKm ? "KM/H" : "MPH"}</div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {bikeAddOpen && (
+                            <div style={S.card}>
+                              <div style={S.label}>Follow another rider</div>
+                              <div style={S.row}>
+                                <input value={bikeAddCode} onChange={e => setBikeAddCode(e.target.value.toUpperCase())}
+                                  placeholder="ABC123" maxLength={6}
+                                  style={{ ...S.input, fontFamily:"monospace", fontSize:16, letterSpacing:3, textAlign:"center" }} />
+                                <button onClick={() => {
+                                  const c = (bikeAddCode || "").trim().toUpperCase();
+                                  if (c.length < 4) return;
+                                  if (!bikeWatchCodes.includes(c)) setBikeWatchCodes(l => [...l, c]);
+                                  setBikeAddCode(""); setBikeAddOpen(false);
+                                }} style={{ ...btnStyle("#00C6FF"), whiteSpace:"nowrap" }}>Add</button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Rider card */}
                           <div style={{ ...S.card, display:"flex", gap:14, alignItems:"center" }}>
                             {bikeWatchMeta?.photoUrl
@@ -11450,8 +11684,61 @@
                           </div>
 
                           {/* Map */}
-                          <div style={{ position:"relative", marginBottom:12 }}>
-                            <div ref={initBikeMap} style={{ height:380, borderRadius:8, border:"1px solid rgba(255,203,69,0.25)", background:"#0D2240" }} />
+                          <div style={ bikeFullscreen
+                              ? { position:"fixed", inset:0, zIndex:4000, background:"#0A1628" }
+                              : { position:"relative", marginBottom:12 } }>
+                            <div ref={initBikeMap} style={{
+                              height: bikeFullscreen ? "100%" : 380,
+                              borderRadius: bikeFullscreen ? 0 : 8,
+                              border: bikeFullscreen ? "none" : "1px solid rgba(0,198,255,0.25)",
+                              background:"#0D2240" }} />
+                            {/* Live ticker — every followed rider's vitals in one strip,
+                                which is the point of a full-screen map on a big display. */}
+                            <div style={{ position:"absolute", left:0, right:0, bottom:0, zIndex:600,
+                              background:"linear-gradient(0deg,rgba(10,22,40,0.96),rgba(10,22,40,0.72))",
+                              borderTop:"1px solid rgba(0,229,204,0.25)", overflowX:"auto", display:"flex",
+                              scrollbarWidth:"none" }}>
+                              {(bikeStandings.length ? bikeStandings : []).map(r => {
+                                const col = bikeRiderColor(r.code);
+                                const left = r.totalM != null ? Math.max(0, r.totalM - r.alongM) : null;
+                                const lv = r.live || {};
+                                return (
+                                  <div key={r.code} onClick={() => setBikeWatchCode(r.code)}
+                                    style={{ flex:"0 0 auto", display:"flex", alignItems:"center", gap:8,
+                                      padding:"8px 14px", cursor:"pointer", borderRight:"1px solid rgba(255,255,255,0.06)",
+                                      background: r.code === (bikeWatchCode||"").toUpperCase() ? "rgba(0,198,255,0.10)" : "transparent" }}>
+                                    {r.photo
+                                      ? <img src={r.photo} alt="" style={{ width:26, height:26, borderRadius:"50%", objectFit:"cover", border:`2px solid ${col}` }} />
+                                      : <div style={{ width:26, height:26, borderRadius:"50%", border:`2px solid ${col}`, color:col,
+                                          display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800 }}>{r.place}</div>}
+                                    <div>
+                                      <div style={{ fontSize:11, fontWeight:700, color:"#EAF4FF", whiteSpace:"nowrap" }}>
+                                        {r.name}{bikeStandings.length > 1 ? ` · P${r.place}` : ""}
+                                      </div>
+                                      <div style={{ display:"flex", gap:9, fontSize:10, color:"#8FB0CC", whiteSpace:"nowrap" }}>
+                                        <span className="tm-metric" style={{ color: lv.spd != null ? bikeSpeedColor(lv.spd * 3.6) : "#4E6B85" }}>
+                                          {lv.spd != null ? fmtSpeed(lv.spd) : "—"}
+                                        </span>
+                                        {lv.hr != null && <span className="tm-metric" style={{ color:"#FF8FB1" }}>♥ {lv.hr}</span>}
+                                        {lv.pwr != null && <span className="tm-metric" style={{ color:"#FF9A3C" }}>{lv.pwr}W</span>}
+                                        {lv.cad != null && <span className="tm-metric" style={{ color:"#5AA9FF" }}>{lv.cad}rpm</span>}
+                                        {left != null && <span className="tm-metric" style={{ color:"#00E5CC" }}>{fmtDist(left)} left</span>}
+                                        {left == null && lv.dst != null && <span className="tm-metric">{fmtDist(lv.dst)}</span>}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <button onClick={() => {
+                              setBikeFullscreen(v => !v);
+                              // Leaflet needs telling its container changed size.
+                              setTimeout(() => { try { bikeMapRef.current?.invalidateSize(); } catch(_) {} }, 120);
+                            }} style={{ position:"absolute", right:10, top:52, zIndex:600,
+                              background:"rgba(10,22,40,0.88)", color:"#00C6FF", border:"1px solid #00C6FF",
+                              borderRadius:6, padding:"5px 10px", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                              {bikeFullscreen ? "✕ Exit" : "⛶ Full"}
+                            </button>
                             <div style={{ position:"absolute", right:10, top:10, zIndex:500, display:"flex", gap:4,
                               background:"rgba(10,22,40,0.85)", padding:3, borderRadius:7, border:"1px solid rgba(255,255,255,0.14)" }}>
                               {Object.entries(BIKE_BASEMAPS).map(([k, b]) => (
@@ -11553,7 +11840,8 @@
                             }} style={btnStyle("#FFCB45", true)}>🔗 Share this feed</button>
                             <button onClick={() => {
                               try { localStorage.removeItem("bike-watch-code"); } catch(_) {}
-                              setBikeWatchCode(""); setBikeWatchMeta(null); setBikeWatchLive(null); setBikeWatchTrack([]); setBikeView("home");
+                              try { localStorage.removeItem("bike-watch-codes"); } catch(_) {}
+                              setBikeWatchCodes([]); setBikeFleet({}); setBikeWatchCode(""); setBikeView("home");
                             }}
                               style={btnStyle("#8FB0CC", true)}>Follow another</button>
                           </div>
