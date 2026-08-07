@@ -115,6 +115,30 @@
         .tm-nav-btn { padding: 0 11px; font-size: 12px; }
       }
 
+      /* Course setup map. Phones only ever check a course, so the short map keeps
+         the waypoint list reachable; drawing actually happens at a desk, where a
+         240px strip is far too small to trace a car park accurately. */
+      .tri-setup-map { height: 240px; }
+      @media (min-width: 820px) and (min-height: 640px) {
+        .tri-setup-map { height: min(58vh, 600px); min-height: 430px; }
+      }
+      /* On a phone the map has to sit above the waypoint list and stay pinned.
+         On a desktop that would pin most of the screen, so the two go side by
+         side instead: a big map you can draw on, and a list you can still scroll.
+         `display: contents` on the phone dissolves the column wrapper, so the map
+         still sticks across the whole list rather than only its own column. */
+      .tri-setup-left { display: contents; }
+      @media (min-width: 1024px) and (min-height: 640px) {
+        /* Break out of the app's 640px reading column — only this panel needs width. */
+        .tri-wp-panel  { --tri-w: min(1180px, calc(100vw - 40px));
+                         width: var(--tri-w); margin-left: calc((100% - var(--tri-w)) / 2); }
+        .tri-setup-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+                          gap: 4px; align-items: start; }
+        .tri-setup-left { display: block; position: sticky; top: var(--tri-clock-h, 0px); }
+        /* The column is the sticky one now; a second sticky inside just fights it. */
+        .tri-setup-mapstick { position: static !important; box-shadow: none !important; }
+      }
+
       #splash { position:fixed; inset:0; background:var(--tm-bg); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:9999; transition:opacity 0.3s; }
       #splash.hide { opacity:0; pointer-events:none; }
       #splash-mark { width:132px; height:auto; margin-bottom:22px; filter: drop-shadow(0 0 22px rgba(0,198,255,0.35)); }
@@ -1469,6 +1493,47 @@
                     <span class="ld">${fmtRaceDist(d, l.key)}${loop ? " per lap" : ""}${lapNote}</span></div>`;
           }).join("");
 
+          // Waypoints cluster — transitions sit metres apart, so their labels land on
+          // top of each other. Place each one in the first free slot around its pin,
+          // fanning outwards, and draw a leader line when it ends up far from home.
+          const pins = wps.map(w => ({
+            x: X(w.lng), y: Y(w.lat), text: w.label || "",
+            col: w.action === "start" ? "#16a34a" : w.action === "lap" ? "#0891b2"
+               : w.action === "split" ? "#c2410c" : "#475569",
+          }));
+          const taken = pins.map(p => ({ x: p.x - 13, y: p.y - 13, w: 26, h: 26 }));
+          const hits = (b) => taken.some(o =>
+            !(b.x + b.w < o.x || o.x + o.w < b.x || b.y + b.h < o.y || o.y + o.h < b.y));
+          // dx, dy from the pin, plus the text anchor that keeps the box on that side.
+          const SLOTS = [
+            [0,-19,"middle"], [0,25,"middle"], [15,5,"start"], [-15,5,"end"],
+            [0,-37,"middle"], [0,43,"middle"], [24,-15,"start"], [-24,-15,"end"],
+            [24,25,"start"], [-24,25,"end"], [0,-55,"middle"], [0,61,"middle"],
+            [44,5,"start"], [-44,5,"end"],
+          ];
+          const labels = pins.map(p => {
+            const tw = p.text.length * 7.1 + 8, th = 15;
+            let best = null;
+            for (const [dx, dy, anchor] of SLOTS) {
+              const x = anchor === "middle" ? p.x + dx - tw / 2 : anchor === "start" ? p.x + dx : p.x + dx - tw;
+              const box = { x, y: p.y + dy - th + 3, w: tw, h: th };
+              // Off-canvas is worse than overlapping, so skip those outright.
+              if (box.x < 4 || box.x + box.w > W - 4 || box.y < 4 || box.y + box.h > H - 24) continue;
+              if (!hits(box)) { best = { dx, dy, anchor, box }; break; }
+            }
+            if (!best) best = { dx: 0, dy: -19, anchor: "middle",
+                                box: { x: p.x - tw / 2, y: p.y - 31, w: tw, h: th } };
+            taken.push(best.box);
+            const far = Math.abs(best.dy) > 30 || Math.abs(best.dx) > 20;
+            return {
+              text: p.text, anchor: best.anchor,
+              tx: p.x + best.dx, ty: p.y + best.dy,
+              leader: far ? `<line x1="${p.x.toFixed(1)}" y1="${p.y.toFixed(1)}"
+                               x2="${(p.x + best.dx * 0.75).toFixed(1)}" y2="${(p.y + best.dy * 0.8).toFixed(1)}"
+                               stroke="#94a3b8" stroke-width="1.5"/>` : "",
+            };
+          });
+
           const svg = `
             <svg viewBox="0 0 ${W} ${H}" width="100%" xmlns="http://www.w3.org/2000/svg">
               <defs>
@@ -1482,16 +1547,13 @@
                                  stroke-linecap="round" stroke-linejoin="round"/>`).join("")}
               ${legs.map(l => `<path d="${path(l.pts)}" fill="none" stroke="${l.colour}" stroke-width="6.5"
                                  stroke-linecap="round" stroke-linejoin="round"/>`).join("")}
-              ${wps.map(w => {
-                const cx = X(w.lng).toFixed(1), cy = Y(w.lat).toFixed(1);
-                const col = w.action === "start" ? "#16a34a" : w.action === "lap" ? "#0891b2"
-                          : w.action === "split" ? "#c2410c" : "#475569";
-                return `<circle cx="${cx}" cy="${cy}" r="9" fill="#fff" stroke="${col}" stroke-width="3.5"/>
-                        <text x="${cx}" y="${(+cy) - 16}" text-anchor="middle"
-                              font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700"
-                              fill="#0f172a" stroke="#fff" stroke-width="3.5" paint-order="stroke"
-                              >${esc(w.label)}</text>`;
-              }).join("")}
+              ${pins.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="9"
+                                 fill="#fff" stroke="${p.col}" stroke-width="3.5"/>`).join("")}
+              ${labels.map(l => `${l.leader}
+                <text x="${l.tx.toFixed(1)}" y="${l.ty.toFixed(1)}" text-anchor="${l.anchor}"
+                      font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700"
+                      fill="#0f172a" stroke="#f7fafd" stroke-width="4" paint-order="stroke"
+                      >${esc(l.text)}</text>`).join("")}
               <g transform="translate(${M},${H - 30})">
                 <line x1="0" y1="0" x2="${barPx.toFixed(1)}" y2="0" stroke="#0f172a" stroke-width="3"/>
                 <line x1="0" y1="-6" x2="0" y2="6" stroke="#0f172a" stroke-width="3"/>
@@ -8415,10 +8477,11 @@
                   </div>
 
                   {/* ── GPS Waypoints ── */}
-                  <div style={{ marginTop: 20, background: "#0D2240", border: "2px solid rgba(125,249,196,0.35)", borderRadius: 8 }}>
+                  <div className="tri-wp-panel" style={{ marginTop: 20, background: "#0D2240", border: "2px solid rgba(125,249,196,0.35)", borderRadius: 8 }}>
 
-                    {/* Sticky map + heading — stays visible while scrolling waypoint list */}
-                    <div style={{ position: "sticky", top: clockBannerH, zIndex: 50, background: "#0D2240", borderRadius: "8px 8px 0 0", padding: "10px 16px 0", boxShadow: "0 -20px 0 20px #0A1628" }}>
+                    {/* Finding the venue is a once-per-race job, so it scrolls away
+                        rather than eating room at the top of every screen. */}
+                    <div style={{ padding: "10px 16px 0" }}>
                       {/* Venue search + basemap — you need to see the actual pool and
                           car park to drop points on them. */}
                       <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -8465,6 +8528,15 @@
                           ))}
                         </div>
                       )}
+                    </div>
+
+                    <div className="tri-setup-grid" style={{ "--tri-clock-h": clockBannerH + "px" }}>
+                    <div className="tri-setup-left">
+                    {/* Only the map and the tools you use *on* it stay pinned. Everything
+                        else scrolls, so the panel doesn't fill the screen with chrome. */}
+                    {/* Opaque so the venue row disappears cleanly behind it. The shadow
+                        stays inside the panel — an outward bleed painted over the card. */}
+                    <div className="tri-setup-mapstick" style={{ position: "sticky", top: clockBannerH, zIndex: 50, background: "#0D2240", padding: "8px 16px 0", boxShadow: "0 10px 14px -8px rgba(5,12,24,0.95)" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#7DF9C4" }}>📍 GPS Waypoints</div>
                         <div style={{ fontSize: 10, color: "#8FB0CC" }}>
@@ -8518,6 +8590,16 @@
                       {raceSnapMsg && (
                         <div style={{ fontSize:10, color:"#00E5CC", marginBottom:8 }}>⛓ {raceSnapMsg}</div>
                       )}
+                      {activePlacementId && (
+                        <div style={{ fontSize: 11, color: "#FFCB45", background: "rgba(255,203,69,0.08)", border: "1px solid rgba(255,203,69,0.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 8, textAlign: "center" }}>
+                          Click the map to place <strong>{waypoints.find(w => w.id === activePlacementId)?.label}</strong> — or press Esc to cancel
+                        </div>
+                      )}
+                      <div ref={initSetupMap} className="tri-setup-map"
+                        style={{ borderRadius: 8, overflow: "hidden", marginBottom: 8, cursor: activePlacementId ? "crosshair" : "grab", outline: activePlacementId ? "2px solid #FFCB45" : "none" }} />
+                    </div>{/* end sticky map */}
+
+                    <div style={{ padding: "6px 16px 0" }}>
                       {/* Draw the circuit once and it tells you the lap count — which is
                           the whole reason to draw when there's no fixed course. */}
                       {(() => {
@@ -8563,13 +8645,6 @@
                           </div>
                         );
                       })()}
-
-                      {activePlacementId && (
-                        <div style={{ fontSize: 11, color: "#FFCB45", background: "rgba(255,203,69,0.08)", border: "1px solid rgba(255,203,69,0.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 8, textAlign: "center" }}>
-                          Click the map to place <strong>{waypoints.find(w => w.id === activePlacementId)?.label}</strong> — or press Esc to cancel
-                        </div>
-                      )}
-                      <div ref={initSetupMap} style={{ height: 240, borderRadius: 8, overflow: "hidden", marginBottom: 8, cursor: activePlacementId ? "crosshair" : "grab", outline: activePlacementId ? "2px solid #FFCB45" : "none" }} />
                       {/* A tidied handout of the course — the drawn lines come out rough,
                           so the export redraws them smoothed on a clean printable sheet. */}
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
@@ -8580,6 +8655,8 @@
                           Printable course sheet with distances — hand out or save as PDF
                         </span>
                       </div>
+                    </div>
+                    </div>{/* end left column */}
 
                     {/* Sync setup map pins on every render */}
                     {(() => {
@@ -8606,7 +8683,6 @@
                       });
                       return null;
                     })()}
-                    </div>{/* end sticky map wrapper */}
 
                     {/* Waypoint cards — scroll under the sticky map */}
                     <div style={{ padding: "4px 16px 14px" }}>
@@ -8718,6 +8794,7 @@
                       </div>
                     )}
                     </div>{/* end cards section */}
+                    </div>{/* end map/list grid */}
                   </div>{/* end GPS Waypoints card */}
 
                   {/* ── Saved Races ── */}
