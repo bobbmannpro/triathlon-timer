@@ -501,6 +501,25 @@
         return S[S.length - 1][1];
       }
 
+      // Chaikin corner-cutting. Hand-drawn taps come out angular; two passes read
+      // as a drawn course without moving the line meaningfully. Presentation only —
+      // distances are always measured on the original points.
+      function smoothPath(pts, iterations) {
+        let out = (pts || []).slice();
+        for (let k = 0; k < (iterations || 2); k++) {
+          if (out.length < 3) break;
+          const next = [out[0]];
+          for (let i = 0; i < out.length - 1; i++) {
+            const a = out[i], b = out[i + 1];
+            next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+            next.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+          }
+          next.push(out[out.length - 1]);
+          out = next;
+        }
+        return out;
+      }
+
       // ── Map orientation ──────────────────────────────────────────────────────
       const BIKE_ORIENTS = [
         ["north",       "⬆ North",  "North stays at the top"],
@@ -1379,20 +1398,169 @@
         const [raceDrawLeg, setRaceDrawLeg] = useState(null);   // null = not drawing
         const [raceDrawSnap, setRaceDrawSnap] = useState(true);
         const [raceSnapping, setRaceSnapping] = useState(0);
+        const [raceSnapMsg, setRaceSnapMsg] = useState("");
         const raceDrawLegRef  = useRef(null);
         const raceDrawSnapRef = useRef(true);
         const raceRoutesRef   = useRef({ swim: [], bike: [], run: [] });
         const raceRouteLinesRef = useRef({});
         const RACE_LEGS = [["swim", "Swim", 0], ["bike", "Bike", 2], ["run", "Run", 4]];
+        // Tap within this of a waypoint and the drawn leg joins onto it exactly.
+        const RACE_WP_SNAP_M = 25;
+        // A leg whose ends meet is a loop — which is what a parking-lot circuit is.
+        const RACE_LOOP_CLOSE_M = 40;
+        const raceLegIsLoop = (pts) =>
+          pts && pts.length > 3 &&
+          haversineM(pts[0][0], pts[0][1], pts[pts.length-1][0], pts[pts.length-1][1]) < RACE_LOOP_CLOSE_M;
+        // A clean course map to hand to the athletes. Rendered as SVG rather than a
+        // map screenshot: it prints sharply, needs no tile permissions, and reads as
+        // a designed handout instead of a rough sketch.
+        function exportRaceMap() {
+          const esc = (s) => String(s == null ? "" : s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          const legs = RACE_LEGS
+            .map(([key, label, segIdx]) => ({ key, label, segIdx,
+              pts: (raceRoutes[key] || []), colour: segColors[segIdx] }))
+            .filter(l => l.pts.length > 1);
+          const wps = waypoints.filter(w => w.lat != null && w.lng != null && w.enabled !== false);
+          if (!legs.length && !wps.length) {
+            alert("Draw at least one leg or place a waypoint first — there's nothing to put on the map yet.");
+            return;
+          }
+          const all = legs.flatMap(l => l.pts).concat(wps.map(w => [w.lat, w.lng]));
+          const lats = all.map(p => p[0]), lngs = all.map(p => p[1]);
+          let minLat = Math.min(...lats), maxLat = Math.max(...lats);
+          let minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+          const padLat = Math.max((maxLat - minLat) * 0.12, 0.0004);
+          const padLng = Math.max((maxLng - minLng) * 0.12, 0.0004);
+          minLat -= padLat; maxLat += padLat; minLng -= padLng; maxLng += padLng;
+
+          // Equirectangular is fine over a venue, with a cos(lat) correction so the
+          // aspect ratio and the scale bar stay honest.
+          const W = 1000, H = 700, M = 46;
+          const kx = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+          const spanX = (maxLng - minLng) * kx, spanY = (maxLat - minLat);
+          const scale = Math.min((W - M * 2) / spanX, (H - M * 2) / spanY);
+          const ox = (W - spanX * scale) / 2, oy = (H - spanY * scale) / 2;
+          const X = (lng) => ox + (lng - minLng) * kx * scale;
+          const Y = (lat) => H - (oy + (lat - minLat) * scale);
+          const path = (pts) => smoothPath(pts, 2).map((p, i) => `${i ? "L" : "M"}${X(p[1]).toFixed(1)},${Y(p[0]).toFixed(1)}`).join(" ");
+
+          // Scale bar: pick a round distance that lands near 160px.
+          const mPerPx = 110540 / scale;   // scale is px per degree of latitude
+          const targetM = 160 * mPerPx;
+          const nice = [10,20,25,50,100,200,250,500,800,1000,1600,2000,4000,8000];
+          const barM = nice.reduce((a, b) => Math.abs(b - targetM) < Math.abs(a - targetM) ? b : a, nice[0]);
+          const barPx = barM / mPerPx;
+          const barLabel = units.bike === "km"
+            ? (barM >= 1000 ? (barM / 1000).toFixed(2) + " km" : barM + " m")
+            : (barM >= 1609 ? (barM / 1609.344).toFixed(2) + " mi" : Math.round(barM * 3.28084) + " ft");
+
+          const crs = courses[0] || {};
+          const legRows = legs.map(l => {
+            const d = raceRouteDist(l.pts);
+            const loop = raceLegIsLoop(l.pts);
+            const unit = units[l.key] === "km" ? "km" : "mi";
+            const per  = unit === "km" ? 1000 : 1609.344;
+            const target = l.key === "bike" ? crs.bikeMiles : l.key === "run" ? crs.runMiles : null;
+            const lapNote = loop && target > 0 && d > 0
+              ? ` — ${Math.ceil(target / (d / per))} laps for ${target} ${unit}` : "";
+            return `<div class="leg"><span class="sw" style="background:${l.colour}"></span>
+                    <span class="ln">${l.label}</span>
+                    <span class="ld">${fmtRaceDist(d, l.key)}${loop ? " per lap" : ""}${lapNote}</span></div>`;
+          }).join("");
+
+          const svg = `
+            <svg viewBox="0 0 ${W} ${H}" width="100%" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M40 0 L0 0 0 40" fill="none" stroke="#e6edf5" stroke-width="1"/>
+                </pattern>
+              </defs>
+              <rect width="${W}" height="${H}" fill="#f7fafd"/>
+              <rect width="${W}" height="${H}" fill="url(#grid)"/>
+              ${legs.map(l => `<path d="${path(l.pts)}" fill="none" stroke="#ffffff" stroke-width="11"
+                                 stroke-linecap="round" stroke-linejoin="round"/>`).join("")}
+              ${legs.map(l => `<path d="${path(l.pts)}" fill="none" stroke="${l.colour}" stroke-width="6.5"
+                                 stroke-linecap="round" stroke-linejoin="round"/>`).join("")}
+              ${wps.map(w => {
+                const cx = X(w.lng).toFixed(1), cy = Y(w.lat).toFixed(1);
+                const col = w.action === "start" ? "#16a34a" : w.action === "lap" ? "#0891b2"
+                          : w.action === "split" ? "#c2410c" : "#475569";
+                return `<circle cx="${cx}" cy="${cy}" r="9" fill="#fff" stroke="${col}" stroke-width="3.5"/>
+                        <text x="${cx}" y="${(+cy) - 16}" text-anchor="middle"
+                              font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700"
+                              fill="#0f172a" stroke="#fff" stroke-width="3.5" paint-order="stroke"
+                              >${esc(w.label)}</text>`;
+              }).join("")}
+              <g transform="translate(${M},${H - 30})">
+                <line x1="0" y1="0" x2="${barPx.toFixed(1)}" y2="0" stroke="#0f172a" stroke-width="3"/>
+                <line x1="0" y1="-6" x2="0" y2="6" stroke="#0f172a" stroke-width="3"/>
+                <line x1="${barPx.toFixed(1)}" y1="-6" x2="${barPx.toFixed(1)}" y2="6" stroke="#0f172a" stroke-width="3"/>
+                <text x="${(barPx / 2).toFixed(1)}" y="-12" text-anchor="middle"
+                      font-family="Inter,Arial,sans-serif" font-size="14" font-weight="700" fill="#0f172a">${barLabel}</text>
+              </g>
+              <g transform="translate(${W - 46},${46})">
+                <path d="M0,-20 L7,10 L0,3 L-7,10 Z" fill="#0f172a"/>
+                <text x="0" y="26" text-anchor="middle" font-family="Inter,Arial,sans-serif"
+                      font-size="12" font-weight="700" fill="#0f172a">N</text>
+              </g>
+            </svg>`;
+
+          const win = window.open("", "_blank");
+          if (!win) { alert("Your browser blocked the pop-up — allow pop-ups for this site and try again."); return; }
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+            <title>${esc(certConfig.eventName || "Race")} — Course Map</title>
+            <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;900&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+            <style>
+              *{box-sizing:border-box;margin:0;padding:0}
+              @page{size:landscape;margin:.4in}
+              body{font-family:'Inter',Arial,sans-serif;color:#0f172a;background:#fff;padding:22px 26px}
+              .hd{display:flex;align-items:center;gap:14px;margin-bottom:4px}
+              .logo{height:52px;object-fit:contain}
+              .ttl{font-family:'Archivo',Arial Black,sans-serif;font-weight:900;font-size:30px;letter-spacing:-.5px}
+              .sub{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#64748b;margin-top:2px}
+              .wrap{border:1px solid #dbe4ee;border-radius:10px;overflow:hidden;margin-top:14px;text-align:center}
+              .wrap svg{display:block;width:100%;height:auto}
+              /* Keep the whole sheet on one landscape page: cap the map by height and
+                 let the width follow, otherwise the legend spills onto page two. */
+              @media print{.wrap svg{height:5.3in;width:auto;margin:0 auto}}
+              .legs{display:flex;gap:20px;flex-wrap:wrap;margin-top:12px}
+              .leg{display:flex;align-items:center;gap:8px;font-size:13px}
+              .sw{width:16px;height:6px;border-radius:3px;display:inline-block}
+              .ln{font-weight:800}
+              .ld{color:#475569}
+              .note{margin-top:12px;font-size:11px;color:#64748b;line-height:1.6}
+              @media print{button{display:none}}
+            </style></head><body>
+            <div class="hd">
+              <img src="${LOGO_B64}" class="logo" alt="">
+              <div>
+                <div class="ttl">${esc(certConfig.eventName || "Race")}</div>
+                <div class="sub">Course Map · Swim · Bike · Run</div>
+              </div>
+            </div>
+            <div class="wrap">${svg}</div>
+            <div class="legs">${legRows}</div>
+            <div class="note">Distances are measured from the drawn course and are approximate.
+              Waypoints show timing points and lap lines. Not to be used for navigation.</div>
+            <button onclick="window.print()" style="margin-top:16px;padding:9px 22px;cursor:pointer;
+              font-family:inherit;font-weight:700;border-radius:6px;border:1px solid #0f172a;background:#fff">
+              Print / Save as PDF</button>
+            </body></html>`);
+          win.document.close();
+        }
+
         function raceRouteDist(pts) {
           if (!pts || pts.length < 2) return 0;
           let m = 0;
           for (let i = 1; i < pts.length; i++) m += haversineM(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
           return m;
         }
-        const fmtRaceDist = (m) => units === "mi"
-          ? (m / 1609.344).toFixed(2) + " mi"
-          : (m / 1000).toFixed(2) + " km";
+        // Each leg carries its own unit in `units`, so a distance has to say which
+        // leg it belongs to. Bike is the sensible default — it's the measured one.
+        const fmtRaceDist = (m, leg) => units[leg || "bike"] === "km"
+          ? (m / 1000).toFixed(2) + " km"
+          : (m / 1609.344).toFixed(2) + " mi";
         const [joinCode, setJoinCode] = useState("");
         const [joinRace, setJoinRace] = useState(null);
         const [joinAthIdx, setJoinAthIdx] = useState(null);
@@ -1580,7 +1748,19 @@
             // Drawing a leg takes priority over placing a waypoint.
             const leg = raceDrawLegRef.current;
             if (leg) {
-              const pt = [+e.latlng.lat.toFixed(5), +e.latlng.lng.toFixed(5)];
+              // Tapping near a placed waypoint snaps exactly onto it, so a drawn leg
+              // actually meets Bike Out / Bike In rather than ending near them.
+              let pt = [+e.latlng.lat.toFixed(5), +e.latlng.lng.toFixed(5)];
+              let snappedTo = null;
+              const placed = (waypointsRef.current || []).filter(w => w.lat != null && w.lng != null && w.enabled !== false);
+              let best = null;
+              placed.forEach(w => {
+                const d = haversineM(pt[0], pt[1], w.lat, w.lng);
+                if (d < RACE_WP_SNAP_M && (!best || d < best.d)) best = { d, w };
+              });
+              if (best) { pt = [+best.w.lat.toFixed(5), +best.w.lng.toFixed(5)]; snappedTo = best.w.label; }
+              if (snappedTo) setRaceSnapMsg(`Joined to ${snappedTo}`);
+              else setRaceSnapMsg("");
               const cur = (raceRoutesRef.current[leg] || []);
               const from = cur.length ? cur[cur.length - 1] : null;
               // Swim legs are open water — routing along roads would be nonsense.
@@ -8304,7 +8484,7 @@
                                 background: on ? segColors[segIdx] + "26" : "transparent",
                                 border: on ? `1px solid ${segColors[segIdx]}` : "1px solid rgba(255,255,255,0.12)",
                                 color: on ? segColors[segIdx] : "#8FB0CC" }}>
-                              {label}{n > 1 ? ` · ${fmtRaceDist(raceRouteDist(raceRoutes[leg]))}` : ""}
+                              {label}{n > 1 ? ` · ${fmtRaceDist(raceRouteDist(raceRoutes[leg]), leg)}` : ""}
                             </button>
                           );
                         })}
@@ -8335,13 +8515,71 @@
                           Swim legs join in straight lines — open water has no roads to follow.
                         </div>
                       )}
+                      {raceSnapMsg && (
+                        <div style={{ fontSize:10, color:"#00E5CC", marginBottom:8 }}>⛓ {raceSnapMsg}</div>
+                      )}
+                      {/* Draw the circuit once and it tells you the lap count — which is
+                          the whole reason to draw when there's no fixed course. */}
+                      {(() => {
+                        const loopLeg = RACE_LEGS.map(([k]) => k).find(k => raceLegIsLoop(raceRoutes[k]));
+                        if (!loopLeg) return null;
+                        const loopM  = raceRouteDist(raceRoutes[loopLeg]);
+                        const loopMi = loopM / 1609.344;
+                        const crs = courses[0];
+                        const target = crs?.bikeMiles;
+                        const lapWp = waypoints.find(w => w.action === "lap");
+                        return (
+                          <div style={{ marginBottom: 10, padding: "10px 12px", background: "rgba(0,229,204,0.07)",
+                            border: "1px solid rgba(0,229,204,0.35)", borderRadius: 6 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", color: "#00E5CC" }}>
+                              Closed loop detected · {loopLeg}
+                            </div>
+                            <div style={{ fontSize: 12, color: "#EAF4FF", marginTop: 5 }}>
+                              One lap ≈ <strong>{fmtRaceDist(loopM, loopLeg)}</strong>
+                              {target > 0 && (
+                                <> · <strong>{Math.ceil(target / loopMi)}</strong> laps for {target} mi</>
+                              )}
+                            </div>
+                            {target > 0 && (
+                              <div style={{ fontSize: 10, color: "#8FB0CC", marginTop: 3 }}>
+                                {(Math.ceil(target / loopMi) * loopMi).toFixed(2)} mi over {Math.ceil(target / loopMi)} full laps
+                                {" · "}{(target / loopMi).toFixed(1)} laps exactly
+                              </div>
+                            )}
+                            <button onClick={() => {
+                              const mi = +loopMi.toFixed(3);
+                              if (lapWp) {
+                                setWaypoints(wps => wps.map(w => w.id === lapWp.id ? { ...w, lapMi: mi } : w));
+                                setRaceSnapMsg(`Lap line set to ${mi} mi per lap`);
+                              } else {
+                                setWaypoints(wps => [...wps, { id: `lap_${Date.now()}`, label: "Lap Line",
+                                  lat: raceRoutes[loopLeg][0][0], lng: raceRoutes[loopLeg][0][1],
+                                  radiusM: 25, action: "lap", lapMi: mi, fixed: false }]);
+                                setRaceSnapMsg(`Lap line added at the loop start, ${mi} mi per lap`);
+                              }
+                            }} style={{ ...btnStyle("#00E5CC", true), padding: "5px 11px", fontSize: 11, marginTop: 8 }}>
+                              {lapWp ? "Use this as the lap length" : "Create a lap line from this loop"}
+                            </button>
+                          </div>
+                        );
+                      })()}
 
                       {activePlacementId && (
                         <div style={{ fontSize: 11, color: "#FFCB45", background: "rgba(255,203,69,0.08)", border: "1px solid rgba(255,203,69,0.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 8, textAlign: "center" }}>
                           Click the map to place <strong>{waypoints.find(w => w.id === activePlacementId)?.label}</strong> — or press Esc to cancel
                         </div>
                       )}
-                      <div ref={initSetupMap} style={{ height: 240, borderRadius: 8, overflow: "hidden", marginBottom: 10, cursor: activePlacementId ? "crosshair" : "grab", outline: activePlacementId ? "2px solid #FFCB45" : "none" }} />
+                      <div ref={initSetupMap} style={{ height: 240, borderRadius: 8, overflow: "hidden", marginBottom: 8, cursor: activePlacementId ? "crosshair" : "grab", outline: activePlacementId ? "2px solid #FFCB45" : "none" }} />
+                      {/* A tidied handout of the course — the drawn lines come out rough,
+                          so the export redraws them smoothed on a clean printable sheet. */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                        <button onClick={exportRaceMap} style={{ ...btnStyle("#FFCB45", true), padding: "6px 12px", fontSize: 11 }}>
+                          🖨 Export map of race
+                        </button>
+                        <span style={{ fontSize: 10, color: "#8FB0CC" }}>
+                          Printable course sheet with distances — hand out or save as PDF
+                        </span>
+                      </div>
 
                     {/* Sync setup map pins on every render */}
                     {(() => {
