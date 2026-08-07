@@ -1252,7 +1252,14 @@
             : firstGps ? [firstGps.gps.lat, firstGps.gps.lng]
             : [37.7749, -122.4194];
           const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 15);
-          L.tileLayer(BIKE_BASEMAPS.roads.url, { subdomains: BIKE_BASEMAPS.roads.subdomains, maxZoom: BIKE_BASEMAPS.roads.maxZoom, attribution: BIKE_BASEMAPS.roads.attribution, detectRetina: true }).addTo(map);
+          (() => {
+            // Same imagery the course was set up on, so athletes and spectators
+            // recognise the venue rather than a bare road map.
+            const b = BIKE_BASEMAPS[(() => { try { return localStorage.getItem("tri-basemap"); } catch(_) { return null; } })()] || BIKE_BASEMAPS.satellite;
+            L.tileLayer(b.url, { subdomains: b.subdomains, attribution: b.attribution,
+              maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: b.url.includes("{r}") }).addTo(map).setZIndex(1);
+            if (b.labels) L.tileLayer(b.labels, { subdomains: "abcd", maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: true }).addTo(map).setZIndex(2);
+          })();
           if (wps.length > 1) {
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#7DF9C4", weight: 3, opacity: 0.7 }).addTo(map);
           }
@@ -1352,6 +1359,19 @@
           { id: "finish",  label: "Finish",   lat: null, lng: null, radiusM: 30, action: "split",  fixed: true, segIdx: 4, enabled: true },
         ];
         const [waypoints, setWaypoints] = useState(DEFAULT_WAYPOINTS);
+        // Placing waypoints on real features — a pool, a car park, a gate — needs
+        // imagery. The road styles deliberately drop buildings, so satellite is the
+        // one to use when setting a course up at a venue.
+        const [triBasemap, setTriBasemap] = useState(() => {
+          try { const v = localStorage.getItem("tri-basemap");
+                return BIKE_BASEMAPS[v] ? v : "satellite"; } catch(_) { return "satellite"; }
+        });
+        const triTileRef  = useRef(null);
+        const triLabelRef = useRef(null);
+        const [triSearch, setTriSearch] = useState("");
+        const [triSearching, setTriSearching] = useState(false);
+        const [triSearchMsg, setTriSearchMsg] = useState("");
+        const [triResults, setTriResults] = useState([]);
         // Drawn courses, one per leg, so athletes can see where they're meant to go.
         // Bike and run snap to roads; swim stays straight because open water has
         // nothing to route along.
@@ -1471,6 +1491,71 @@
         const waypointsRef = useRef(waypoints);
 
         // Stable ref callback for setup map — useCallback([]) prevents destroy/recreate on every render
+        // initSetupMap is a stable useCallback, so it reads the basemap from a ref.
+        const triBasemapRef = useRef(null);
+        useEffect(() => {
+          triBasemapRef.current = triBasemap;
+          try { localStorage.setItem("tri-basemap", triBasemap); } catch(_) {}
+          if (setupMapRef.current) applyTriBasemap(setupMapRef.current, triBasemap);
+        }, [triBasemap]);
+
+        // Swap the setup map's tiles, stacking labels over imagery so roads and
+        // building names stay readable on satellite.
+        function applyTriBasemap(map, key) {
+          const b = BIKE_BASEMAPS[key] || BIKE_BASEMAPS.satellite;
+          if (triTileRef.current)  { try { map.removeLayer(triTileRef.current); } catch(_) {} }
+          if (triLabelRef.current) { try { map.removeLayer(triLabelRef.current); } catch(_) {} triLabelRef.current = null; }
+          triTileRef.current = L.tileLayer(b.url, {
+            subdomains: b.subdomains, attribution: b.attribution,
+            maxZoom: 21, maxNativeZoom: b.maxZoom,   // allow zooming past native for placement
+            detectRetina: b.url.includes("{r}"),
+          }).addTo(map);
+          triTileRef.current.setZIndex(1);
+          if (b.labels) {
+            triLabelRef.current = L.tileLayer(b.labels, {
+              subdomains: "abcd", maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: true,
+            }).addTo(map);
+            triLabelRef.current.setZIndex(2);
+          }
+        }
+
+        // Find a venue so setup doesn't start with a pan across the country.
+        // Nominatim is OpenStreetMap's own geocoder, and it's shaky on business
+        // names — "Cooper Fitness Center" returns a gym in Missouri — so show the
+        // candidates and let the organiser pick rather than silently jumping to
+        // the first and dropping waypoints in the wrong state.
+        async function triFindPlace() {
+          const q = (triSearch || "").trim();
+          if (!q) return;
+          setTriSearching(true); setTriSearchMsg(""); setTriResults([]);
+          try {
+            const url = "https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q="
+                      + encodeURIComponent(q);
+            const res = await fetch(url, { headers: { "Accept": "application/json" } });
+            if (!res.ok) throw new Error("Search failed (" + res.status + ")");
+            const j = await res.json();
+            if (!j.length) { setTriSearchMsg(`Nothing found for "${q}". A street address usually works better than a business name.`); return; }
+            setTriResults(j.map(r => ({ lat: +r.lat, lon: +r.lon, name: r.display_name })));
+          } catch (e) {
+            setTriSearchMsg("Couldn't search right now — use “At my location”, or pan to the venue.");
+          } finally {
+            setTriSearching(false);
+          }
+        }
+
+        function triGoToMyLocation() {
+          if (!navigator.geolocation) { setTriSearchMsg("Geolocation isn't available on this device."); return; }
+          setTriSearchMsg("Locating…");
+          navigator.geolocation.getCurrentPosition(
+            p => {
+              if (setupMapRef.current) setupMapRef.current.setView([p.coords.latitude, p.coords.longitude], 19, { animate: true });
+              setTriSearchMsg(`Centred on you (±${Math.round(p.coords.accuracy)}m)`);
+              setTriResults([]);
+            },
+            e => setTriSearchMsg("Couldn't get your location: " + e.message),
+            { enableHighAccuracy: true, timeout: 15000 });
+        }
+
         const initSetupMap = useCallback(el => {
           if (!el) {
             if (setupMapRef.current) {
@@ -1482,8 +1567,8 @@
             return;
           }
           if (setupMapRef.current) return;
-          const map = L.map(el, { zoomControl: true, attributionControl: false });
-          L.tileLayer(BIKE_BASEMAPS.roads.url, { subdomains: BIKE_BASEMAPS.roads.subdomains, maxZoom: BIKE_BASEMAPS.roads.maxZoom, attribution: BIKE_BASEMAPS.roads.attribution, detectRetina: true }).addTo(map);
+          const map = L.map(el, { zoomControl: true, attributionControl: false, maxZoom: 21 });
+          applyTriBasemap(map, triBasemapRef.current);
           if (setupMapViewRef.current) {
             map.setView(setupMapViewRef.current.center, setupMapViewRef.current.zoom);
           } else {
@@ -2217,7 +2302,14 @@
           const wps = (joinLiveData?.waypoints || joinRace?.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
           const center = wps[0] ? [wps[0].lat, wps[0].lng] : [37.7749, -122.4194];
           const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 15);
-          L.tileLayer(BIKE_BASEMAPS.roads.url, { subdomains: BIKE_BASEMAPS.roads.subdomains, maxZoom: BIKE_BASEMAPS.roads.maxZoom, attribution: BIKE_BASEMAPS.roads.attribution, detectRetina: true }).addTo(map);
+          (() => {
+            // Same imagery the course was set up on, so athletes and spectators
+            // recognise the venue rather than a bare road map.
+            const b = BIKE_BASEMAPS[(() => { try { return localStorage.getItem("tri-basemap"); } catch(_) { return null; } })()] || BIKE_BASEMAPS.satellite;
+            L.tileLayer(b.url, { subdomains: b.subdomains, attribution: b.attribution,
+              maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: b.url.includes("{r}") }).addTo(map).setZIndex(1);
+            if (b.labels) L.tileLayer(b.labels, { subdomains: "abcd", maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: true }).addTo(map).setZIndex(2);
+          })();
           if (wps.length > 1) {
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#8FB0CC", weight: 2, dashArray: "6 4", opacity: 0.5 }).addTo(map);
             try { map.fitBounds(wps.map(w => [w.lat, w.lng]), { padding: [20, 20] }); } catch(_) {}
@@ -8147,6 +8239,52 @@
 
                     {/* Sticky map + heading — stays visible while scrolling waypoint list */}
                     <div style={{ position: "sticky", top: clockBannerH, zIndex: 50, background: "#0D2240", borderRadius: "8px 8px 0 0", padding: "10px 16px 0", boxShadow: "0 -20px 0 20px #0A1628" }}>
+                      {/* Venue search + basemap — you need to see the actual pool and
+                          car park to drop points on them. */}
+                      <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", alignItems: "center" }}>
+                        <input value={triSearch}
+                          onChange={e => setTriSearch(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") triFindPlace(); }}
+                          placeholder="Find a venue — e.g. Cooper Fitness Center"
+                          style={{ ...editInputStyle, flex: "1 1 180px", width: "auto", fontFamily: "inherit" }} />
+                        <button onClick={triFindPlace} disabled={triSearching}
+                          style={{ ...btnStyle("#00C6FF", true), padding: "6px 12px", fontSize: 11 }}>
+                          {triSearching ? "…" : "Find"}
+                        </button>
+                        <button onClick={triGoToMyLocation}
+                          title="Most reliable when you're standing at the venue"
+                          style={{ ...btnStyle("#7DF9C4", true), padding: "6px 12px", fontSize: 11, whiteSpace: "nowrap" }}>
+                          ⌖ At my location
+                        </button>
+                        <div style={{ display: "flex", gap: 3, background: "rgba(10,22,40,0.6)", padding: 3, borderRadius: 7 }}>
+                          {[["satellite","🛰 Satellite"],["roads","🗺 Roads"],["minimal","◻ Plain"]].map(([k, label]) => (
+                            <button key={k} onClick={() => setTriBasemap(k)}
+                              style={{ padding: "5px 9px", fontSize: 10, fontWeight: 700, borderRadius: 5, cursor: "pointer", border: "none",
+                                background: triBasemap === k ? "#00C6FF" : "transparent",
+                                color: triBasemap === k ? "#05121F" : "#C7D4E0" }}>{label}</button>
+                          ))}
+                        </div>
+                      </div>
+                      {triSearchMsg && (
+                        <div style={{ fontSize: 10, color: "#8FB0CC", marginBottom: 6 }}>{triSearchMsg}</div>
+                      )}
+                      {triResults.length > 0 && (
+                        <div style={{ marginBottom: 8, background: "#0A1628", border: "1px solid rgba(0,198,255,0.3)", borderRadius: 6 }}>
+                          <div style={{ fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: "#8FB0CC", padding: "6px 10px 2px" }}>
+                            Pick the right one — name searches often match the wrong town
+                          </div>
+                          {triResults.map((r, i) => (
+                            <div key={i} onClick={() => {
+                              if (setupMapRef.current) setupMapRef.current.setView([r.lat, r.lon], 18, { animate: true });
+                              setTriResults([]);
+                              setTriSearchMsg(r.name.split(",").slice(0, 3).join(", "));
+                            }} style={{ padding: "7px 10px", fontSize: 11, color: "#EAF4FF", cursor: "pointer",
+                              borderTop: i ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+                              {r.name}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#7DF9C4" }}>📍 GPS Waypoints</div>
                         <div style={{ fontSize: 10, color: "#8FB0CC" }}>
