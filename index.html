@@ -422,6 +422,15 @@
           attribution: '&copy; Esri, HERE, Garmin, &copy; OpenStreetMap',
           routeColor: "#5AA9FF", trailColor: "#7DF9C4",
         },
+        // Matches the app's navy UI. Esri only renders this style to z16 (z17+
+        // tiles read "Map data not yet available"), so it overzooms from there.
+        dark: {
+          label: "Dark",
+          url: `${ESRI_TILES}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+          subdomains: "abc", maxZoom: 16,
+          attribution: '&copy; Esri, HERE, Garmin, &copy; OpenStreetMap',
+          routeColor: "#5AA9FF", trailColor: "#FFCB45",
+        },
         satellite: {
           label: "Satellite",
           url: `${ESRI_TILES}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
@@ -8657,7 +8666,7 @@
                           ⌖ At my location
                         </button>
                         <div style={{ display: "flex", gap: 3, background: "rgba(10,22,40,0.6)", padding: 3, borderRadius: 7 }}>
-                          {[["satellite","🛰 Satellite"],["roads","🗺 Roads"],["minimal","◻ Plain"]].map(([k, label]) => (
+                          {[["satellite","🛰 Satellite"],["roads","🗺 Roads"],["dark","◼ Dark"],["minimal","◻ Plain"]].map(([k, label]) => (
                             <button key={k} onClick={() => setTriBasemap(k)}
                               style={{ padding: "5px 9px", fontSize: 10, fontWeight: 700, borderRadius: 5, cursor: "pointer", border: "none",
                                 background: triBasemap === k ? "#00C6FF" : "transparent",
