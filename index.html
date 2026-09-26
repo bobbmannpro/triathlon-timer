@@ -218,6 +218,63 @@
       // <defs> in the document body.
       // viewBox is sized to the geometry (spans 58 units plus stroke) so the mark
       // fills its box — a looser box renders it visibly thinner than the wordmark.
+      // A live position thumbnail for the race list. Deliberately not a Leaflet map:
+      // one map per athlete would mean a dozen tile-loading widgets on a phone during
+      // a race. This draws the planned course, the recent breadcrumb and the current
+      // fix as plain SVG, so it costs nothing and always renders.
+      function RaceGpsThumb({ route, track, color, state, w = 88, h = 56 }) {
+        const pts = [].concat(route && route.length > 1 ? route : [], track || []);
+        if (!pts.length) {
+          return (
+            <div style={{ width: w, height: h, borderRadius: 6, background: "#0A1628",
+              border: "1px dashed rgba(255,255,255,0.12)", display: "flex", alignItems: "center",
+              justifyContent: "center", fontSize: 9, color: "#5C7793", flexShrink: 0, textAlign: "center", lineHeight: 1.3 }}>
+              no fix<br/>yet
+            </div>
+          );
+        }
+        const lats = pts.map(p => p[0]), lngs = pts.map(p => p[1]);
+        let minLat = Math.min(...lats), maxLat = Math.max(...lats);
+        let minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+        // A stationary rider would collapse the extent to a point; keep a floor so the
+        // dot sits in the middle of a sane window instead of filling the box.
+        const midLat = (minLat + maxLat) / 2, midLng = (minLng + maxLng) / 2;
+        const kx = Math.cos(midLat * Math.PI / 180) || 1;
+        const MIN_DEG = 0.0009;                       // ~100 m
+        let spanLat = Math.max(maxLat - minLat, MIN_DEG);
+        let spanLng = Math.max((maxLng - minLng) * kx, MIN_DEG);
+        const pad = 6;
+        const s = Math.min((w - pad * 2) / spanLng, (h - pad * 2) / spanLat);
+        const X = (lng) => w / 2 + (lng - midLng) * kx * s;
+        const Y = (lat) => h / 2 - (lat - midLat) * s;
+        const d = (arr) => arr.map((p, i) => `${i ? "L" : "M"}${X(p[1]).toFixed(1)},${Y(p[0]).toFixed(1)}`).join(" ");
+        const cur = (track && track.length) ? track[track.length - 1] : null;
+        return (
+          <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ borderRadius: 6, background: "#0A1628",
+            border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, display: "block" }}>
+            {route && route.length > 1 && (
+              <path d={d(route)} fill="none" stroke="#5AA9FF" strokeWidth="2" strokeOpacity="0.55"
+                strokeLinecap="round" strokeLinejoin="round" />
+            )}
+            {track && track.length > 1 && (
+              <path d={d(track)} fill="none" stroke={color} strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" />
+            )}
+            {cur && (
+              <g>
+                {state === "live" && (
+                  <circle cx={X(cur[1])} cy={Y(cur[0])} r="7" fill={color} opacity="0.25">
+                    <animate attributeName="r" values="4;10;4" dur="1.6s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.35;0;0.35" dur="1.6s" repeatCount="indefinite" />
+                  </circle>
+                )}
+                <circle cx={X(cur[1])} cy={Y(cur[0])} r="4" fill={color} stroke="#0A1628" strokeWidth="1.5" />
+              </g>
+            )}
+          </svg>
+        );
+      }
+
       function TimeathonMark({ size = 30, glow = true }) {
         return (
           <svg width={size} height={size} viewBox="0 0 68 68" aria-hidden="true"
@@ -345,33 +402,33 @@
         Math.max(BIKE_CRUMB_MIN_M, Math.min(BIKE_CRUMB_MAX_M, distM / BIKE_CRUMB_TARGET));
 
       // ── Basemaps ─────────────────────────────────────────────────────────────
-      // Raw OSM tiles are cluttered with buildings and POIs. CARTO's styles are
-      // road-and-water first, which is what a tracking map actually needs, and
-      // they're free with attribution — no API key, no billing account.
-      // Satellite is Esri World Imagery, the standard keyless option, with a
-      // label overlay so roads stay identifiable.
+      // All Esri: its ArcGIS Online tile services are keyless. CARTO used to be
+      // here but now serves an "API KEY REQUIRED" watermark tile to keyless
+      // callers, so every map in the app went blank. maxZoom is the deepest
+      // level Esri reliably has tiles for; maps overzoom past it.
+      const ESRI_TILES = "https://server.arcgisonline.com/ArcGIS/rest/services";
       const BIKE_BASEMAPS = {
         roads: {
           label: "Roads",
-          url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-          subdomains: "abcd", maxZoom: 20,
-          attribution: '&copy; OpenStreetMap &copy; CARTO',
+          url: `${ESRI_TILES}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`,
+          subdomains: "abc", maxZoom: 19,
+          attribution: '&copy; Esri, HERE, Garmin, &copy; OpenStreetMap',
           routeColor: "#5AA9FF", trailColor: "#FFCB45",
         },
         minimal: {
           label: "Minimal",
-          url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-          subdomains: "abcd", maxZoom: 20,
-          attribution: '&copy; OpenStreetMap &copy; CARTO',
+          url: `${ESRI_TILES}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+          subdomains: "abc", maxZoom: 16,
+          attribution: '&copy; Esri, HERE, Garmin, &copy; OpenStreetMap',
           routeColor: "#5AA9FF", trailColor: "#7DF9C4",
         },
         satellite: {
           label: "Satellite",
-          url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          url: `${ESRI_TILES}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
           subdomains: "abc", maxZoom: 19,
           attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
           // Roads/place names on top of the imagery, otherwise it's unreadable.
-          labels: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
+          labels: `${ESRI_TILES}/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}`,
           routeColor: "#7BC4FF", trailColor: "#FFCB45",
         },
       };
@@ -1301,7 +1358,7 @@
             const b = BIKE_BASEMAPS[(() => { try { return localStorage.getItem("tri-basemap"); } catch(_) { return null; } })()] || BIKE_BASEMAPS.satellite;
             L.tileLayer(b.url, { subdomains: b.subdomains, attribution: b.attribution,
               maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: b.url.includes("{r}") }).addTo(map).setZIndex(1);
-            if (b.labels) L.tileLayer(b.labels, { subdomains: "abcd", maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: true }).addTo(map).setZIndex(2);
+            if (b.labels) L.tileLayer(b.labels, { maxZoom: 21, maxNativeZoom: b.maxZoom }).addTo(map).setZIndex(2);
           })();
           if (wps.length > 1) {
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#7DF9C4", weight: 3, opacity: 0.7 }).addTo(map);
@@ -1641,10 +1698,22 @@
         const [btDevices, setBtDevices] = useState([]);
         const [btScanning, setBtScanning] = useState(false);
         const btCharacteristicsRef = useRef({});
-        const [athleteGpsStatus, setAthleteGpsStatus] = useState({});
+        // Raw last-known GPS per athlete, kept as data rather than a live/not-live
+        // flag. Freshness has to be re-derived on a timer: if a phone dies, Firebase
+        // sends no event, so a flag computed only on snapshots stays "live" forever.
+        const [athleteGps, setAthleteGps] = useState({});
         const [athleteTrainerData, setAthleteTrainerData] = useState({});
         const [athleteHrData, setAthleteHrData] = useState({});
         const athleteGpsListenerRef = useRef(null);
+        // Short breadcrumb per athlete, accumulated host-side from successive fixes,
+        // so the thumbnail beside each name shows movement rather than a lone dot.
+        const athleteTrackRef = useRef({});
+        const [athleteTrackTick, setAthleteTrackTick] = useState(0);
+        const [gpsNow, setGpsNow] = useState(Date.now());
+        const RACE_BIKE_SEG   = 2;      // SEGMENTS = Swim, T1, Bike, T2, Run
+        const GPS_LIVE_MS     = 15000;  // a fix this recent means the device is talking
+        const GPS_LOST_MS     = 120000; // beyond this, treat the device as gone
+        const RACE_TRACK_MAX  = 60;     // breadcrumb points kept per athlete
 
         // Athlete live race data + map state
         const [joinGpsTrail, setJoinGpsTrail] = useState([]);
@@ -1743,7 +1812,7 @@
           triTileRef.current.setZIndex(1);
           if (b.labels) {
             triLabelRef.current = L.tileLayer(b.labels, {
-              subdomains: "abcd", maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: true,
+              maxZoom: 21, maxNativeZoom: b.maxZoom,
             }).addTo(map);
             triLabelRef.current.setZIndex(2);
           }
@@ -2405,16 +2474,32 @@
             athleteGpsListenerRef.current.ref.off("value", athleteGpsListenerRef.current.fn);
             athleteGpsListenerRef.current = null;
           }
-          if (!liveRaceCode) { setAthleteGpsStatus({}); setAthleteTrainerData({}); setAthleteHrData({}); return; }
+          if (!liveRaceCode) {
+            setAthleteGps({}); setAthleteTrainerData({}); setAthleteHrData({});
+            athleteTrackRef.current = {};
+            return;
+          }
           const ref = rtdb.ref(`liveRaces/${liveRaceCode}/athletes`);
           const fn = snap => {
             const athArr = snap.val() || [];
             const now = Date.now();
-            const status = {};
+            const gpsMap = {};
             const trainerMap = {};
             const hrMap = {};
+            let moved = false;
             athArr.forEach((ath, idx) => {
-              status[idx] = !!(ath && ath.gps && ath.gps.t && (now - ath.gps.t < 20000));
+              // Every athlete writes to their own node, so any number of phones can
+              // publish at once; this just reads whatever each of them last sent.
+              if (ath && ath.gps && ath.gps.t && ath.gps.lat != null) {
+                gpsMap[idx] = ath.gps;
+                const trk = athleteTrackRef.current[idx] || (athleteTrackRef.current[idx] = []);
+                const last = trk[trk.length - 1];
+                if (!last || last[2] !== ath.gps.t) {
+                  trk.push([ath.gps.lat, ath.gps.lng, ath.gps.t]);
+                  if (trk.length > RACE_TRACK_MAX) trk.splice(0, trk.length - RACE_TRACK_MAX);
+                  moved = true;
+                }
+              }
               if (ath && ath.trainer && (now - (ath.trainer.t || 0) < 20000)) {
                 trainerMap[idx] = ath.trainer;
               }
@@ -2422,14 +2507,35 @@
                 hrMap[idx] = ath.hr;
               }
             });
-            setAthleteGpsStatus(status);
+            setAthleteGps(gpsMap);
             setAthleteTrainerData(trainerMap);
             setAthleteHrData(hrMap);
+            if (moved) setAthleteTrackTick(t => t + 1);
           };
           ref.on("value", fn);
           athleteGpsListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); athleteGpsListenerRef.current = null; };
         }, [liveRaceCode]);
+
+        // A phone that stops publishing sends nothing — including no "I stopped".
+        // Re-check ages on a timer so the indicator decays on its own.
+        useEffect(() => {
+          if (!liveRaceCode) return;
+          const id = setInterval(() => setGpsNow(Date.now()), 2000);
+          return () => clearInterval(id);
+        }, [liveRaceCode]);
+
+        // live → talking now · stale → gone quiet but may come back · lost → treat as
+        // off · none → this athlete's phone never checked in at all.
+        function gpsHealth(idx) {
+          const g = athleteGps[idx];
+          if (!g || !g.t) return { state: "none", label: "No GPS", color: "#5C7793", ageMs: null };
+          const age = Math.max(0, gpsNow - g.t);
+          const ago = age < 60000 ? `${Math.round(age / 1000)}s ago` : `${Math.round(age / 60000)}m ago`;
+          if (age < GPS_LIVE_MS) return { state: "live",  label: "Live",  color: "#7DF9C4", ageMs: age, gps: g };
+          if (age < GPS_LOST_MS) return { state: "stale", label: ago,     color: "#FFCB45", ageMs: age, gps: g };
+          return { state: "lost", label: `Lost · ${ago}`, color: "#FF5C7A", ageMs: age, gps: g };
+        }
 
         // Host-side auto-T2 trigger — fires when trainer distance reaches course target
         useEffect(() => {
@@ -2502,7 +2608,10 @@
         // Sync joinCurSegRef and imperatively update marker/trail color when segment changes
         useEffect(() => {
           if (joinAthIdx === null || !joinLiveData?.athletes?.[joinAthIdx]) return;
-          const splits = joinLiveData.athletes[joinAthIdx].splits || [];
+          // Firebase drops nulls from stored arrays, so unlogged splits come back
+          // missing rather than null; pad back out or every athlete reads as on the run.
+          const raw = joinLiveData.athletes[joinAthIdx].splits || [];
+          const splits = Array.from({ length: SEGMENTS.length }, (_, i) => raw[i] ?? null);
           const seg = splits.findIndex(s => s === null);
           const cur = seg === -1 ? SEGMENTS.length - 1 : seg;
           joinCurSegRef.current = cur;
@@ -2550,7 +2659,7 @@
             const b = BIKE_BASEMAPS[(() => { try { return localStorage.getItem("tri-basemap"); } catch(_) { return null; } })()] || BIKE_BASEMAPS.satellite;
             L.tileLayer(b.url, { subdomains: b.subdomains, attribution: b.attribution,
               maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: b.url.includes("{r}") }).addTo(map).setZIndex(1);
-            if (b.labels) L.tileLayer(b.labels, { subdomains: "abcd", maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: true }).addTo(map).setZIndex(2);
+            if (b.labels) L.tileLayer(b.labels, { maxZoom: 21, maxNativeZoom: b.maxZoom }).addTo(map).setZIndex(2);
           })();
           if (wps.length > 1) {
             L.polyline(wps.map(w => [w.lat, w.lng]), { color: "#8FB0CC", weight: 2, dashArray: "6 4", opacity: 0.5 }).addTo(map);
@@ -3997,11 +4106,30 @@
           // Lap waypoints re-arm: a lap only counts on entering the zone after
           // having left it, so sitting in the start pen doesn't rack up laps.
           const lapInside = {}, lapCounts = {};
-          // Restore cumulative distance from trail length estimate if trail exists
-          if (joinGpsTrailRef.current.length > 0) {
-            const t = joinGpsTrailRef.current;
-            for (let i = 1; i < t.length; i++) totalDistMi += haversineM(t[i-1][0], t[i-1][1], t[i][0], t[i][1]) / 1609.344;
-          }
+          // Resume from what this athlete last published rather than re-summing the
+          // trail: summing raw fixes is the unfiltered measurement that over-read by
+          // ~20%, so a refresh mid-ride used to inflate the total.
+          rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`).once("value")
+            .then(s => {
+              const prev = s.val();
+              // Add rather than assign: a fix may already have landed while this read
+              // was in flight, and that distance is real too.
+              if (prev && prev.distanceMi > 0) totalDistMi += prev.distanceMi;
+              // Already mid-ride when the page reloaded: the ride is under way, so
+              // don't let the first on-bike fix wipe what was just restored.
+              if (prev && prev.onBike) bikeZeroed = true;
+              if (prev && prev.laps > 0) { const w = allWps.find(x => x.action === "lap");
+                                          if (w) lapCounts[w.id] = prev.laps; }
+            })
+            .catch(() => {});
+          // Distance is only meaningful on the bike. The swim is in a pool and the run
+          // is on the honour system, so counting either would corrupt the one figure
+          // that has to be right.
+          let wasOnBike = joinCurSegRef.current === RACE_BIKE_SEG;
+          // Zero the total once, when the bike leg first starts. Without this latch a
+          // corrected split that moves the athlete off and back onto the bike would
+          // wipe a ride that was already half measured.
+          let bikeZeroed = wasOnBike;
           let raceStartedForMe = !!(joinRace?.athletes?.[joinAthIdx]?.started);
           let firstFix = true;
           gpsWatchRef.current = navigator.geolocation.watchPosition(pos => {
@@ -4010,10 +4138,23 @@
             const nowT = Date.now();
             // Doppler speed where the device gives it, smoothed displacement where
             // it doesn't, and nothing at all while stopped.
+            const onBike = joinCurSegRef.current === RACE_BIKE_SEG;
+            // Rolling onto the bike leg starts the measurement from zero, so anything
+            // picked up walking round transition doesn't land on the bike total.
+            if (onBike && !wasOnBike && !bikeZeroed) {
+              bikeZeroed = true;
+              totalDistMi = 0; rejected = 0;
+              joinGpsTrailRef.current = []; setJoinGpsTrail([]);
+              try { localStorage.removeItem("tri-gps-trail"); } catch(_) {}
+            }
+            wasOnBike = onBike;
             {
               const stepM = triDist.add({ lat, lng, t: nowT, acc: accM, spd: speed });
-              if (stepM > 0) totalDistMi += stepM / 1609.344;
-              else if (prevLat !== null) rejected++;
+              // Always feed the filter so it stays warm, but only bank bike miles.
+              if (onBike) {
+                if (stepM > 0) totalDistMi += stepM / 1609.344;
+                else if (prevLat !== null) rejected++;
+              }
             }
             prevT = nowT;
             // Center map on first GPS fix
@@ -4023,7 +4164,9 @@
             }
             prevLat = lat; prevLng = lng;
             setJoinGpsPos({ lat, lng, accuracy: pos.coords.accuracy });
-            setJoinGpsStatus(`GPS active · accuracy ±${Math.round(pos.coords.accuracy)}m · ${totalDistMi.toFixed(2)} mi`);
+            setJoinGpsStatus(onBike
+              ? `GPS active · accuracy ±${Math.round(pos.coords.accuracy)}m · ${totalDistMi.toFixed(2)} mi`
+              : `GPS active · accuracy ±${Math.round(pos.coords.accuracy)}m · distance counts on the bike leg`);
             // Lap waypoints: count a crossing only on entering after leaving.
             allWps.forEach(wp => {
               if (wp.action !== "lap") return;
@@ -4042,6 +4185,7 @@
                      distanceMi: +totalDistMi.toFixed(3),
                      accuracy: accM != null ? Math.round(accM) : null,
                      laps, lapMi, rejected,
+                     seg: joinCurSegRef.current, onBike,
                      t: Date.now() }).catch(console.error);
             // Trail tracking
             joinGpsTrailRef.current = [...joinGpsTrailRef.current, [lat, lng]];
@@ -4106,7 +4250,16 @@
                 setJoinNextSeg(nextWpIdx);
               });
             });
-          }, err => setJoinGpsStatus("GPS error: " + err.message),
+          }, err => {
+            // Denied permission never recovers on its own; timeouts and lost signal do,
+            // and the watch keeps running through those.
+            if (err.code === 1) {
+              stopGpsTracking();
+              setJoinGpsStatus("Location permission denied — allow location for this site, then start GPS again.");
+            } else {
+              setJoinGpsStatus("GPS error: " + err.message + " — still trying…");
+            }
+          },
           { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
         }
 
@@ -5340,7 +5493,7 @@
           if (bikeTileRef.current)  { try { map.removeLayer(bikeTileRef.current); } catch(_) {} }
           if (bikeLabelRef.current) { try { map.removeLayer(bikeLabelRef.current); } catch(_) {} bikeLabelRef.current = null; }
           bikeTileRef.current = L.tileLayer(b.url, {
-            attribution: b.attribution, maxZoom: b.maxZoom, subdomains: b.subdomains,
+            attribution: b.attribution, maxZoom: 20, maxNativeZoom: b.maxZoom, subdomains: b.subdomains,
             // Only for providers that serve an @2x tile via {r}. Without it Leaflet
             // fakes retina by shifting zoom levels, which just costs a zoom step.
             detectRetina: b.url.includes("{r}"),
@@ -5348,7 +5501,7 @@
           bikeTileRef.current.setZIndex(1);
           if (b.labels) {
             bikeLabelRef.current = L.tileLayer(b.labels, {
-              maxZoom: b.maxZoom, subdomains: "abcd", detectRetina: true,
+              maxZoom: 20, maxNativeZoom: b.maxZoom,
             }).addTo(map);
             bikeLabelRef.current.setZIndex(2);
           }
@@ -5391,7 +5544,7 @@
           const b = BIKE_BASEMAPS[bikeBasemap] || BIKE_BASEMAPS.roads;
           const map = L.map(el, { zoomControl: true, attributionControl: false });
           L.tileLayer(b.url, {
-            maxZoom: b.maxZoom, subdomains: b.subdomains, detectRetina: b.url.includes("{r}"),
+            maxZoom: 20, maxNativeZoom: b.maxZoom, subdomains: b.subdomains, detectRetina: b.url.includes("{r}"),
           }).addTo(map);
 
           const d = bikeDraft;
@@ -5536,7 +5689,7 @@
           const map = L.map(el, { zoomControl: true, attributionControl: false })
             .setView([39.5, -98.35], 4);
           L.tileLayer(b.url, {
-            maxZoom: b.maxZoom, subdomains: b.subdomains,
+            maxZoom: 20, maxNativeZoom: b.maxZoom, subdomains: b.subdomains,
             detectRetina: b.url.includes("{r}"),
           }).addTo(map);
           bikeRideMapRef.current = map;
@@ -8245,11 +8398,15 @@
                             🚲 {athleteTrainerData[i].speed != null ? `${(athleteTrainerData[i].speed * 0.621).toFixed(1)} mph` : "Trainer"}
                           </div>
                         )}
-                        {athleteGpsStatus[i] && (
-                          <div style={{ background: "rgba(125,249,196,0.1)", border: "1px solid rgba(125,249,196,0.35)", borderRadius: 4, padding: "3px 8px", fontSize: 11, color: "#7DF9C4", fontWeight: 700, whiteSpace: "nowrap" }}>
-                            📍 GPS
-                          </div>
-                        )}
+                        {(() => {
+                          const hh = gpsHealth(i);
+                          if (hh.state === "none") return null;
+                          return (
+                            <div style={{ background: hh.color + "1A", border: `1px solid ${hh.color}59`, borderRadius: 4, padding: "3px 8px", fontSize: 11, color: hh.color, fontWeight: 700, whiteSpace: "nowrap" }}>
+                              📍 {hh.state === "live" ? "GPS" : hh.label}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -8919,6 +9076,34 @@
                     </div>
                   </div>
 
+                  {/* One glance answers "is everyone's phone still sending?" — the
+                      question you can't check by reading eight rows mid-race. */}
+                  {liveRaceCode && (() => {
+                    const h = athletes.map((_, i) => gpsHealth(i));
+                    const n = (st) => h.filter(x => x.state === st).length;
+                    const onBike = athletes.filter(a => a.started && !a.finished &&
+                      nextUnloggedSeg(a) === RACE_BIKE_SEG).length;
+                    const trouble = h.filter((x, i) => x.state !== "live" &&
+                      athletes[i].started && !athletes[i].finished);
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                        background: trouble.length ? "rgba(255,92,122,0.07)" : "rgba(125,249,196,0.06)",
+                        border: `1px solid ${trouble.length ? "rgba(255,92,122,0.35)" : "rgba(125,249,196,0.28)"}`,
+                        borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
+                        <span style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", color: "#8FB0CC", fontWeight: 700 }}>
+                          GPS signals
+                        </span>
+                        <span style={{ fontSize: 12, color: "#7DF9C4", fontWeight: 700 }}>{n("live")} live</span>
+                        {n("stale") > 0 && <span style={{ fontSize: 12, color: "#FFCB45", fontWeight: 700 }}>{n("stale")} quiet</span>}
+                        {n("lost")  > 0 && <span style={{ fontSize: 12, color: "#FF5C7A", fontWeight: 700 }}>{n("lost")} lost</span>}
+                        {n("none")  > 0 && <span style={{ fontSize: 12, color: "#5C7793", fontWeight: 700 }}>{n("none")} not connected</span>}
+                        <span style={{ fontSize: 10, color: "#8FB0CC" }}>
+                          · {onBike} on the bike leg — the only leg GPS measures
+                        </span>
+                      </div>
+                    );
+                  })()}
+
                   {athletes.map((ath, i) => {
                     const next = nextUnloggedSeg(ath);
                     const done = ath.finished;
@@ -8944,12 +9129,35 @@
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: done ? "#7DF9C4" : "#00C6FF", lineHeight: 1, minWidth: 24 }}>{i + 1}</div>
                             {ath.raceNumber != null && <span style={{ background: "rgba(232,121,249,0.12)", border: "1px solid rgba(232,121,249,0.35)", borderRadius: 4, padding: "1px 7px", fontSize: 12, fontFamily: "var(--tm-font-display)", letterSpacing: 1, color: "#7BE0FF", flexShrink: 0 }}>#{ath.raceNumber}</span>}
+                            {/* Live position beside the name, so ticking through splits
+                                never means losing sight of whose phone is still sending. */}
+                            {(() => {
+                              const hh = gpsHealth(i);
+                              if (hh.state === "none" && !done && !ath.started) return null;
+                              return (
+                                <RaceGpsThumb route={raceRoutes.bike} track={athleteTrackRef.current[i]}
+                                  color={hh.color} state={hh.state} />
+                              );
+                            })()}
                             <div>
-                              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                                 <span style={{ fontWeight: 700, fontSize: 14, color: "#EAF4FF" }}>{ath.name}</span>
-                                {athleteGpsStatus[i] && (
-                                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#7DF9C4", boxShadow: "0 0 0 0 rgba(125,249,196,0.6)", animation: "gpsping 1.4s ease-out infinite", flexShrink: 0 }} title="GPS active" />
-                                )}
+                                {(() => {
+                                  const hh = gpsHealth(i);
+                                  if (hh.state === "none" && !ath.started) return null;
+                                  const bikeMi = hh.gps ? (hh.gps.lapMi ?? hh.gps.distanceMi) : null;
+                                  return (
+                                    <span title={hh.state === "live" ? "Device is publishing now" : "Last fix received " + hh.label}
+                                      style={{ display: "inline-flex", alignItems: "center", gap: 4, background: hh.color + "1A",
+                                        border: `1px solid ${hh.color}59`, borderRadius: 4, padding: "1px 6px",
+                                        fontSize: 10, fontWeight: 700, color: hh.color, whiteSpace: "nowrap" }}>
+                                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: hh.color,
+                                        animation: hh.state === "live" ? "gpsping 1.4s ease-out infinite" : "none" }} />
+                                      {hh.state === "live" ? "GPS live" : hh.label}
+                                      {bikeMi != null && ` · ${bikeMi.toFixed(2)} mi`}
+                                    </span>
+                                  );
+                                })()}
                                 {athleteHrData[i] && (
                                   <span style={{ fontSize: 11, color: "#7DF9C4", fontWeight: 700 }}>❤️ {athleteHrData[i].bpm}</span>
                                 )}
