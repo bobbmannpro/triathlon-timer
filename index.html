@@ -66,7 +66,12 @@
       button { min-height: 46px; font-weight: 800; }
       input, select, textarea { min-height: 46px; font-size: 16px; font-weight: 600;
                                 color: var(--tm-ink); background-color: #FFFFFF; border-radius: 6px; }
-      input[type="number"] { font-weight: 800; }
+      input:not([type]), input[type="text"], input[type="email"], input[type="password"], input[type="search"],
+      input[type="tel"], input[type="url"], input[type="date"], input[type="time"], select, textarea {
+        font-size: 16px !important; min-height: 46px;
+      }
+      input[type="number"] { font-size: 28px !important; font-weight: 800 !important;
+                             font-variant-numeric: tabular-nums; min-height: 46px; padding-top: 4px !important; padding-bottom: 4px !important; }
       input[type="checkbox"], input[type="radio"] { min-height: 0; width: 22px; height: 22px;
                                                     accent-color: var(--tm-ink); }
       input[type="range"], input[type="file"], input[type="color"] { min-height: 0; accent-color: var(--tm-ink); }
@@ -264,29 +269,26 @@
         );
       }
 
-      function TimeathonMark({ size = 30, glow = true }) {
+      // Three discipline lines — swim, bike, run — meeting at the finish post.
+      function TimeathonMark({ size = 30 }) {
         return (
           <svg width={size} height={size} viewBox="0 0 68 68" aria-hidden="true"
-               style={{ display: "block", flexShrink: 0,
-                        filter: glow ? "drop-shadow(0 0 5px rgba(11,13,16,0.18))" : "none" }}>
+               style={{ display: "block", flexShrink: 0 }}>
             <g transform="translate(27,34)">
-              <path d="M-24 -29 L5 0" fill="none" stroke="url(#tmAccent)" strokeWidth="6" strokeLinecap="round" opacity="0.55" />
-              <path d="M-24 0 L5 0"   fill="none" stroke="url(#tmAccent)" strokeWidth="6" strokeLinecap="round" opacity="0.78" />
-              <path d="M-24 29 L5 0"  fill="none" stroke="url(#tmAccent)" strokeWidth="6" strokeLinecap="round" />
-              <path d="M5 0 L34 0"    fill="none" stroke="url(#tmAccent)" strokeWidth="7.5" strokeLinecap="round" />
-              <circle cx="5" cy="0" r="6.5" fill="#FFFFFF" stroke="url(#tmAccent)" strokeWidth="3.5" />
+              <path d="M-24 -29 L5 0" fill="none" stroke={TM.swim} strokeWidth="7" strokeLinecap="round" />
+              <path d="M-24 0 L5 0"   fill="none" stroke={TM.bike} strokeWidth="7" strokeLinecap="round" />
+              <path d="M-24 29 L5 0"  fill="none" stroke={TM.run}  strokeWidth="7" strokeLinecap="round" />
+              <path d="M5 0 L34 0"    fill="none" stroke={TM.ink}  strokeWidth="8.5" strokeLinecap="round" />
+              <circle cx="5" cy="0" r="6.5" fill="#FFFFFF" stroke={TM.ink} strokeWidth="4" />
             </g>
           </svg>
         );
       }
 
-      // The wordmark fades from white into teal across its last characters, as in
-      // timeathon-brand/assets/logo-primary.svg.
+      // Solid ink: a gradient-filled wordmark washes out in glare.
       const TM_WORD_STYLE = {
-        fontFamily: "var(--tm-font)", fontWeight: 900, letterSpacing: -0.5, lineHeight: 1,
-        background: "linear-gradient(90deg,#0B0D10 0%,#0B0D10 66%,#04613F 100%)",
-        WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
-        WebkitTextFillColor: "transparent",
+        fontFamily: "var(--tm-font)", fontWeight: 900, letterSpacing: -1.2, lineHeight: 0.92,
+        color: TM.ink, textTransform: "uppercase",
       };
 
       function TimeathonLockup({ size = 30, wordSize = 26, tagline = null, rule = false, center = true }) {
@@ -295,10 +297,11 @@
             <TimeathonMark size={size} />
             <div style={{ textAlign: "left" }}>
               <div style={{ ...TM_WORD_STYLE, fontSize: wordSize }}>TIMEATHON</div>
-              {rule && <div style={{ height: 3, borderRadius: 2, marginTop: 5, background: "var(--tm-ink)" }} />}
+              {rule && <div style={{ height: 6, marginTop: 6,
+                background: `linear-gradient(90deg, ${TM.swim} 0 33.3%, ${TM.bike} 33.3% 66.6%, ${TM.run} 66.6% 100%)` }} />}
               {tagline && (
-                <div style={{ fontSize: 14, letterSpacing: 3, textTransform: "uppercase",
-                              color: "var(--tm-run)", opacity: 0.75, marginTop: 4 }}>{tagline}</div>
+                <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase",
+                              color: TM.inkMuted, marginTop: 6 }}>{tagline}</div>
               )}
             </div>
           </div>
@@ -327,7 +330,7 @@
               borderRadius: open ? "7px 7px 0 0" : 7,
               padding: "13px 16px", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase",
+                <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase",
                               color: open ? color : "#3D434B" }}>{title}</div>
                 {summary && (
                   <div style={{ fontSize: 14, color: "#3D434B", marginTop: 3,
@@ -1199,22 +1202,32 @@
       }
 
       // ── Style helpers ────────────────────────────────────────────────────────
+      // Primary = solid ink, secondary = 3px ink outline. The palette's "go"
+      // colours (swim blue, run green, muted grey) all read as a plain primary or
+      // secondary; red, amber and orange keep their colour because they mean
+      // something — delete, pause, caution.
       function btnStyle(color, outline = false) {
+        const meaningful = color === TM.live || color === TM.warn || color === TM.bike;
+        const c = meaningful ? color : TM.ink;
         return {
-          background: outline ? "transparent" : color,
-          border: `2px solid ${color}`,
-          color: outline ? color : "#FFFFFF",
-          padding: "10px 20px",
-          borderRadius: 4,
-          fontWeight: 700,
-          fontSize: 14,
-          letterSpacing: 1,
+          background: outline ? "transparent" : c,
+          border: `3px solid ${c}`,
+          color: outline ? c : "#FFFFFF",
+          minHeight: outline ? 46 : 56,
+          padding: "8px 20px",
+          borderRadius: 6,
+          fontFamily: "var(--tm-font)",
+          fontWeight: 800,
+          fontSize: 17,
+          letterSpacing: 0.2,
           cursor: "pointer",
+          display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
         };
       }
 
       function thStyle(color) {
-        return { textAlign: "center", padding: "8px 6px", color, fontWeight: 700, letterSpacing: 1, fontSize: 14, textTransform: "uppercase", whiteSpace: "nowrap" };
+        return { textAlign: "center", padding: "10px 6px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2,
+                 fontSize: 14, textTransform: "uppercase", whiteSpace: "nowrap", borderBottom: `3px solid ${TM.ink}` };
       }
 
       // ── App ──────────────────────────────────────────────────────────────────
@@ -4911,12 +4924,12 @@
 
         const editInputStyle = {
           background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4,
-          padding: "6px 10px", color: "#0B0D10", fontSize: 14, width: 90, outline: "none", fontFamily: "monospace",
+          padding: "6px 10px", color: "#0B0D10", fontSize: 16, fontWeight: 800, width: 110, outline: "none", fontVariantNumeric: "tabular-nums",
         };
 
         const distInputStyle = {
-          background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4,
-          padding: "8px 10px", color: "#0B0D10", fontSize: 14, width: 80, outline: "none", textAlign: "center",
+          background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6,
+          padding: "4px 8px", color: "#0B0D10", width: 96, outline: "none", textAlign: "center",
         };
 
         // ── Bike Live Feed logic ────────────────────────────────────────────────
@@ -6354,7 +6367,7 @@
           <div style={{ minHeight: "100vh", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <div style={{ textAlign: "center" }}>
               <TimeathonLockup size={44} wordSize={34} />
-              <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 2, marginTop: 14 }}>LOADING…</div>
+              <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2, marginTop: 14 }}>LOADING…</div>
             </div>
           </div>
         );
@@ -6367,7 +6380,7 @@
                 <TimeathonLockup size={52} wordSize={40} rule tagline="Swim · Bike · Run" />
               </div>
 
-              <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 12, padding: "28px 24px" }}>
+              <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "28px 24px" }}>
                 <div style={{ display: "flex", marginBottom: 24, background: "#FFFFFF", borderRadius: 6, padding: 3 }}>
                   {[["login","Sign In"],["signup","Create Account"]].map(([mode, label]) => (
                     <button key={mode} onClick={() => { setAuthMode(mode); setAuthError(""); }}
@@ -6452,19 +6465,19 @@
           return (
             <div style={{ background:"#FFFFFF", minHeight:"100vh", fontFamily:"var(--tm-font)", color:"#0B0D10", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
               <TimeathonLockup size={50} wordSize={38} rule />
-              <div style={{ color:"#3D434B", margin:"18px 0 46px", fontSize:14, letterSpacing:3, textTransform:"uppercase" }}>Choose your timer</div>
+              <div style={{ color:"#3D434B", margin:"18px 0 46px", fontSize:14, letterSpacing:1.2, textTransform:"uppercase" }}>Choose your timer</div>
               <div style={{ display:"flex", flexDirection:"column", gap:16, width:"100%", maxWidth:380 }}>
-                <div onClick={() => selectMode("triathlon")} style={{ background:"linear-gradient(135deg,#EFEDE8,#EFEDE8)", border:"2px solid #C9C5BC", borderRadius:16, padding:"28px 24px", cursor:"pointer", transition:"border-color 0.15s" }}>
+                <div onClick={() => selectMode("triathlon")} style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"28px 24px", cursor:"pointer", transition:"border-color 0.15s" }}>
                   <div style={{ fontSize:32, marginBottom:10 }}>🏊‍♂️🚴‍♂️🏃‍♂️</div>
                   <div style={{ fontSize:22, fontWeight:700, color:"#0B0D10", letterSpacing:0.5 }}>Triathlon Timer</div>
                   <div style={{ fontSize:14, color:"#3D434B", marginTop:5 }}>Swim · Bike · Run · Live GPS tracking</div>
                 </div>
-                <div onClick={() => selectMode("swim")} style={{ background:"linear-gradient(135deg,#FFFFFF,#EFEDE8)", border:"2px solid #C9C5BC", borderRadius:16, padding:"28px 24px", cursor:"pointer" }}>
+                <div onClick={() => selectMode("swim")} style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"28px 24px", cursor:"pointer" }}>
                   <div style={{ fontSize:32, marginBottom:10 }}>🏊‍♀️🏊‍♂️</div>
                   <div style={{ fontSize:22, fontWeight:700, color:"#0B0D10", letterSpacing:0.5 }}>Swim Meet Timer</div>
                   <div style={{ fontSize:14, color:"#3D434B", marginTop:5 }}>Multi-lane · Live results · Team scoring</div>
                 </div>
-                <div onClick={() => selectMode("bike")} style={{ background:"linear-gradient(135deg,#FFFFFF,#EFEDE8)", border:"2px solid #C9C5BC", borderRadius:16, padding:"28px 24px", cursor:"pointer" }}>
+                <div onClick={() => selectMode("bike")} style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"28px 24px", cursor:"pointer" }}>
                   <div style={{ fontSize:32, marginBottom:10 }}>🚴‍♀️📍</div>
                   <div style={{ fontSize:22, fontWeight:700, color:"#0B0D10", letterSpacing:0.5 }}>Bike Live Feed</div>
                   <div style={{ fontSize:14, color:"#04613F", marginTop:5 }}>Follow one rider · Live GPS · Watts · Cadence</div>
@@ -6478,7 +6491,7 @@
           <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: "var(--tm-font)", color: "#0B0D10" }}>
 
             {/* HEADER */}
-            <div style={{ background: "linear-gradient(135deg,#FFFFFF,#EFEDE8)", borderBottom: "3px solid transparent", borderImage: "linear-gradient(90deg,#0B3FCC,#04613F) 1", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
+            <div style={{ background: "#FFFFFF", borderBottom: "3px solid transparent", borderImage: "linear-gradient(90deg,#0B3FCC,#04613F) 1", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
               {(() => {
                 if (appMode === "bike") {
                   return bikeView !== "home" && (
@@ -6504,7 +6517,7 @@
                   meant something entirely different. */}
               <button onClick={() => selectMode(null)} title="Switch to a different timer"
                 style={{ background: "none", border: "none", cursor: "pointer", marginTop: 5, padding: "2px 6px",
-                         fontSize: 14, letterSpacing: 3, textTransform: "uppercase",
+                         fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase",
                          color: "var(--tm-run)", opacity: 0.75, fontFamily: "inherit" }}>
                 {appMode === "swim" ? "Swim Meet Timer" : appMode === "bike" ? "Bike Live Feed" : "Triathlon Timer"}
                 <span style={{ marginLeft: 6, opacity: 0.8 }}>&#8645;</span>
@@ -6596,7 +6609,7 @@
                     <div style={{ fontFamily: "var(--tm-font)", fontWeight: 900, fontSize: 30,
                                   letterSpacing: -0.5, color: "var(--tm-ink)", lineHeight: 1 }}>Triathlon Timer</div>
                     <div className="tm-lane" style={{ maxWidth: 190, margin: "12px auto 0" }} />
-                    <div style={{ fontSize: 14, letterSpacing: 3, textTransform: "uppercase",
+                    <div style={{ fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase",
                                   color: "var(--tm-run)", opacity: 0.75, marginTop: 10 }}>Swim · Bike · Run</div>
                   </div>
 
@@ -6604,7 +6617,7 @@
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
                     {/* New Race */}
-                    <button onClick={startNewRace} style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #0B3FCC", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={startNewRace} style={{ background: "#EFEDE8", border: "2px solid #0B3FCC", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>🏁</div>
                       <div>
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#0B3FCC" }}>New Race</div>
@@ -6614,7 +6627,7 @@
                     </button>
 
                     {/* Existing Race */}
-                    <button onClick={() => setHomeSection(homeSection === "races" ? null : "races")} style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #8A5A00", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setHomeSection(homeSection === "races" ? null : "races")} style={{ background: "#EFEDE8", border: "2px solid #8A5A00", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📋</div>
                       <div>
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#8A5A00" }}>Saved Races</div>
@@ -6653,7 +6666,7 @@
                     )}
 
                     {/* Athletes */}
-                    <button onClick={() => setView("athletes")} style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #04613F", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("athletes")} style={{ background: "#EFEDE8", border: "2px solid #04613F", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>🏊</div>
                       <div>
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#04613F" }}>Athlete Library</div>
@@ -6665,7 +6678,7 @@
                     </button>
 
                     {/* Past Races */}
-                    <button onClick={() => setView("archive")} style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #04613F", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("archive")} style={{ background: "#EFEDE8", border: "2px solid #04613F", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📁</div>
                       <div>
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#04613F" }}>Past Results</div>
@@ -6677,7 +6690,7 @@
                     </button>
 
                     {/* Manual Entry */}
-                    <button onClick={() => setView("manual")} style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #B3001B", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("manual")} style={{ background: "#EFEDE8", border: "2px solid #B3001B", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>✏️</div>
                       <div>
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#B3001B" }}>Manual Entry</div>
@@ -6687,7 +6700,7 @@
                     </button>
 
                     {/* Watch a Race */}
-                    <button onClick={() => setView("watch")} style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #0B3FCC", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
+                    <button onClick={() => setView("watch")} style={{ background: "#EFEDE8", border: "2px solid #0B3FCC", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>👀</div>
                       <div>
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#0B3FCC" }}>Watch a Race</div>
@@ -6697,7 +6710,7 @@
                     </button>
 
                     {/* Race Photos */}
-                    <div style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #0B3FCC", borderRadius: 12, overflow: "hidden" }}>
+                    <div style={{ background: "#EFEDE8", border: "2px solid #0B3FCC", borderRadius: 8, overflow: "hidden" }}>
                       <button onClick={() => setPhotoCodeSection(s => !s)} style={{ width: "100%", background: "none", border: "none", padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                         <div style={{ fontSize: 40, lineHeight: 1 }}>📷</div>
                         <div>
@@ -6783,7 +6796,7 @@
                   <div style={{ paddingTop: 8, paddingBottom: 40 }}>
 
                     {/* Race Info */}
-                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Race Info</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Race Info</div>
                     <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
                       <div style={{ flex: 2 }}>
                         <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 4 }}>Race Name</div>
@@ -6797,7 +6810,7 @@
 
                     {/* Certificate & Event */}
                     <div style={{ marginBottom: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "14px 16px" }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Certificate &amp; Event</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Certificate &amp; Event</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         <input value={manualCertConfig.eventName} onChange={e => setManualCertConfig(c => ({ ...c, eventName: e.target.value }))} placeholder="Event name for certificates" style={inputSt} />
                         <input value={manualCertConfig.orgName} onChange={e => setManualCertConfig(c => ({ ...c, orgName: e.target.value }))} placeholder="Organization name (optional)" style={inputSt} />
@@ -6812,7 +6825,7 @@
 
                     {/* Courses */}
                     <div style={{ marginBottom: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "14px 16px" }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Courses &nbsp;&mdash;&nbsp; <span style={{ color: "#04613F", fontWeight: 400 }}>distances for pace calculations</span></div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Courses &nbsp;&mdash;&nbsp; <span style={{ color: "#04613F", fontWeight: 400 }}>distances for pace calculations</span></div>
                       <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                         {[["swim","#0B3FCC",["yards","meters"]],["bike","#8A5A00",["miles","km"]],["run","#04613F",["miles","km"]]].map(([seg, col, opts]) => (
                           <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -6848,7 +6861,7 @@
                     {/* Age Groups */}
                     <div style={{ marginBottom: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "14px 16px" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => setManualAgeGroups(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Youth</button>
                           <button onClick={() => setManualAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Adult 5yr</button>
@@ -6901,7 +6914,7 @@
                     </div>
 
                     {/* Athletes */}
-                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Athletes</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Athletes</div>
                     {manualAthletes.map((ma, i) => (
                       <div key={ma.id} style={{ marginBottom: 10, borderRadius: 6 }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
@@ -7018,9 +7031,9 @@
                     {resultsRace && (
                       <div style={{ marginTop: 20 }}>
                         {finishers.length > 0 ? (
-                          <div style={{ background: "#EFEDE8", borderRadius: 10, border: "2px solid #C9C5BC", padding: "16px", marginBottom: 14 }}>
+                          <div style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "16px", marginBottom: 14 }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-                              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#B3001B" }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#B3001B" }}>
                                 Results — {finishers.length} Finisher{finishers.length !== 1 ? "s" : ""}
                               </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -7066,7 +7079,7 @@
                               if (keys.length <= 1) return null;
                               return (
                                 <div style={{ marginTop: 16 }}>
-                                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Age Group Breakdown</div>
+                                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Age Group Breakdown</div>
                                   {keys.map(key => (
                                     <div key={key} style={{ marginBottom: 12 }}>
                                       <div style={{ fontSize: 14, fontWeight: 700, color: "#0B3FCC", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6, borderLeft: "3px solid #0B3FCC", paddingLeft: 8 }}>{key}</div>
@@ -7083,7 +7096,7 @@
                               );
                             })()}
                             <div style={{ marginTop: 14, borderTop: "2px solid #C9C5BC", paddingTop: 12 }}>
-                              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 8 }}>Individual Certificates</div>
+                              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 8 }}>Individual Certificates</div>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                                 {finishers.map(ath => (
                                   <button key={ath.id} onClick={() => printArchivedCert(resultsRace, ath)} style={{ ...btnStyle("#8A5A00", true), padding: "4px 12px", fontSize: 14 }}>🏅 {ath.name}</button>
@@ -7105,7 +7118,7 @@
               {/* ── PAST RACES ── */}
               {view === "archive" && (
                 <div style={{ paddingTop: 8 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#04613F", marginBottom: 16 }}>📁 Past Results</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#04613F", marginBottom: 16 }}>📁 Past Results</div>
                   {savedArchive.length === 0 ? (
                     <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "28px 20px", textAlign: "center", color: "#3D434B", fontSize: 14 }}>
                       No past races yet — races are saved automatically when an athlete finishes.
@@ -7118,7 +7131,7 @@
                         const dnf = (race.athletes || []).filter(a => !a.finished);
                         const segs = race.segments || SEGMENTS;
                         return (
-                          <div key={race.id} style={{ background: "#EFEDE8", borderRadius: 10, border: "2px solid #C9C5BC", overflow: "hidden" }}>
+                          <div key={race.id} style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", overflow: "hidden" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontWeight: 700, fontSize: 15, color: "#0B0D10" }}>{race.name}</div>
@@ -7200,7 +7213,7 @@
                     raceAthletes.sort((a, b) => a.name.localeCompare(b.name));
                     return (
                       <div style={{ marginBottom: 20 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>
                           All Athletes &nbsp;&mdash;&nbsp; <span style={{ color: "#0B3FCC", fontWeight: 400 }}>{raceAthletes.length} unique across {savedRaces.length} race{savedRaces.length !== 1 ? "s" : ""}</span>
                         </div>
                         {raceAthletes.length === 0 ? (
@@ -7294,7 +7307,7 @@
                   {/* My Races */}
                   {Object.keys(joinedRaces).length > 0 && registrationStep === "code" && !joinRace && (
                     <div style={{ marginBottom: 20 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#04613F", marginBottom: 10 }}>My Races</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#04613F", marginBottom: 10 }}>My Races</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         {Object.values(joinedRaces).sort((a, b) => (b.joinedAt || 0) - (a.joinedAt || 0)).map(jr => (
                           <div key={jr.code} style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -7326,7 +7339,7 @@
                   {/* Enter new code */}
                   {registrationStep === "code" && !joinRace && (
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, color: "#3D434B", marginBottom: 8 }}>RACE CODE</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 8 }}>RACE CODE</div>
                       <div style={{ display: "flex", gap: 8 }}>
                         <input value={joinCode} onChange={e => { setJoinCode(e.target.value.toUpperCase()); setRegError(""); }}
                           onKeyDown={e => e.key === "Enter" && joinRaceByCode()}
@@ -7345,7 +7358,7 @@
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#04613F" }}>{regRaceData.raceName || "Race"}</div>
                         <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1 }}>Host: {regRaceData.publisherName} &nbsp;·&nbsp; Code: {regRaceData.code}</div>
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, color: "#3D434B", marginBottom: 10 }}>CONFIRM YOUR INFO</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 10 }}>CONFIRM YOUR INFO</div>
                       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                         <input value={regProfile.firstName} onChange={e => setRegProfile(p => ({ ...p, firstName: e.target.value }))}
                           placeholder="First name"
@@ -7448,12 +7461,12 @@
                         <div>
                           {/* Course map preview while picking name */}
                           {(joinRace.waypoints || []).some(w => w.lat !== null) && (
-                            <div style={{ marginBottom: 14, borderRadius: 10, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
-                              <div style={{ fontSize: 14, letterSpacing: 3, color: "#0B3FCC", padding: "7px 12px", background: "#EFEDE8" }}>📍 RACE COURSE</div>
+                            <div style={{ marginBottom: 14, borderRadius: 8, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
+                              <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#0B3FCC", padding: "7px 12px", background: "#EFEDE8" }}>📍 RACE COURSE</div>
                               <div ref={joinMapContainerRef} style={{ height: 200 }} />
                             </div>
                           )}
-                          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, color: "#3D434B", marginBottom: 10 }}>SELECT YOUR NAME</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 10 }}>SELECT YOUR NAME</div>
                           {(joinRace.athletes || []).map((ath, idx) => (
                             <button key={idx} onClick={() => setJoinAthIdx(idx)}
                               style={{ display: "block", width: "100%", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, padding: "12px 14px", color: "#0B0D10", fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
@@ -7464,8 +7477,8 @@
                       ) : (
                         <div>
                           {/* Race clock — always visible */}
-                          <div style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", borderRadius: 10, padding: "10px 16px", marginBottom: 12, textAlign: "center", border: "2px solid #C9C5BC" }}>
-                            <div style={{ fontSize: 14, letterSpacing: 3, color: "#3D434B" }}>
+                          <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 16px", marginBottom: 12, textAlign: "center", border: "2px solid #C9C5BC" }}>
+                            <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B" }}>
                               {joinLiveData?.clockStarted ? "RACE CLOCK" : joinLiveData ? "RACE NOT STARTED" : "CONNECTING…"}
                             </div>
                             <div style={{ fontFamily: "var(--tm-font)", fontVariantNumeric: "tabular-nums", fontWeight: 700, fontSize: 40, color: joinLiveData?.clockStarted ? "#04613F" : "#3D434B", lineHeight: 1 }}>
@@ -7490,21 +7503,21 @@
                           </div>
 
                           {/* Live GPS map with waypoints + trail */}
-                          <div style={{ marginBottom: 12, borderRadius: 10, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
-                            <div style={{ fontSize: 14, letterSpacing: 3, color: "#04613F", padding: "7px 12px", background: "#EFEDE8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div style={{ marginBottom: 12, borderRadius: 8, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
+                            <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#04613F", padding: "7px 12px", background: "#EFEDE8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                               <span>📍 RACE MAP</span>
                               {joinGpsTrail.length > 0 && <span style={{ color: "#3D434B" }}>{joinGpsTrail.length} pts tracked</span>}
                             </div>
                             <div ref={joinMapContainerRef} style={{ height: 260 }} />
                             {joinGpsActive && (
-                              <div style={{ position: "absolute", bottom: 8, right: 8, display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.8)", borderRadius: 20, padding: "4px 8px", zIndex: 1000 }}>
+                              <div style={{ position: "absolute", bottom: 8, right: 8, display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.8)", borderRadius: 8, padding: "4px 8px", zIndex: 1000 }}>
                                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#04613F", animation: "gpsping 1.4s ease-out infinite" }} />
                                 <span style={{ fontSize: 14, color: "#04613F", letterSpacing: 1, fontWeight: 700 }}>GPS LIVE</span>
                               </div>
                             )}
                             {joinGpsPos && (
                               <button onClick={() => { joinFollowingRef.current = true; try { joinLeafletMapRef.current?.setView([joinGpsPos.lat, joinGpsPos.lng], 16, { animate: true }); } catch(_) {} }}
-                                style={{ position: "absolute", bottom: 8, left: 8, zIndex: 1000, background: "rgba(255,255,255,0.85)", border: "2px solid #C9C5BC", borderRadius: 20, padding: "4px 10px", color: "#0B3FCC", fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: 1 }}>
+                                style={{ position: "absolute", bottom: 8, left: 8, zIndex: 1000, background: "rgba(255,255,255,0.85)", border: "2px solid #C9C5BC", borderRadius: 8, padding: "4px 10px", color: "#0B3FCC", fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: 1 }}>
                                 ⊕ ME
                               </button>
                             )}
@@ -7527,7 +7540,7 @@
                             return (
                               <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "12px 14px", marginBottom: 12, border: "2px solid #C9C5BC" }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: showProgress ? 8 : 4 }}>
-                                  <div style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 2 }}>🚲 {bikeLabel}</div>
+                                  <div style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1.2 }}>🚲 {bikeLabel}</div>
                                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                                     {trainer.readings.speed != null && <span style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: "#8A5A00", letterSpacing: 1 }}>{(trainer.readings.speed * 0.621).toFixed(1)} <span style={{ fontSize: 14, color: "#3D434B" }}>mph</span></span>}
                                     {trainer.readings.cadence != null && <span style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: "#8A5A00", letterSpacing: 1 }}>{trainer.readings.cadence} <span style={{ fontSize: 14, color: "#3D434B" }}>rpm</span></span>}
@@ -7556,7 +7569,7 @@
                             return (
                               <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: "2px solid #C9C5BC" }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                  <div style={{ fontSize: 14, color: "#04613F", letterSpacing: 2 }}>❤️ HEART RATE</div>
+                                  <div style={{ fontSize: 14, color: "#04613F", letterSpacing: 1.2 }}>❤️ HEART RATE</div>
                                   <div style={{ fontFamily: "var(--tm-font)", fontSize: 30, color: "#04613F", letterSpacing: 1, lineHeight: 1 }}>
                                     {hrDev.readings.heartRate} <span style={{ fontSize: 14, color: "#3D434B" }}>bpm</span>
                                   </div>
@@ -7575,7 +7588,7 @@
                               <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: `2px solid ${watchConnected ? "#C9C5BC" : "#C9C5BC"}` }}>
                                 {/* Header row */}
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: watchConnected ? 10 : 6 }}>
-                                  <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 2 }}>⌚ GARMIN WATCH</div>
+                                  <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1.2 }}>⌚ GARMIN WATCH</div>
                                   {watchConnected
                                     ? <span style={{ fontSize: 14, color: "#04613F", letterSpacing: 1, animation: "gpsping 1.4s ease-out infinite" }}>● WORKOUT ACTIVE</span>
                                     : watchToken && <span style={{ fontSize: 14, color: "#3D434B" }}>Waiting for watch…</span>}
@@ -7587,7 +7600,7 @@
                                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
                                       {/* Distance */}
                                       <div style={{ background: "#FFFFFF", borderRadius: 6, padding: "8px 12px", flex: 1, minWidth: 80, textAlign: "center" }}>
-                                        <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 2 }}>DISTANCE</div>
+                                        <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2 }}>DISTANCE</div>
                                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, color: "#0B3FCC", lineHeight: 1 }}>
                                           {gpsData?.distanceMi != null ? gpsData.distanceMi.toFixed(2) : "0.00"}
                                           <span style={{ fontSize: 14, color: "#3D434B", marginLeft: 2 }}>mi</span>
@@ -7595,7 +7608,7 @@
                                       </div>
                                       {/* Current segment */}
                                       <div style={{ background: "#FFFFFF", borderRadius: 6, padding: "8px 12px", flex: 1, minWidth: 80, textAlign: "center" }}>
-                                        <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 2 }}>SEGMENT</div>
+                                        <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2 }}>SEGMENT</div>
                                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, color: segColors[curSeg] || "#04613F", lineHeight: 1 }}>
                                           {SEGMENTS[curSeg]}
                                         </div>
@@ -7603,7 +7616,7 @@
                                       {/* GPS accuracy */}
                                       {gpsData?.accuracy != null && (
                                         <div style={{ background: "#FFFFFF", borderRadius: 6, padding: "8px 12px", flex: 1, minWidth: 80, textAlign: "center" }}>
-                                          <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 2 }}>GPS ACC</div>
+                                          <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2 }}>GPS ACC</div>
                                           <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, color: gpsData.accuracy < 10 ? "#04613F" : gpsData.accuracy < 25 ? "#8A5A00" : "#04613F", lineHeight: 1 }}>
                                             {gpsData.accuracy.toFixed(0)}<span style={{ fontSize: 14, color: "#3D434B", marginLeft: 2 }}>m</span>
                                           </div>
@@ -7666,7 +7679,7 @@
                             const next = allWps[joinNextSeg];
                             return allWps.length > 0 && (
                               <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
-                                <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 2, marginBottom: 4 }}>NEXT CHECKPOINT</div>
+                                <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2, marginBottom: 4 }}>NEXT CHECKPOINT</div>
                                 {next
                                   ? <div style={{ fontWeight: 700, color: "#0B0D10", fontSize: 14 }}>{next.label} <span style={{ color: "#3D434B", fontWeight: 400, fontSize: 14 }}>· {next.radiusM}m radius</span></div>
                                   : <div style={{ color: "#04613F", fontWeight: 700 }}>All checkpoints passed 🎉</div>}
@@ -7675,7 +7688,7 @@
                           })()}
 
                           {/* Race roster */}
-                          <div style={{ fontSize: 14, letterSpacing: 3, color: "#3D434B", marginBottom: 10 }}>RACE ROSTER</div>
+                          <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", marginBottom: 10 }}>RACE ROSTER</div>
                           {(joinLiveData?.athletes || joinRace.athletes || []).map((ath, idx) => {
                             const isMe = idx === joinAthIdx;
                             const clock = joinLiveClockMs;
@@ -7723,8 +7736,8 @@
                   </div>
 
                   {/* Bluetooth card */}
-                  <div style={{ background: "#EFEDE8", borderRadius: 12, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>
+                  <div style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>
                       Bluetooth
                     </div>
 
@@ -7745,7 +7758,7 @@
                         {btDevices.length > 0 && (
                           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
                             {btDevices.map(dev => (
-                              <div key={dev.id} style={{ background: "#FFFFFF", border: `2px solid ${dev.connected ? "#04613F" : "#3D434B"}`, borderRadius: 10, padding: "14px 14px 10px" }}>
+                              <div key={dev.id} style={{ background: "#FFFFFF", border: `2px solid ${dev.connected ? "#04613F" : "#3D434B"}`, borderRadius: 8, padding: "14px 14px 10px" }}>
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     {dev.connected && (
@@ -7760,7 +7773,7 @@
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                   {dev.readings.heartRate != null && (
                                     <div style={{ background: "#EFEDE8", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
-                                      <div style={{ fontSize: 14, letterSpacing: 2, color: "#3D434B", textTransform: "uppercase" }}>HR</div>
+                                      <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textTransform: "uppercase" }}>HR</div>
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#04613F", letterSpacing: 1 }}>
                                         {dev.readings.heartRate}<span style={{ fontSize: 14, color: "#3D434B", marginLeft: 2 }}>bpm</span>
                                       </div>
@@ -7768,7 +7781,7 @@
                                   )}
                                   {dev.readings.cadence != null && (
                                     <div style={{ background: "#EFEDE8", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
-                                      <div style={{ fontSize: 14, letterSpacing: 2, color: "#3D434B", textTransform: "uppercase" }}>Cadence</div>
+                                      <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textTransform: "uppercase" }}>Cadence</div>
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#8A5A00", letterSpacing: 1 }}>
                                         {dev.readings.cadence}<span style={{ fontSize: 14, color: "#3D434B", marginLeft: 2 }}>rpm</span>
                                       </div>
@@ -7776,7 +7789,7 @@
                                   )}
                                   {dev.readings.speed != null && (
                                     <div style={{ background: "#EFEDE8", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
-                                      <div style={{ fontSize: 14, letterSpacing: 2, color: "#3D434B", textTransform: "uppercase" }}>Speed</div>
+                                      <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textTransform: "uppercase" }}>Speed</div>
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#0B3FCC", letterSpacing: 1 }}>
                                         {dev.readings.speed}<span style={{ fontSize: 14, color: "#3D434B", marginLeft: 2 }}>km/h</span>
                                       </div>
@@ -7784,7 +7797,7 @@
                                   )}
                                   {dev.readings.power != null && (
                                     <div style={{ background: "#EFEDE8", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
-                                      <div style={{ fontSize: 14, letterSpacing: 2, color: "#3D434B", textTransform: "uppercase" }}>Power</div>
+                                      <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textTransform: "uppercase" }}>Power</div>
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#0B3FCC", letterSpacing: 1 }}>
                                         {dev.readings.power}<span style={{ fontSize: 14, color: "#3D434B", marginLeft: 2 }}>W</span>
                                       </div>
@@ -7792,7 +7805,7 @@
                                   )}
                                   {dev.readings.trainerDistMi != null && (
                                     <div style={{ background: "#EFEDE8", borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
-                                      <div style={{ fontSize: 14, letterSpacing: 2, color: "#3D434B", textTransform: "uppercase" }}>Trainer Dist</div>
+                                      <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textTransform: "uppercase" }}>Trainer Dist</div>
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#8A5A00", letterSpacing: 1 }}>
                                         {dev.readings.trainerDistMi.toFixed(2)}<span style={{ fontSize: 14, color: "#3D434B", marginLeft: 2 }}>mi</span>
                                       </div>
@@ -7820,7 +7833,7 @@
                                   const minsAgo = Math.round((t1 - t0) / 60000);
                                   return (
                                     <div style={{ marginTop: 10, background: "#FFFFFF", borderRadius: 6, padding: "8px 10px" }}>
-                                      <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 2, marginBottom: 6 }}>HR HISTORY</div>
+                                      <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2, marginBottom: 6 }}>HR HISTORY</div>
                                       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
                                         <polyline fill="none" stroke="#04613F" strokeWidth="1.5" points={polyPts} />
                                         <text x={W - 2} y={y(lastBpm).toFixed(1)} fill="#04613F" fontSize="9" textAnchor="end" dominantBaseline="middle">{lastBpm}</text>
@@ -7840,8 +7853,8 @@
                   </div>
 
                   {/* Garmin Watch (WiFi) card */}
-                  <div style={{ background: "#EFEDE8", borderRadius: 12, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>
+                  <div style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>
                       Garmin Watch (WiFi)
                     </div>
 
@@ -7866,8 +7879,8 @@
                         {watchTokenLoading ? "Generating…" : "⌚ Pair Garmin Watch"}
                       </button>
                     ) : (
-                      <div style={{ background: "#FFFFFF", border: `2px solid ${watchConnected ? "#04613F" : "#0B3FCC"}`, borderRadius: 10, padding: "16px", textAlign: "center" }}>
-                        <div style={{ fontSize: 14, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 8 }}>
+                      <div style={{ background: "#FFFFFF", border: `2px solid ${watchConnected ? "#04613F" : "#0B3FCC"}`, borderRadius: 8, padding: "16px", textAlign: "center" }}>
+                        <div style={{ fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 8 }}>
                           ⌚ Garmin Watch Code
                         </div>
                         <div style={{ fontFamily: "var(--tm-font), monospace", fontSize: 38, letterSpacing: 0.5, color: "#0B3FCC", marginBottom: 2 }}>
@@ -7897,8 +7910,8 @@
                     const hasAny = btDevices.some(d => d.connected) || watchConnected;
                     if (!hasAny) return null;
                     return (
-                      <div style={{ background: "#EFEDE8", borderRadius: 12, border: "2px solid #C9C5BC", padding: "18px 16px" }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 14 }}>
+                      <div style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "18px 16px" }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 14 }}>
                           Live Data Dashboard
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
@@ -7911,7 +7924,7 @@
                             const val = allReadings[key];
                             return (
                               <div key={key} style={{ background: "#FFFFFF", borderRadius: 8, padding: "14px 10px", textAlign: "center", border: "2px solid #C9C5BC" }}>
-                                <div style={{ fontSize: 14, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 4 }}>{label}</div>
+                                <div style={{ fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 4 }}>{label}</div>
                                 <div style={{ fontFamily: "var(--tm-font)", fontSize: 32, color: val != null ? color : "#EFEDE8", letterSpacing: 1 }}>
                                   {val != null ? val : "--"}
                                 </div>
@@ -7921,7 +7934,7 @@
                           })}
                           {watchConnected && (
                             <div style={{ background: "#FFFFFF", borderRadius: 8, padding: "14px 10px", textAlign: "center", border: "2px solid #C9C5BC" }}>
-                              <div style={{ fontSize: 14, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 4 }}>GPS</div>
+                              <div style={{ fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 4 }}>GPS</div>
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
                                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#04613F", animation: "gpsping 1.2s ease-in-out infinite" }} />
                                 <span style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: "#04613F", letterSpacing: 1 }}>Active</span>
@@ -7940,10 +7953,10 @@
               {/* ── PROFILE ── */}
               {view === "profile" && (
                 <div style={{ paddingTop: 8, maxWidth: 480, margin: "0 auto" }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 16 }}>My Profile</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 16 }}>My Profile</div>
 
-                  <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 10, padding: "18px 16px", marginBottom: 14 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Personal Info</div>
+                  <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "18px 16px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Personal Info</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div style={{ display: "flex", gap: 8 }}>
                         <div style={{ flex: 1 }}>
@@ -8012,8 +8025,8 @@
                     </div>
                   </div>
 
-                  <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 10, padding: "18px 16px", marginBottom: 14 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Change Password</div>
+                  <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "18px 16px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Change Password</div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
                         style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "9px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
@@ -8090,7 +8103,7 @@
 
                         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "28px 0 20px" }}>
                           <div style={{ flex: 1, height: 1, background: "#EFEDE8" }} />
-                          <div style={{ fontSize: 14, letterSpacing: 2, color: "#3D434B", textTransform: "uppercase" }}>or</div>
+                          <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textTransform: "uppercase" }}>or</div>
                           <div style={{ flex: 1, height: 1, background: "#EFEDE8" }} />
                         </div>
 
@@ -8120,8 +8133,8 @@
                           <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); setWatchSelectedAthId(null); watchSelectedAthIdRef.current = null; localStorage.removeItem("tri-active-watch"); }}
                             style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, color: "#3D434B", fontSize: 14, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
                         </div>
-                        <div style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", borderRadius: 10, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "2px solid #C9C5BC" }}>
-                          <div style={{ fontSize: 14, letterSpacing: 3, color: "#3D434B", marginBottom: 2 }}>RACE CLOCK</div>
+                        <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "2px solid #C9C5BC" }}>
+                          <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", marginBottom: 2 }}>RACE CLOCK</div>
                           <div style={{ fontFamily: "var(--tm-font)", fontSize: 52, letterSpacing: 0.5, color: "#0B3FCC", lineHeight: 1 }}>{formatTime(spectatorClockMs || liveRace.clockMs || 0)}</div>
                         </div>
                         {/* Athlete personal dashboard */}
@@ -8144,10 +8157,10 @@
                             return prev !== null ? s - prev : null;
                           });
                           return (
-                            <div style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: "2px solid #C9C5BC", borderRadius: 12, padding: "14px 16px", marginBottom: 18 }}>
+                            <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "14px 16px", marginBottom: 18 }}>
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, color: "#04613F" }}>YOUR RACE</div>
+                                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#04613F" }}>YOUR RACE</div>
                                   {myAth.raceNumber != null && <span style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "1px 7px", fontSize: 14, fontFamily: "var(--tm-font)", letterSpacing: 0.5, color: "#04613F" }}>#{myAth.raceNumber}</span>}
                                 </div>
                                 <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: myAth.finished ? "#04613F" : "#0B3FCC" }}>
@@ -8180,7 +8193,7 @@
                             </div>
                           );
                         })()}
-                        <div style={{ fontSize: 14, letterSpacing: 3, color: "#3D434B", textAlign: "center", marginBottom: 12 }}>LEADERBOARD</div>
+                        <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textAlign: "center", marginBottom: 12 }}>LEADERBOARD</div>
                         {rankedWatchAthletes.length === 0 && <div style={{ textAlign: "center", color: "#3D434B", padding: "30px 0" }}>Waiting for athletes…</div>}
                         {rankedWatchAthletes.map((ath, idx) => {
                           const place = idx + 1;
@@ -8197,7 +8210,7 @@
                           return (
                             <div key={ath.id}
                               onClick={() => { const next = isSelected ? null : ath.id; setWatchSelectedAthId(next); watchSelectedAthIdRef.current = next; }}
-                              style={{ background: "#EFEDE8", borderRadius: 10, marginBottom: 10, border: `2px solid ${isSelected ? "#0B3FCC" : borderColor}`, borderTop: `3px solid ${isSelected ? "#0B3FCC" : topAccent}`, overflow: "hidden", cursor: "pointer" }}>
+                              style={{ background: "#EFEDE8", borderRadius: 8, marginBottom: 10, border: `2px solid ${isSelected ? "#0B3FCC" : borderColor}`, borderTop: `3px solid ${isSelected ? "#0B3FCC" : topAccent}`, overflow: "hidden", cursor: "pointer" }}>
                               <div style={{ padding: "12px 14px" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                                   <div style={{ minWidth: 40, textAlign: "center", flexShrink: 0 }}>
@@ -8308,7 +8321,7 @@
                                   if (!gps && !ath.hr) return null;
                                   return (
                                     <div style={{ borderTop: "2px solid #C9C5BC", padding: "10px 14px", background: "#EFEDE8" }}>
-                                      <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 2, marginBottom: 6 }}>📍 LIVE DATA</div>
+                                      <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1.2, marginBottom: 6 }}>📍 LIVE DATA</div>
                                       <div style={{ display: "flex", gap: 14, fontSize: 14, color: "#3D434B", flexWrap: "wrap" }}>
                                         {gps?.distanceMi != null && <span>Distance: <strong style={{ color: "#0B0D10" }}>{gps.distanceMi.toFixed(2)} mi</strong></span>}
                                         {gps?.speed != null && gps.speed > 0 && <span>Speed: <strong style={{ color: "#0B0D10" }}>{(gps.speed * 2.237).toFixed(1)} mph</strong></span>}
@@ -8327,13 +8340,13 @@
                           const wps = (liveRace.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
                           const hasGps = rankedWatchAthletes.some(a => a.gps);
                           return (
-                            <div style={{ marginTop: 16, borderRadius: 10, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
-                              <div style={{ fontSize: 14, letterSpacing: 3, color: "#04613F", padding: "8px 12px", background: "#EFEDE8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <div style={{ marginTop: 16, borderRadius: 8, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
+                              <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#04613F", padding: "8px 12px", background: "#EFEDE8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                                 <span>📍 LIVE GPS MAP</span>
                                 {liveRaceCode && <button onClick={() => clearWatchTrails(liveRace?.code)} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, color: "#3D434B", fontSize: 14, cursor: "pointer", padding: "2px 8px" }}>🗑 Trails</button>}
                               </div>
                               <div ref={watchMapContainerRef} style={{ height: 220 }} />
-                              <div style={{ position: "absolute", bottom: 8, right: 8, display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.75)", borderRadius: 20, padding: "4px 8px", zIndex: 1000 }}>
+                              <div style={{ position: "absolute", bottom: 8, right: 8, display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.75)", borderRadius: 8, padding: "4px 8px", zIndex: 1000 }}>
                                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: hasGps ? "#04613F" : "#3D434B", boxShadow: hasGps ? "0 0 0 0 rgba(11,13,16,0.18)" : "none", animation: hasGps ? "gpsping 1.4s ease-out infinite" : "none" }} />
                                 <span style={{ fontSize: 14, color: hasGps ? "#04613F" : "#3D434B", letterSpacing: 1, fontWeight: 700 }}>{hasGps ? "GPS LIVE" : "NO SIGNAL"}</span>
                               </div>
@@ -8366,7 +8379,7 @@
                   {showSaveBeforeReg && (
                     <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 20px" }}
                       onClick={e => { if (e.target === e.currentTarget) setShowSaveBeforeReg(false); }}>
-                      <div style={{ background: "#EFEDE8", border: "2px solid #04613F", borderRadius: 12, padding: "24px 20px", width: "100%", maxWidth: 420 }}>
+                      <div style={{ background: "#EFEDE8", border: "2px solid #04613F", borderRadius: 8, padding: "24px 20px", width: "100%", maxWidth: 420 }}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#0B0D10", marginBottom: 6 }}>Name this race before opening registration</div>
                         <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 16 }}>The race code is locked in when you save — it will never change for this race.</div>
                         <input
@@ -8638,7 +8651,7 @@
                     summary={ageGroups.length === 0 ? "No age groups — everyone scores together"
                       : `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}`}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button onClick={() => setAgeGroups(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Youth</button>
                         <button onClick={() => setAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Adult 5yr</button>
@@ -8779,7 +8792,7 @@
                         stays inside the panel — an outward bleed painted over the card. */}
                     <div className="tri-setup-mapstick" style={{ position: "sticky", top: clockBannerH, zIndex: 50, background: "#EFEDE8", padding: "8px 16px 0", boxShadow: "0 10px 14px -8px rgba(11,13,16,0.18)" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#04613F" }}>📍 GPS Waypoints</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#04613F" }}>📍 GPS Waypoints</div>
                         <div style={{ fontSize: 14, color: "#3D434B" }}>
                           {raceDrawLeg ? `— tap to draw the ${raceDrawLeg} course` : "— tap map to place pins"}
                         </div>
@@ -9115,7 +9128,7 @@
                     }
                   </div>
                   {!clockStarted && (
-                    <div style={{ background: "linear-gradient(135deg,#EFEDE8,#EFEDE8)", border: `2px solid ${raceMode === "simultaneous" ? "#8A5A00" : "#0B3FCC"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
+                    <div style={{ background: "#EFEDE8", border: `2px solid ${raceMode === "simultaneous" ? "#8A5A00" : "#0B3FCC"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#0B0D10", marginBottom: 4 }}>Ready to Race?</div>
                       {raceMode === "simultaneous" && (
                         <div style={{ fontSize: 14, color: "#8A5A00", marginBottom: 10, letterSpacing: 1 }}>SIMULTANEOUS START — all athletes go at once</div>
@@ -9127,12 +9140,12 @@
                   )}
 
                   {clockStarted && anyUnstarted && raceMode === "separate" && (
-                    <button onClick={sendOffAll} style={{ ...btnStyle("#8A5A00"), width: "100%", marginBottom: 12, fontSize: 14, letterSpacing: 2 }}>
+                    <button onClick={sendOffAll} style={{ ...btnStyle("#8A5A00"), width: "100%", marginBottom: 12, fontSize: 14, letterSpacing: 1.2 }}>
                       &#9654;&#9654; Start Everyone Now
                     </button>
                   )}
 
-                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>
                     {athletes.length} Athletes &nbsp;&mdash;&nbsp; Tap to log splits
                     <div style={{ marginTop: 10 }}>
                       {!liveRaceCode ? (
@@ -9176,7 +9189,7 @@
                         background: trouble.length ? "#EFEDE8" : "#EFEDE8",
                         border: `2px solid ${trouble.length ? "#C9C5BC" : "#C9C5BC"}`,
                         borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
-                        <span style={{ fontSize: 14, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", fontWeight: 700 }}>
+                        <span style={{ fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", fontWeight: 700 }}>
                           GPS signals
                         </span>
                         <span style={{ fontSize: 14, color: "#04613F", fontWeight: 700 }}>{n("live")} live</span>
@@ -9364,7 +9377,7 @@
                         {/* Edit panel */}
                         {isEditing && (
                           <div style={{ padding: "14px", background: "#FFFFFF", borderTop: "2px solid #C9C5BC" }}>
-                            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>
                               Edit Gun Times &nbsp;(MM:SS.T)
                             </div>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
@@ -9409,12 +9422,12 @@
                     <img src={certConfig.customLogoB64 || LOGO_B64} alt="Logo" style={{ height: 44, objectFit: "contain", flexShrink: 0 }} />
                     <div>
                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#0B0D10", lineHeight: 1 }}>{certConfig.eventName || "Timeathon Results"}</div>
-                      <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Swim &middot; Bike &middot; Run</div>
+                      <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2, textTransform: "uppercase", marginTop: 2 }}>Swim &middot; Bike &middot; Run</div>
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#3D434B" }}>Final Results</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Final Results</div>
                       <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>
                         {courses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" · ")}
                       </div>
@@ -9440,7 +9453,7 @@
                     </div>
                   ) : (
                     <div style={{ overflowX: "auto" }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 6 }}>Overall</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 6 }}>Overall</div>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                         <thead>
                           <tr style={{ borderBottom: "2px solid #C9C5BC" }}>
@@ -9498,10 +9511,10 @@
 
                       {ageGroupSections.length > 0 && (
                         <div style={{ marginTop: 24 }}>
-                          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Age Group Breakdown</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Age Group Breakdown</div>
                           {ageGroupSections.map(([label, group]) => (
                             <div key={label} style={{ marginBottom: 20 }}>
-                              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#04613F", marginBottom: 6, borderLeft: "3px solid #04613F", paddingLeft: 8 }}>{label}</div>
+                              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#04613F", marginBottom: 6, borderLeft: "3px solid #04613F", paddingLeft: 8 }}>{label}</div>
                               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                                 <thead>
                                   <tr style={{ borderBottom: "2px solid #C9C5BC" }}>
@@ -10041,7 +10054,7 @@
 
                 const S = { // shared styles
                   card: { background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 },
-                  label: { fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:4 },
+                  label: { fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:4 },
                   input: { background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" },
                   row: { display:"flex", gap:8, alignItems:"center" }
                 };
@@ -10071,7 +10084,7 @@
                           <div style={{ fontFamily:"var(--tm-font)", fontWeight:900, fontSize:44, letterSpacing:-0.5, color:"var(--tm-ink)", lineHeight:1 }}>
                             <span style={{ color:"#04613F" }}>Swim</span> Meet
                           </div>
-                          <div style={{ fontSize:14, letterSpacing:4, textTransform:"uppercase", color:"#3D434B", marginTop:6 }}>
+                          <div style={{ fontSize:14, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginTop:6 }}>
                             {swimMeet.meetName || "No meet loaded"}
                           </div>
                         </div>
@@ -10085,7 +10098,7 @@
                             setSwimLiveCode(null);
                             setSwimView("setup");
                           }}
-                            style={{ background:"linear-gradient(135deg,#EFEDE8,#EFEDE8)", border:"2px solid #04613F", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"#EFEDE8", border:"2px solid #04613F", borderRadius:8, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>🏊</div>
                             <div>
                               <div style={{ fontFamily:"var(--tm-font)", fontSize:26, letterSpacing:0.5, color:"#04613F" }}>New Meet</div>
@@ -10095,7 +10108,7 @@
                           </button>
 
                           <button onClick={() => setSwimHomeSection(swimHomeSection === "meets" ? null : "meets")}
-                            style={{ background:"linear-gradient(135deg,#EFEDE8,#EFEDE8)", border:"2px solid #8A5A00", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"#EFEDE8", border:"2px solid #8A5A00", borderRadius:8, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>📋</div>
                             <div>
                               <div style={{ fontFamily:"var(--tm-font)", fontSize:26, letterSpacing:0.5, color:"#8A5A00" }}>Existing Meets</div>
@@ -10133,7 +10146,7 @@
                           )}
 
                           <button onClick={() => setSwimView("athletes")}
-                            style={{ background:"linear-gradient(135deg,#EFEDE8,#EFEDE8)", border:"2px solid #04613F", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"#EFEDE8", border:"2px solid #04613F", borderRadius:8, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>👥</div>
                             <div>
                               <div style={{ fontFamily:"var(--tm-font)", fontSize:26, letterSpacing:0.5, color:"#04613F" }}>Swim Teams</div>
@@ -10145,7 +10158,7 @@
                           </button>
 
                           <button onClick={() => setSwimView("archive")}
-                            style={{ background:"linear-gradient(135deg,#EFEDE8,#EFEDE8)", border:"2px solid #04613F", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"#EFEDE8", border:"2px solid #04613F", borderRadius:8, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>📁</div>
                             <div>
                               <div style={{ fontFamily:"var(--tm-font)", fontSize:26, letterSpacing:0.5, color:"#04613F" }}>Past Meets</div>
@@ -10157,7 +10170,7 @@
                           </button>
 
                           <button onClick={() => setView("swimwatch")}
-                            style={{ background:"linear-gradient(135deg,#EFEDE8,#EFEDE8)", border:"2px solid #0B3FCC", borderRadius:12, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
+                            style={{ background:"#EFEDE8", border:"2px solid #0B3FCC", borderRadius:8, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>👀</div>
                             <div>
                               <div style={{ fontFamily:"var(--tm-font)", fontSize:26, letterSpacing:0.5, color:"#0B3FCC" }}>Watch a Meet</div>
@@ -10552,7 +10565,7 @@
                           <div>
                             {/* Event / heat header */}
                             <div style={{ ...S.card, marginBottom:10 }}>
-                              <div style={{ fontSize:14, color:"#3D434B", fontWeight:700, letterSpacing:2, textTransform:"uppercase" }}>
+                              <div style={{ fontSize:14, color:"#3D434B", fontWeight:700, letterSpacing:1.2, textTransform:"uppercase" }}>
                                 Event {activeEv.eventNum} &mdash; {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
                               </div>
                               <div style={{ fontSize:14, color:"#04613F", marginTop:2 }}>
@@ -10561,8 +10574,8 @@
                             </div>
 
                             {/* Clock */}
-                            <div style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:12, padding:"20px 16px", textAlign:"center", marginBottom:14 }}>
-                              <div style={{ fontSize:52, fontWeight:700, letterSpacing:2, color: swimClockRunning ? "#0B3FCC" : "#0B0D10", fontVariantNumeric:"tabular-nums" }}>
+                            <div style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"20px 16px", textAlign:"center", marginBottom:14 }}>
+                              <div style={{ fontSize:52, fontWeight:700, letterSpacing:1.2, color: swimClockRunning ? "#0B3FCC" : "#0B0D10", fontVariantNumeric:"tabular-nums" }}>
                                 {formatSwimTime(swimClockMs)}
                               </div>
                               <div style={{ display:"flex", gap:10, justifyContent:"center", marginTop:12 }}>
@@ -10579,7 +10592,7 @@
                                         results: null,
                                       }).catch(console.error);
                                     }
-                                  }} style={{ ...btnStyle("#0B3FCC"), fontSize:16, padding:"12px 40px", letterSpacing:2 }}>
+                                  }} style={{ ...btnStyle("#0B3FCC"), fontSize:16, padding:"12px 40px", letterSpacing:1.2 }}>
                                     ▶ START ALL
                                   </button>
                                 ) : (
@@ -10599,7 +10612,7 @@
 
                             {/* Live Session panel */}
                             <div style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"12px 14px", marginBottom:14 }}>
-                              <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>📡 Live Session</div>
+                              <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>📡 Live Session</div>
                               {!swimLiveCode ? (
                                 <button style={{ ...btnStyle("#04613F"), fontSize:14, padding:"8px 20px" }} onClick={() => {
                                   const savedMeet = swimSavedMeets.find(m => m.id === swimMeet._id);
@@ -10625,7 +10638,7 @@
                                 <div>
                                   <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:6 }}>
                                     <span style={{ fontSize:14, color:"#3D434B" }}>Code:</span>
-                                    <span style={{ fontSize:24, fontWeight:700, letterSpacing:5, color:"#0B3FCC", fontFamily:"monospace" }}>{swimLiveCode}</span>
+                                    <span style={{ fontSize:24, fontWeight:700, letterSpacing:1.2, color:"#0B3FCC", fontFamily:"monospace" }}>{swimLiveCode}</span>
                                     <button style={{ ...btnStyle("#04613F", true), padding:"4px 10px", fontSize:14 }} onClick={() => navigator.clipboard?.writeText(swimLiveCode).catch(() => {})}>
                                       📋 Copy
                                     </button>
@@ -10904,7 +10917,7 @@
                       <div>
                         {/* Clicker Assignments */}
                         <div style={S.card}>
-                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>📡 Clicker Assignments</div>
+                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>📡 Clicker Assignments</div>
                           {swimHostClickers.length === 0 ? (
                             <div style={{ fontSize:14, color:"#3D434B", marginBottom:10 }}>No clickers assigned yet.</div>
                           ) : (
@@ -10928,12 +10941,12 @@
 
                         {/* Lane Timer (remote phones) */}
                         <div style={S.card}>
-                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>🏁 Lane Timer Devices</div>
+                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>🏁 Lane Timer Devices</div>
                           {swimLiveCode ? (
                             <div>
                               <div style={{ fontSize:14, color:"#0B0D10", marginBottom:6 }}>Share this code with lane operators:</div>
                               <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                                <span style={{ fontSize:28, fontWeight:700, letterSpacing:6, color:"#0B3FCC", fontFamily:"monospace" }}>{swimLiveCode}</span>
+                                <span style={{ fontSize:28, fontWeight:700, letterSpacing:1.2, color:"#0B3FCC", fontFamily:"monospace" }}>{swimLiveCode}</span>
                                 <button style={{ ...btnStyle("#04613F", true), padding:"5px 12px", fontSize:14 }} onClick={() => navigator.clipboard?.writeText(swimLiveCode).catch(() => {})}>
                                   📋 Copy
                                 </button>
@@ -10962,33 +10975,33 @@
                         </div>
 
                         {swimAthleteView === "add" && (
-                          <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:10, padding:"16px", marginBottom:16 }}>
+                          <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"16px", marginBottom:16 }}>
                             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                               <div>
-                                <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Full Name</div>
+                                <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:1.2, textTransform:"uppercase" }}>Full Name</div>
                                 <input value={swimNewAthlete.name} onChange={e => setSwimNewAthlete(a => ({ ...a, name: e.target.value }))}
                                   placeholder="First Last" style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" }} />
                               </div>
                               <div>
-                                <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Team</div>
+                                <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:1.2, textTransform:"uppercase" }}>Team</div>
                                 <input value={swimNewAthlete.team} onChange={e => setSwimNewAthlete(a => ({ ...a, team: e.target.value }))}
                                   placeholder="Team name" style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" }} />
                               </div>
                               <div style={{ display:"flex", gap:10 }}>
                                 <div style={{ flex:1 }}>
-                                  <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Age</div>
+                                  <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:1.2, textTransform:"uppercase" }}>Age</div>
                                   <input type="number" min={1} max={99} value={swimNewAthlete.age||""} onChange={e => setSwimNewAthlete(a => ({ ...a, age: e.target.value }))}
                                     placeholder="Age" style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 10px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" }} />
                                 </div>
                                 <div style={{ flex:1 }}>
-                                  <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Gender</div>
+                                  <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:1.2, textTransform:"uppercase" }}>Gender</div>
                                   <select value={swimNewAthlete.gender} onChange={e => setSwimNewAthlete(a => ({ ...a, gender: e.target.value }))}
                                     style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 10px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%" }}>
                                     {["Girls","Boys","Mixed"].map(g => <option key={g} value={g}>{g}</option>)}
                                   </select>
                                 </div>
                                 <div style={{ flex:1 }}>
-                                  <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:2, textTransform:"uppercase" }}>Age Group</div>
+                                  <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:1.2, textTransform:"uppercase" }}>Age Group</div>
                                   <select value={swimNewAthlete.ageGroup} onChange={e => setSwimNewAthlete(a => ({ ...a, ageGroup: e.target.value }))}
                                     style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 10px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%" }}>
                                     {["8 & Under","9-10","11-12","13-14","15-18","Open"].map(g => <option key={g} value={g}>{g}</option>)}
@@ -11026,7 +11039,7 @@
                           const teams = [...new Set(swimAthletes.map(a => a.team || "Unassigned"))].sort();
                           return teams.map(team => (
                             <div key={team} style={{ marginBottom:16 }}>
-                              <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#04613F", marginBottom:8 }}>{team}</div>
+                              <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#04613F", marginBottom:8 }}>{team}</div>
                               <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                                 {swimAthletes.filter(a => (a.team || "Unassigned") === team).map(ath => {
                                   const pbs = Object.entries(ath.personalBests || {});
@@ -11047,7 +11060,7 @@
                                       </div>
                                       {expanded && pbs.length > 0 && (
                                         <div style={{ padding:"8px 14px 10px", borderTop:"2px solid #C9C5BC", background:"#EFEDE8" }}>
-                                          <div style={{ fontSize:14, color:"#04613F", fontWeight:700, letterSpacing:2, textTransform:"uppercase", marginBottom:6 }}>Personal Bests</div>
+                                          <div style={{ fontSize:14, color:"#04613F", fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", marginBottom:6 }}>Personal Bests</div>
                                           {pbs.map(([key, pb]) => {
                                             const parts = key.split("_");
                                             const label = `${parts[0]}y ${parts[1]} (${parts[2]})`;
@@ -11075,7 +11088,7 @@
                     {/* ── ARCHIVE ── */}
                     {swimView === "archive" && (
                       <div>
-                        <div style={{ fontSize:14, color:"#3D434B", fontWeight:700, letterSpacing:3, textTransform:"uppercase", marginBottom:12 }}>
+                        <div style={{ fontSize:14, color:"#3D434B", fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", marginBottom:12 }}>
                           Past Meets ({swimArchive.length})
                         </div>
                         {swimArchive.length === 0 ? (
@@ -11124,7 +11137,7 @@
                   {swimConfirmNewMeet && (
                     <div style={{ position:"fixed", inset:0, background:"rgba(255,255,255,0.92)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 20px" }}
                       onClick={e => { if (e.target === e.currentTarget) setSwimConfirmNewMeet(false); }}>
-                      <div style={{ background:"#EFEDE8", border:"2px solid #8A5A00", borderRadius:12, padding:"24px 20px", width:"100%", maxWidth:420 }}>
+                      <div style={{ background:"#EFEDE8", border:"2px solid #8A5A00", borderRadius:8, padding:"24px 20px", width:"100%", maxWidth:420 }}>
                         <div style={{ fontSize:14, fontWeight:700, color:"#0B0D10", marginBottom:6 }}>Save current meet?</div>
                         <div style={{ fontSize:14, color:"#3D434B", marginBottom:20 }}>
                           {swimMeet.meetName ? `"${swimMeet.meetName}"` : "This meet"} has unsaved changes. Save it before starting a new one?
@@ -11151,7 +11164,7 @@
                   {swimShowSaveBefore && (
                     <div style={{ position:"fixed", inset:0, background:"rgba(255,255,255,0.92)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 20px" }}
                       onClick={e => { if (e.target === e.currentTarget) setSwimShowSaveBefore(false); }}>
-                      <div style={{ background:"#EFEDE8", border:"2px solid #04613F", borderRadius:12, padding:"24px 20px", width:"100%", maxWidth:420 }}>
+                      <div style={{ background:"#EFEDE8", border:"2px solid #04613F", borderRadius:8, padding:"24px 20px", width:"100%", maxWidth:420 }}>
                         <div style={{ fontSize:14, fontWeight:700, color:"#0B0D10", marginBottom:6 }}>Name this meet before starting a live session</div>
                         <div style={{ fontSize:14, color:"#3D434B", marginBottom:16 }}>The meet code is locked in when you save — it will never change for this meet.</div>
                         <input
@@ -11221,7 +11234,7 @@
                   {/* Join form */}
                   {!connected && (
                     <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 }}>
-                      <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>Join Session</div>
+                      <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>Join Session</div>
                       <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap" }}>
                         <div style={{ flex:2, minWidth:120 }}>
                           <div style={{ fontSize:14, color:"#3D434B", marginBottom:3 }}>Meet Code</div>
@@ -11231,7 +11244,7 @@
                             onKeyDown={e => e.key === "Enter" && joinLaneTimer()}
                             maxLength={6}
                             placeholder="ABC123"
-                            style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:16, fontFamily:"monospace", letterSpacing:3, outline:"none", width:"100%", boxSizing:"border-box" }}
+                            style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:16, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
                         </div>
                         <div style={{ flex:1, minWidth:70 }}>
@@ -11266,7 +11279,7 @@
                         <div>
                           <div style={{ fontSize:15, fontWeight:700, color:"#0B0D10" }}>{swimLaneSession.meetName || "Unnamed Meet"}</div>
                           <div style={{ fontSize:14, color:"#3D434B", marginTop:1 }}>
-                            Code: <span style={{ fontFamily:"monospace", color:"#04613F", letterSpacing:2 }}>{swimLaneCode}</span>
+                            Code: <span style={{ fontFamily:"monospace", color:"#04613F", letterSpacing:1.2 }}>{swimLaneCode}</span>
                           </div>
                         </div>
                         <button style={{ background:"transparent", border:"2px solid #C9C5BC", borderRadius:6, padding:"6px 14px", fontSize:14, color:"#3D434B", cursor:"pointer" }} onClick={() => {
@@ -11281,24 +11294,24 @@
 
                       {/* Lane + event/heat pill row */}
                       <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
-                        <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:20, padding:"5px 14px", fontSize:14, fontWeight:700, color:"#0B3FCC" }}>
+                        <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"5px 14px", fontSize:14, fontWeight:700, color:"#0B3FCC" }}>
                           Lane {swimLaneNum}
                         </div>
                         {swimLaneSession.activeEvent && (
-                          <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:20, padding:"5px 14px", fontSize:14, color:"#3D434B" }}>
+                          <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"5px 14px", fontSize:14, color:"#3D434B" }}>
                             Event {swimLaneSession.activeEvent}
                             {activeEvData?.eventName ? ` · ${activeEvData.eventName}` : ""}
                           </div>
                         )}
                         {swimLaneSession.activeHeat && (
-                          <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:20, padding:"5px 14px", fontSize:14, color:"#3D434B" }}>
+                          <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"5px 14px", fontSize:14, color:"#3D434B" }}>
                             Heat {swimLaneSession.activeHeat}{totalHeats > 1 ? ` of ${totalHeats}` : ""}
                           </div>
                         )}
                       </div>
 
                       {/* Swimmer card */}
-                      <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:12, padding:"18px 20px", marginBottom:16, minHeight:80 }}>
+                      <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"18px 20px", marginBottom:16, minHeight:80 }}>
                         {mySwimmer ? (
                           <div>
                             <div style={{ fontSize:28, fontWeight:700, color:"#0B0D10", marginBottom:4 }}>{mySwimmer.name || "—"}</div>
@@ -11314,7 +11327,7 @@
 
                       {/* Clock */}
                       <div style={{ textAlign:"center", marginBottom:20 }}>
-                        <div style={{ fontSize:64, fontWeight:700, letterSpacing:3, color: status === "racing" ? "#0B3FCC" : "#3D434B", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
+                        <div style={{ fontSize:64, fontWeight:700, letterSpacing:1.2, color: status === "racing" ? "#0B3FCC" : "#3D434B", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
                           {formatSwimTime(status === "racing" ? swimLaneClockMs : (swimLaneFinished && swimLaneSession?.results?.[swimLaneNum] ? swimLaneSession.results[swimLaneNum].finalMs : 0))}
                         </div>
                         <div style={{ fontSize:14, color:"#3D434B", marginTop:8 }}>
@@ -11335,8 +11348,8 @@
                           setSwimLaneFinished(true);
                         }}
                         style={{
-                          width:"100%", padding:"32px 20px", fontSize:22, fontWeight:900, letterSpacing:3,
-                          borderRadius:16, marginBottom:16, userSelect:"none", WebkitUserSelect:"none",
+                          width:"100%", padding:"32px 20px", fontSize:22, fontWeight:900, letterSpacing:1.2,
+                          borderRadius:8, marginBottom:16, userSelect:"none", WebkitUserSelect:"none",
                           cursor: status === "racing" && !swimLaneFinished ? "pointer" : "default",
                           background: swimLaneFinished ? "#EFEDE8" : status === "racing" ? "#EFEDE8" : "#EFEDE8",
                           border: `3px solid ${swimLaneFinished ? "#0B3FCC" : status === "racing" ? "#B3001B" : "#C9C5BC"}`,
@@ -11349,7 +11362,7 @@
 
                       {/* Clicker configuration */}
                       <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"12px 14px" }}>
-                        <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>Bluetooth Clicker</div>
+                        <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>Bluetooth Clicker</div>
                         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                           <span style={{ fontSize:14, color:"#0B0D10" }}>Key:</span>
                           <span style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"4px 12px", fontFamily:"monospace", fontSize:14, color:"#0B3FCC", minWidth:40, textAlign:"center" }}>
@@ -11423,7 +11436,7 @@
                   {/* Join form */}
                   {!connected && (
                     <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 }}>
-                      <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>Join a Meet</div>
+                      <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>Join a Meet</div>
                       <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
                         <div style={{ flex:1 }}>
                           <div style={{ fontSize:14, color:"#3D434B", marginBottom:3 }}>Meet Code</div>
@@ -11433,7 +11446,7 @@
                             onKeyDown={e => e.key === "Enter" && joinSwimWatch()}
                             maxLength={6}
                             placeholder="ABC123"
-                            style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"10px 14px", color:"#0B0D10", fontSize:18, fontFamily:"monospace", letterSpacing:4, outline:"none", width:"100%", boxSizing:"border-box" }}
+                            style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"10px 14px", color:"#0B0D10", fontSize:18, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
                         </div>
                         <button style={{ padding:"10px 24px", fontWeight:700, fontSize:14, background:"#0B3FCC", border:"none", borderRadius:4, color:"#FFFFFF", cursor:"pointer" }} onClick={joinSwimWatch}>
@@ -11452,7 +11465,7 @@
                         <div>
                           <div style={{ fontSize:15, fontWeight:700, color:"#0B0D10" }}>{session.meetName || "Swim Meet"}</div>
                           <div style={{ fontSize:14, color:"#3D434B", marginTop:2 }}>
-                            {session.pool || ""} · Code: <span style={{ fontFamily:"monospace", color:"#04613F", letterSpacing:2 }}>{swimWatchCode}</span>
+                            {session.pool || ""} · Code: <span style={{ fontFamily:"monospace", color:"#04613F", letterSpacing:1.2 }}>{swimWatchCode}</span>
                           </div>
                         </div>
                         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
@@ -11474,7 +11487,7 @@
                       {/* Swimmer chooser */}
                       {swimWatchChooserOpen && (
                         <div style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"12px 14px", marginBottom:12 }}>
-                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:2, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>Who are you cheering for?</div>
+                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>Who are you cheering for?</div>
                           {swimWatchCheering && (
                             <button style={{ ...btnStyle("#B3001B", true), fontSize:14, padding:"4px 12px", marginBottom:8 }} onClick={() => { setSwimWatchCheering(null); setSwimWatchChooserOpen(false); }}>
                               ✕ Stop cheering
@@ -11499,14 +11512,14 @@
                         </div>
                       ) : activeHt ? (
                         <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 }}>
-                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:2, textTransform:"uppercase", color:"#3D434B", marginBottom:6 }}>
+                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:6 }}>
                             Event {session.activeEvent} — {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
                           </div>
                           <div style={{ fontSize:14, color:"#04613F", marginBottom:10 }}>
                             Heat {session.activeHeat} of {activeEv.heats.length}
                           </div>
                           {/* Live clock */}
-                          <div style={{ fontSize:44, fontWeight:700, letterSpacing:2, color: status === "racing" ? "#0B3FCC" : "#3D434B", fontVariantNumeric:"tabular-nums", textAlign:"center", marginBottom:10 }}>
+                          <div style={{ fontSize:44, fontWeight:700, letterSpacing:1.2, color: status === "racing" ? "#0B3FCC" : "#3D434B", fontVariantNumeric:"tabular-nums", textAlign:"center", marginBottom:10 }}>
                             {status === "racing" ? formatSwimTime(swimWatchClockMs) : (status === "waiting" ? "⏳ Waiting…" : formatSwimTime(swimWatchClockMs))}
                           </div>
                           {/* Lane results */}
@@ -11536,7 +11549,7 @@
                       {/* Completed heats */}
                       {session.heatResults && Object.keys(session.heatResults).length > 0 && (
                         <div style={{ marginTop:16 }}>
-                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>Completed Heats</div>
+                          <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>Completed Heats</div>
                           {Object.entries(session.heatResults).sort().map(([key, results]) => {
                             const [evNum, htNum] = key.split("_").map(Number);
                             const ev = session.events?.find(e => e.eventNum === evNum);
@@ -11581,7 +11594,7 @@
             {view === "bike" && (() => {
               const S = {
                 card:  { background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 },
-                label: { fontSize:14, fontWeight:700, letterSpacing:3, textTransform:"uppercase", color:"#8A5A00", marginBottom:6 },
+                label: { fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#8A5A00", marginBottom:6 },
                 input: { background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" },
                 row:   { display:"flex", gap:8, alignItems:"center" },
               };
@@ -11611,7 +11624,7 @@
 
               const metricTile = (label, value, color) => (
                 <div style={{ flex:"1 1 90px", minWidth:90, background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"10px 8px", textAlign:"center" }}>
-                  <div style={{ fontSize:14, letterSpacing:2, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>{label}</div>
+                  <div style={{ fontSize:14, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>{label}</div>
                   <div style={{ fontFamily:"var(--tm-font)", fontWeight:700, fontSize:23, letterSpacing:-0.5, color: color || "#0B0D10", lineHeight:1.2, fontVariantNumeric:"tabular-nums" }}>{value}</div>
                 </div>
               );
@@ -11629,7 +11642,7 @@
                         <div style={S.row}>
                           <input value={bikeWatchCode} onChange={e => setBikeWatchCode(e.target.value.toUpperCase())}
                             placeholder="ABC123" maxLength={6}
-                            style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:4, textAlign:"center" }} />
+                            style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           <button onClick={() => { if ((bikeWatchCode||"").trim().length >= 4) setBikeView("feed"); }}
                             style={{ ...btnStyle("#8A5A00"), whiteSpace:"nowrap" }}>Follow</button>
                         </div>
@@ -11654,7 +11667,7 @@
                               <div style={{ fontSize:16, fontWeight:700, color:"#0B0D10" }}>{rider?.name || "No rider assigned"}</div>
                               <div style={{ fontSize:14, color:"#3D434B" }}>{f.eventName || "No event name"}</div>
                             </div>
-                            <div style={{ fontFamily:"monospace", fontSize:20, letterSpacing:3, color:"#8A5A00" }}>{f.code}</div>
+                            <div style={{ fontFamily:"monospace", fontSize:20, letterSpacing:1.2, color:"#8A5A00" }}>{f.code}</div>
                           </div>
                           <div style={{ ...S.row, flexWrap:"wrap", gap:6, marginTop:10 }}>
                             <button onClick={() => { setBikeDraft({ ...newBikeFeed(), ...f }); setBikeView("setup"); }}
@@ -11797,7 +11810,7 @@
                       <div style={S.card}>
                         <div style={{ ...S.row, justifyContent:"space-between" }}>
                           <div style={{ ...S.label, marginBottom:0 }}>Follow code</div>
-                          <div style={{ fontFamily:"monospace", fontSize:22, letterSpacing:4, color:"#8A5A00" }}>{bikeDraft.code}</div>
+                          <div style={{ fontFamily:"monospace", fontSize:22, letterSpacing:1.2, color:"#8A5A00" }}>{bikeDraft.code}</div>
                         </div>
                         <div style={{ fontSize:14, color:"#3D434B", marginTop:8, wordBreak:"break-all" }}>{shareLink(bikeDraft.code)}</div>
                       </div>
@@ -11975,7 +11988,7 @@
                             <div style={{ position:"absolute", left:10, top:10, zIndex:500, pointerEvents:"none",
                               background:"rgba(255,255,255,0.88)", border:"2px solid #04613F",
                               borderRadius:8, padding:"8px 12px", minWidth:110 }}>
-                              <div style={{ fontSize:14, letterSpacing:2, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>
+                              <div style={{ fontSize:14, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>
                                 Route so far
                               </div>
                               <div style={{ fontFamily:"var(--tm-font)", fontWeight:700, fontSize:26, letterSpacing:-0.5,
@@ -12183,7 +12196,7 @@
                         <div style={S.row}>
                           <input value={bikeRideCode || ""} onChange={e => setBikeRideCode(e.target.value.toUpperCase())}
                             placeholder="ABC123" maxLength={6} disabled={bikeRiding}
-                            style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:4, textAlign:"center", opacity: bikeRiding ? 0.6 : 1 }} />
+                            style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center", opacity: bikeRiding ? 0.6 : 1 }} />
                         </div>
                         {bikeFeedList.length > 0 && !bikeRiding && (
                           <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginTop:8 }}>
@@ -12423,7 +12436,7 @@
                           <div style={S.row}>
                             <input value={bikeWatchCode} onChange={e => setBikeWatchCode(e.target.value.toUpperCase())}
                               placeholder="ABC123" maxLength={6}
-                              style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:4, textAlign:"center" }} />
+                              style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           </div>
                         </div>
                       ) : (
@@ -12485,7 +12498,7 @@
                               <div style={S.row}>
                                 <input value={bikeAddCode} onChange={e => setBikeAddCode(e.target.value.toUpperCase())}
                                   placeholder="ABC123" maxLength={6}
-                                  style={{ ...S.input, fontFamily:"monospace", fontSize:16, letterSpacing:3, textAlign:"center" }} />
+                                  style={{ ...S.input, fontFamily:"monospace", fontSize:16, letterSpacing:1.2, textAlign:"center" }} />
                                 <button onClick={() => {
                                   const c = (bikeAddCode || "").trim().toUpperCase();
                                   if (c.length < 4) return;
@@ -12550,7 +12563,7 @@
                                 <div className="tm-metric" style={{ fontSize:34, fontWeight:700, color:"#04613F", lineHeight:1 }}>
                                   {fmtDist(Math.max(0, bikeRouteProg.totalM - bikeRouteProg.alongM))}
                                 </div>
-                                <div style={{ fontSize:14, letterSpacing:2, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>to go</div>
+                                <div style={{ fontSize:14, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>to go</div>
                                 <div style={{ marginLeft:"auto", textAlign:"right" }}>
                                   <div className="tm-metric" style={{ fontSize:17, fontWeight:700, color:"#0B0D10", lineHeight:1.1 }}>
                                     {fmtDist(bikeRouteProg.alongM)}
