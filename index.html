@@ -369,38 +369,134 @@
         bike:      { label: "Bike ride", colour: TM.bike },
       };
 
-      // One job per card on the Setup screen. Everything stays shut until you go
-      // looking for it, and the summary line answers the usual question — how many
-      // athletes, which distances — without opening anything.
-      // `bare` skips the padded body for panels that manage their own padding and
-      // sticky layout (the waypoint map).
-      function SetupSection({ title, summary, color = "#0B3FCC", open, onToggle, bare = false, children }) {
-        const edge = open ? color : "#0B3FCC";
+      // ── Setup wizard frame ───────────────────────────────────────────────────
+      // Five numbered steps with a progress bar, Back/Next, and a row of step
+      // numbers so an experienced host can jump straight to the one thing they
+      // need to change. Shared by the triathlon, swim meet and bike ride setups.
+      function WizardProgress({ step, total = 5 }) {
         return (
-          // No `overflow: hidden` here on purpose — it would trap the waypoint
-          // map's `position: sticky` inside this card. The header rounds its own
-          // corners instead.
-          // A `bare` section carries no frame of its own: the waypoint panel widens
-          // past this column on desktop, and a border drawn here would cut across it.
-          <div style={{ marginTop: 14, background: bare ? "none" : "#EFEDE8", borderRadius: 8,
-                        border: bare ? "none" : `2px solid ${edge}` }}>
-            <button onClick={onToggle} style={{ width: "100%", textAlign: "left", cursor: "pointer",
-              background: bare ? "#EFEDE8" : "none",
-              border: bare ? `2px solid ${edge}` : "none",
-              borderRadius: open ? "7px 7px 0 0" : 7,
-              padding: "13px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase",
-                              color: open ? color : "#3D434B" }}>{title}</div>
-                {summary && (
-                  <div style={{ fontSize: 14, color: "#3D434B", marginTop: 3,
-                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary}</div>
-                )}
-              </div>
-              <div style={{ fontSize: 14, color: open ? color : "#3D434B", flexShrink: 0 }}>{open ? "▲" : "▼"}</div>
-            </button>
-            {open && (bare ? children : <div style={{ padding: "0 16px 16px" }}>{children}</div>)}
+          <div aria-hidden="true" style={{ display: "flex", height: 8 }}>
+            {Array.from({ length: total }, (_, i) => (
+              <div key={i} style={{ flex: 1, background: i < step ? TM.swim : TM.line }} />
+            ))}
           </div>
+        );
+      }
+
+      function WizardFrame({ step, total = 5, titles, title, onJump, onList, onBack, onNext, nextLabel = "Next →",
+                             nextDisabled = false, nextHint = null, children }) {
+        return (
+          <div>
+            <div style={{ marginLeft: -16, marginRight: -16 }}><WizardProgress step={step} total={total} /></div>
+            <nav aria-label="Setup steps" style={{ display: "flex", gap: 6, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+              {titles.map((t, i) => (
+                <button key={i} onClick={() => onJump(i + 1)} title={t}
+                  aria-label={`Step ${i + 1}: ${t}`} aria-current={step === i + 1 ? "step" : undefined}
+                  style={{ width: 46, minWidth: 46, minHeight: 46, padding: 0, borderRadius: 6, cursor: "pointer",
+                           fontWeight: 900, fontSize: 18, fontVariantNumeric: "tabular-nums",
+                           background: step === i + 1 ? TM.ink : "#FFFFFF", color: step === i + 1 ? "#FFFFFF" : TM.ink,
+                           border: `2px solid ${TM.ink}` }}>{i + 1}</button>
+              ))}
+              {onList && (
+                <button onClick={onList} style={{ ...btnStyle(TM.ink, true), marginLeft: "auto", padding: "0 14px", fontSize: 15 }}>All steps</button>
+              )}
+            </nav>
+            <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", color: TM.swim, marginTop: 22 }}>
+              Step {step} of {total}
+            </div>
+            <h1 style={{ ...TM_DISPLAY, fontSize: 42, marginTop: 6 }}>{title}</h1>
+            <div style={{ marginTop: 18 }}>{children}</div>
+            <div style={{ display: "flex", gap: 10, marginTop: 30 }}>
+              {onBack && <button onClick={onBack} style={{ ...btnStyle(TM.ink, true), minHeight: 56, flex: "0 0 auto" }}>← Back</button>}
+              <button onClick={onNext} disabled={nextDisabled}
+                style={{ ...btnStyle(TM.ink), flex: 1, opacity: nextDisabled ? 0.45 : 1, cursor: nextDisabled ? "default" : "pointer" }}>
+                {nextLabel}
+              </button>
+            </div>
+            {nextHint && <div style={{ ...TM_CAPTION, textAlign: "center", marginTop: 8 }}>{nextHint}</div>}
+          </div>
+        );
+      }
+
+      // Editing an existing race lands here rather than on step 1: every step with
+      // a one-line answer, so fixing one number is one tap.
+      function WizardStepList({ heading, subheading, steps, onJump, children }) {
+        return (
+          <div>
+            <h1 style={{ ...TM_DISPLAY, fontSize: 42, marginTop: 4 }}>{heading}</h1>
+            {subheading && <div style={{ ...TM_CAPTION, fontSize: 16, marginTop: 8 }}>{subheading}</div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
+              {steps.map((s, i) => (
+                <button key={i} onClick={() => onJump(i + 1)}
+                  style={{ ...rowStyle(s.done ? TM.swim : TM.line), display: "flex", alignItems: "center", gap: 14,
+                           width: "100%", minHeight: 72, textAlign: "left", cursor: "pointer", color: TM.ink }}>
+                  <span style={{ ...TM_NUM, fontSize: 30, letterSpacing: -1, minWidth: 28 }}>{i + 1}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>{s.title}</span>
+                    <span style={{ display: "block", ...TM_CAPTION, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.summary}</span>
+                  </span>
+                  <span style={{ fontWeight: 800, fontSize: 15, flexShrink: 0 }}>Edit</span>
+                </button>
+              ))}
+            </div>
+            {children}
+          </div>
+        );
+      }
+
+      // Step 1 of every setup: what kind of race, and what it's called. The three
+      // kinds are full-bleed blocks; the chosen one is solid, the others outlined.
+      function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint }) {
+        const kinds = [
+          ["triathlon", TM.ink,  "Triathlon", "Swim, bike, run — splits, GPS, certificates"],
+          ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
+          ["bike",      TM.bike, "Bike ride", "Live map of one or more riders"],
+        ];
+        return (
+          <div>
+            <div role="radiogroup" aria-label="Kind of race" style={{ marginLeft: -16, marginRight: -16 }}>
+              {kinds.map(([k, col, title, sub]) => {
+                const on = kind === k;
+                return (
+                  <button key={k} role="radio" aria-checked={on} onClick={() => onKind(k)}
+                    style={{ display: "flex", alignItems: "center", gap: 16, width: "100%", minHeight: 92,
+                             padding: "18px 24px", background: on ? col : "#FFFFFF", color: on ? "#FFFFFF" : col,
+                             border: "none", borderTop: `2px solid ${on ? col : TM.line}`, borderRadius: 0,
+                             boxShadow: on ? "none" : `inset 8px 0 0 ${col}`, textAlign: "left", cursor: "pointer" }}>
+                    <span style={{ flex: 1 }}>
+                      <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4, lineHeight: 1 }}>{title}</span>
+                      <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 6, color: on ? "#FFFFFF" : TM.inkMuted }}>{sub}</span>
+                    </span>
+                    <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
+                      border: `3px solid ${on ? "#FFFFFF" : col}`, background: on ? "#FFFFFF" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center", color: col, fontWeight: 900, fontSize: 18 }}>{on ? "✓" : ""}</span>
+                  </button>
+                );
+              })}
+              <div style={{ borderTop: `2px solid ${TM.line}` }} />
+            </div>
+            {lockedHint && <div style={{ ...TM_CAPTION, marginTop: 10 }}>{lockedHint}</div>}
+            <div style={{ marginTop: 22 }}>
+              <label htmlFor={nameId} style={TM_LABEL}>Race name</label>
+              <input id={nameId} value={name} onChange={e => onName(e.target.value)} placeholder="e.g. Lakeside Kids Tri 2026"
+                style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
+                         padding: "10px 14px", color: TM.ink, outline: "none" }} />
+            </div>
+          </div>
+        );
+      }
+
+      // In the setup wizard a section is a titled block that renders only on the
+      // step that owns it. `plain` drops the heading when the step title already
+      // says it.
+      function SetupSection({ title, summary, open, plain = false, children }) {
+        if (!open) return null;
+        return (
+          <section style={{ marginTop: 26 }}>
+            {!plain && <h2 style={{ ...TM_H2, marginBottom: 6 }}>{title}</h2>}
+            {!plain && summary && <div style={{ ...TM_CAPTION, marginBottom: 12 }}>{summary}</div>}
+            {children}
+          </section>
         );
       }
 
@@ -1539,6 +1635,12 @@
         // came for, so it starts open.
         const [setupOpen, setSetupOpen] = useState("athletes");
         const toggleSetup = (k) => setSetupOpen(s => (s === k ? null : k));
+        // 0 = the step list (editing a saved race), 1-5 = wizard steps.
+        const [setupStep, setSetupStep] = useState(1);
+        const [newRaceKind, setNewRaceKind] = useState("triathlon");
+        const [newRaceName, setNewRaceName] = useState("");
+        const [swimSetupStep, setSwimSetupStep] = useState(1);
+        const [bikeSetupStep, setBikeSetupStep] = useState(1);
         const [deleteJoinedConfirm, setDeleteJoinedConfirm] = useState(null);
         const [raceMode, setRaceMode] = useState("separate");
         const [liveRaceCode, setLiveRaceCode] = useState(null);
@@ -3632,7 +3734,7 @@
           }
 
           resetClock();
-          setView("setup");
+          setSetupStep(0); setView("setup");
         }
 
         function deleteRace(id) {
@@ -3951,6 +4053,7 @@
           setSaveRaceName("");
           try { localStorage.removeItem("tri-active-live"); } catch(e) {}
           setRaceInitialized(true);
+          setSetupStep(1);
           setView("setup");
         }
 
@@ -6501,6 +6604,29 @@
           }
         }
 
+        // Creating a race is the one moment anyone chooses a race kind.
+        function startRaceOfKind(kind, name) {
+          const nm = (name || "").trim();
+          selectMode(kind);
+          if (kind === "triathlon") {
+            startNewRace();
+            if (nm) { setSaveRaceName(nm); setCertConfig(c => ({ ...c, eventName: nm })); }
+            setSetupStep(2);
+            return;
+          }
+          if (kind === "swim") {
+            const hasWork = swimMeet.meetName || swimMeet.events.length > 0;
+            setView("swim");
+            if (hasWork) { setSwimView("home"); setSwimConfirmNewMeet(true); return; }
+            setSwimMeet({ meetName: nm, pool: "25y", events: [] });
+            setSwimLiveCode(null);
+            setSwimSetupStep(2);
+            setSwimView("setup");
+            return;
+          }
+          setBikeDraft({ ...newBikeFeed(), eventName: nm }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
+        }
+
         // Only hosts see host screens. Athletes get their race; spectators get the
         // code box and the live view. Anyone signed in keeps Profile.
         useEffect(() => {
@@ -6822,7 +6948,7 @@
                   <div>
                     <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
 
-                    <button onClick={() => setView("newrace")}
+                    <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setView("newrace"); }}
                       style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
                                minHeight: 96, padding: "22px 24px", background: TM.ink, color: "#FFFFFF", border: "none",
                                borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
@@ -6926,48 +7052,16 @@
                 );
               })()}
 
-              {/* ── NEW RACE: the host is the only one ever asked what kind ── */}
-              {view === "newrace" && (() => {
-                const kinds = [
-                  ["triathlon", TM.ink,  "Triathlon", "Swim, bike, run — splits, GPS, certificates"],
-                  ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
-                  ["bike",      TM.bike, "Bike ride", "Live map of one or more riders"],
-                ];
-                const start = (kind) => {
-                  selectMode(kind);
-                  if (kind === "triathlon") { startNewRace(); return; }
-                  if (kind === "swim") {
-                    const hasWork = swimMeet.meetName || swimMeet.events.length > 0;
-                    setView("swim");
-                    if (hasWork) { setSwimView("home"); setSwimConfirmNewMeet(true); return; }
-                    setSwimMeet({ meetName: "", pool: "25y", events: [] });
-                    setSwimLiveCode(null);
-                    setSwimView("setup");
-                    return;
-                  }
-                  setBikeDraft(newBikeFeed()); setView("bike"); setBikeView("setup");
-                };
-                return (
-                  <div>
-                    <button onClick={() => setView("myraces")} style={{ ...btnStyle(TM.ink, true), marginTop: 4 }}>← My races</button>
-                    <h1 style={{ ...TM_DISPLAY, marginTop: 20 }}>What kind of race?</h1>
-                    <div style={{ marginLeft: -16, marginRight: -16, marginTop: 22 }}>
-                      {kinds.map(([kind, bg, title, sub]) => (
-                        <button key={kind} onClick={() => start(kind)}
-                          style={{ display: "flex", alignItems: "center", gap: 16, width: "100%", minHeight: 100,
-                                   padding: "22px 24px", background: bg, color: "#FFFFFF", border: "none", borderRadius: 0,
-                                   textAlign: "left", cursor: "pointer" }}>
-                          <span style={{ flex: 1 }}>
-                            <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4, lineHeight: 1 }}>{title}</span>
-                            <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 6 }}>{sub}</span>
-                          </span>
-                          <ArrowIcon />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* ── NEW RACE: step 1 of the wizard, the only place a kind is chosen ── */}
+              {view === "newrace" && (
+                <WizardFrame step={1} titles={["What kind of race?", "Who's racing?", "Distances", "Details", "Course"]}
+                  title="What kind of race?"
+                  onJump={() => {}}
+                  onBack={() => setView("myraces")}
+                  onNext={() => startRaceOfKind(newRaceKind, newRaceName)}>
+                  <RaceKindStep kind={newRaceKind} onKind={setNewRaceKind} name={newRaceName} onName={setNewRaceName} nameId="new-race-name" />
+                </WizardFrame>
+              )}
 
               {/* ── SPECTATE: the spectator's whole app is this box and the live view ── */}
               {view === "spectate" && (
@@ -8627,21 +8721,25 @@
               })()}
 
               {/* ── SETUP ── */}
-              {view === "setup" && (
-                <div>
-                  {/* Clear Race button */}
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-                    {clearRaceConfirm ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 14, color: "#B3001B" }}>Clear all setup?</span>
-                        <button onClick={clearRace} style={{ ...btnStyle("#B3001B"), padding: "5px 14px", fontSize: 14 }}>Yes, Clear</button>
-                        <button onClick={() => setClearRaceConfirm(false)} style={{ ...btnStyle("#3D434B", true), padding: "5px 12px", fontSize: 14 }}>Cancel</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setClearRaceConfirm(true)} style={{ ...btnStyle("#3D434B", true), padding: "5px 14px", fontSize: 14 }}>&#10005; Start Over</button>
-                    )}
-                  </div>
-
+              {view === "setup" && (() => {
+                const TRI_STEPS = ["What kind of race?", "Who's racing?", "How far is each leg?", "Age groups & certificate", "Course map"];
+                const setRaceName = (v) => {
+                  const prev = saveRaceName;
+                  setSaveRaceName(v);
+                  setCertConfig(c => (!c.eventName || c.eventName === "Timeathon Race Event" || c.eventName === prev) ? { ...c, eventName: v } : c);
+                };
+                const placedPins = waypoints.filter(w => w.lat != null).length;
+                const u = { yards: "yd", meters: "m", miles: "mi", km: "km" };
+                const summaries = [
+                  { title: TRI_STEPS[0], done: !!(saveRaceName || certConfig.eventName), summary: `Triathlon · ${saveRaceName || certConfig.eventName || "no name yet"}` },
+                  { title: TRI_STEPS[1], done: athletes.length > 0, summary: `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""}${registrationOpen ? ` · sign-up open (${registrationCode})` : ""}` },
+                  { title: TRI_STEPS[2], done: courses.length > 0, summary: courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} · ${c.bikeMiles}${u[units.bike]} · ${c.runMiles}${u[units.run]}`).join(" | ") || "No distances yet" },
+                  { title: TRI_STEPS[3], done: ageGroups.length > 0, summary: `${ageGroups.length} age group${ageGroups.length !== 1 ? "s" : ""} · ${certConfig.eventName || "no event name"}` },
+                  { title: TRI_STEPS[4], done: placedPins > 0, summary: placedPins ? `${placedPins} pin${placedPins !== 1 ? "s" : ""} placed` : "Optional — skipped" },
+                ];
+                const readyHint = athletes.length === 0 ? "Add at least one athlete first" : `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""} ready`;
+                const body = (
+                  <>
                   {/* Save-before-registration modal */}
                   {showSaveBeforeReg && (
                     <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 20px" }}
@@ -8665,20 +8763,24 @@
                     </div>
                   )}
 
-                  {/* Race mode toggle — one line, above the cards, because it changes
-                      what the Race screen asks you to do. */}
-                  <div style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1, textTransform: "uppercase", flexShrink: 0 }}>Start Mode</span>
-                    {[["separate","One at a time","#0B3FCC"],["simultaneous","All at once","#8A5A00"]].map(([mode, label, col]) => (
-                      <button key={mode} onClick={() => setRaceMode(mode)} style={{ padding: "5px 12px", fontSize: 14, fontWeight: 700, letterSpacing: 1, background: raceMode === mode ? col : "transparent", color: raceMode === mode ? "#FFFFFF" : "#3D434B", border: `2px solid ${raceMode === mode ? col : "#C9C5BC"}`, borderRadius: 4, cursor: "pointer" }}>{label}</button>
-                    ))}
-                    <span style={{ fontSize: 14, color: "#3D434B" }}>
-                      {raceMode === "simultaneous" ? "— one gun starts everybody" : "— send each athlete off as they go"}
-                    </span>
-                  </div>
+                  {/* How athletes start changes what the Race screen asks of you. */}
+                  {setupStep === 2 && (
+                    <div>
+                      <div style={TM_LABEL}>Start</div>
+                      <div role="radiogroup" aria-label="Start mode" style={{ display: "flex", gap: 8 }}>
+                        {[["separate","One at a time"],["simultaneous","All at once"]].map(([mode, label]) => (
+                          <button key={mode} role="radio" aria-checked={raceMode === mode} onClick={() => setRaceMode(mode)}
+                            style={segStyle(raceMode === mode)}>{label}</button>
+                        ))}
+                      </div>
+                      <div style={{ ...TM_CAPTION, marginTop: 6 }}>
+                        {raceMode === "simultaneous" ? "One gun starts everybody." : "Send each athlete off as they go."}
+                      </div>
+                    </div>
+                  )}
 
                   <SetupSection title="Athletes" color="#04613F"
-                    open={setupOpen === "athletes"} onToggle={() => toggleSetup("athletes")}
+                    open={setupStep === 2}
                     summary={athletes.length === 0 ? "Nobody added yet"
                       : `${athletes.length} racing${registrationOpen ? " · sign-ups open" : ""}`}>
                   {athletes.map((ath, i) => (
@@ -8758,7 +8860,7 @@
                   </SetupSection>
 
                   <SetupSection title="Let Athletes Sign Themselves Up" color="#04613F"
-                    open={setupOpen === "registration"} onToggle={() => toggleSetup("registration")}
+                    open={setupStep === 2}
                     summary={registrationOpen
                       ? `Open · code ${registrationCode} · ${regAthleteCount} joined`
                       : "Closed — open it to get a code athletes can enter"}>
@@ -8846,75 +8948,93 @@
 
                   {/* ── Courses (distances) ── */}
                   <SetupSection title="Courses" color="#04613F"
-                    open={setupOpen === "courses"} onToggle={() => toggleSetup("courses")}
+                    open={setupStep === 3} plain
                     summary={(() => {
                       // Short forms so a one-line summary never reads "1 miles".
                       const u = { yards: "yd", meters: "m", miles: "mi", km: "km" };
                       return courses.length === 0 ? "No distances set yet"
                         : courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} swim · ${c.bikeMiles}${u[units.bike]} bike · ${c.runMiles}${u[units.run]} run`).join("   |   ");
                     })()}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                      <div>
-                        <div style={{ fontSize: 14, color: "#3D434B" }}>Distances are what turn raw times into pace.</div>
-                        <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
-                          {[["swim","#0B3FCC",["yards","meters"]],["bike","#8A5A00",["miles","km"]],["run","#04613F",["miles","km"]]].map(([seg, col, opts]) => (
-                            <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                              <span style={{ fontSize: 14, color: col, letterSpacing: 1, textTransform: "uppercase" }}>{seg}</span>
-                              {opts.map(u => (
-                                <button key={u} onClick={() => setUnits(un => ({...un, [seg]: u}))} style={{ padding: "2px 7px", fontSize: 14, background: units[seg] === u ? col : "transparent", color: units[seg] === u ? "#FFFFFF" : "#3D434B", border: "2px solid " + (units[seg] === u ? col : "#C9C5BC"), borderRadius: 3, cursor: "pointer", fontWeight: units[seg] === u ? 700 : 400 }}>{u}</button>
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <button onClick={addCourse} style={{ ...btnStyle("#04613F", true), padding: "4px 12px", fontSize: 14 }}>+ Add Course</button>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted }}>
+                      Distances turn raw times into pace. Most races have one course; add another for a shorter kids' or novice route.
                     </div>
-                    {courses.map(course => (
-                      <div key={course.id} style={{ background: "#FFFFFF", borderRadius: 6, padding: "10px 12px", marginBottom: 8, border: "2px solid #C9C5BC" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                          <input value={course.name} onChange={e => updateCourse(course.id, "name", e.target.value)}
-                            style={{ flex: 1, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "6px 10px", color: "#0B0D10", fontSize: 14, outline: "none", fontWeight: 700 }} />
-                        {courses.length > 1 && (
-                            <button onClick={() => removeCourse(course.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 16, cursor: "pointer", padding: "0 6px" }}>&times;</button>
+                    {/* Course names: one row each, then the legs below ask for a distance per course. */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+                      {courses.map((course, ci) => (
+                        <div key={course.id} style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                          <div style={{ flex: 1 }}>
+                            <label htmlFor={`course-name-${course.id}`} style={TM_LABEL}>{courses.length > 1 ? `Course ${ci + 1} name` : "Course name"}</label>
+                            <input id={`course-name-${course.id}`} value={course.name} onChange={e => updateCourse(course.id, "name", e.target.value)}
+                              style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 14px", color: TM.ink, outline: "none" }} />
+                          </div>
+                          {courses.length > 1 && (
+                            <button onClick={() => removeCourse(course.id)} aria-label={`Remove ${course.name}`}
+                              style={{ ...btnStyle(TM.ink, true), width: 46, minWidth: 46, padding: 0, fontSize: 22 }}>×</button>
                           )}
                         </div>
-                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <label style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1 }}>{units.swim === "meters" ? "SWIM (meters)" : "SWIM (yards)"}</label>
-                            <input type="number" min="1" value={course.swimYards} onChange={e => updateCourse(course.id, "swimYards", Number(e.target.value))} style={distInputStyle} />
-                          </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <label style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>{units.bike === "km" ? "BIKE (km)" : "BIKE (miles)"}</label>
-                            <input type="number" min="0.1" step="0.1" value={course.bikeMiles} onChange={e => updateCourse(course.id, "bikeMiles", Number(e.target.value))} style={distInputStyle} />
-                          </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <label style={{ fontSize: 14, color: "#04613F", letterSpacing: 1 }}>{units.run === "km" ? "RUN (km)" : "RUN (miles)"}</label>
-                            <input type="number" min="0.1" step="0.1" value={course.runMiles} onChange={e => updateCourse(course.id, "runMiles", Number(e.target.value))} style={distInputStyle} />
-                          </div>
-                        </div>
-                        <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center" }}>
-                          <span style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1, marginRight: 2 }}>🚲 BIKE:</span>
-                          {[
-                            { val: "gps",     label: "Real Bike" },
-                            { val: "trainer", label: "Trainer" },
-                            { val: "spin",    label: "Spin Bike" },
-                          ].map(({ val, label }) => (
-                            <button key={val} onClick={() => updateCourse(course.id, "bikeType", val)}
-                              style={{ padding: "4px 10px", background: (course.bikeType || "gps") === val ? "#EFEDE8" : "transparent", border: `2px solid ${(course.bikeType || "gps") === val ? "#8A5A00" : "#C9C5BC"}`, borderRadius: 5, color: (course.bikeType || "gps") === val ? "#8A5A00" : "#3D434B", cursor: "pointer", fontSize: 14, fontWeight: 700 }}>
-                              {label}
-                            </button>
-                          ))}
-                          {(course.bikeType || "gps") !== "gps" && (
-                            <span style={{ fontSize: 14, color: "#3D434B", marginLeft: 4 }}>→ T2 auto-fires at {course.bikeMiles} mi</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                      <button onClick={addCourse} style={{ ...btnStyle(TM.ink, true), alignSelf: "flex-start" }}>+ Add course</button>
+                    </div>
+
+                    {/* One full-bleed block per leg, in its discipline colour — named too,
+                        so nobody has to tell cobalt from green in the sun. */}
+                    <div style={{ marginLeft: -16, marginRight: -16, marginTop: 22 }}>
+                      {[["swim", TM.swim, "Swim", ["yards","meters"], "swimYards", "1"],
+                        ["bike", TM.bike, "Bike", ["miles","km"], "bikeMiles", "0.1"],
+                        ["run",  TM.run,  "Run",  ["miles","km"], "runMiles",  "0.1"]].map(([seg, col, label, opts, field, step]) => {
+                        const short = { yards: "yd", meters: "m", miles: "mi", km: "km" }[units[seg]];
+                        return (
+                          <section key={seg} aria-label={`${label} distance`} style={{ background: col, color: "#FFFFFF", padding: "20px 20px 22px" }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                              <h3 style={{ margin: 0, fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>{label}</h3>
+                              <div role="radiogroup" aria-label={`${label} units`} style={{ display: "flex", gap: 6 }}>
+                                {opts.map(un => (
+                                  <button key={un} role="radio" aria-checked={units[seg] === un} onClick={() => setUnits(x => ({ ...x, [seg]: un }))}
+                                    style={{ minHeight: 46, padding: "0 16px", borderRadius: 6, fontWeight: 800, fontSize: 16, cursor: "pointer",
+                                             background: units[seg] === un ? "#FFFFFF" : "transparent", color: units[seg] === un ? col : "#FFFFFF",
+                                             border: "2px solid #FFFFFF" }}>{un}</button>
+                                ))}
+                              </div>
+                            </div>
+                            {courses.map(course => (
+                              <div key={course.id} style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
+                                <label htmlFor={`d-${seg}-${course.id}`} style={{ flex: 1, minWidth: 0, fontWeight: 800, fontSize: 16 }}>{course.name || "Course"}</label>
+                                <input id={`d-${seg}-${course.id}`} type="number" min={step} step={step} value={course[field]}
+                                  onChange={e => updateCourse(course.id, field, Number(e.target.value))}
+                                  style={{ width: 130, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px",
+                                           color: TM.ink, textAlign: "center", outline: "none" }} />
+                                <span style={{ width: 34, fontWeight: 800, fontSize: 17 }}>{short}</span>
+                              </div>
+                            ))}
+                            {seg === "bike" && courses.map(course => (
+                              <div key={"bt" + course.id} style={{ marginTop: 16 }}>
+                                <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>
+                                  {courses.length > 1 ? `Bike type · ${course.name}` : "Bike type"}
+                                </div>
+                                <div role="radiogroup" aria-label="Bike type" style={{ display: "flex", gap: 6 }}>
+                                  {[["gps","Real bike"],["trainer","Trainer"],["spin","Spin bike"]].map(([val, lbl]) => {
+                                    const on = (course.bikeType || "gps") === val;
+                                    return (
+                                      <button key={val} role="radio" aria-checked={on} onClick={() => updateCourse(course.id, "bikeType", val)}
+                                        style={{ flex: 1, minHeight: 46, borderRadius: 6, fontWeight: 800, fontSize: 16, cursor: "pointer",
+                                                 background: on ? "#FFFFFF" : "transparent", color: on ? col : "#FFFFFF", border: "2px solid #FFFFFF" }}>{lbl}</button>
+                                    );
+                                  })}
+                                </div>
+                                {(course.bikeType || "gps") !== "gps" && (
+                                  <div style={{ fontSize: 15, fontWeight: 600, marginTop: 8 }}>T2 logs itself when the trainer reaches {course.bikeMiles} {short}.</div>
+                                )}
+                              </div>
+                            ))}
+                          </section>
+                        );
+                      })}
+                    </div>
                   </SetupSection>
 
                   {/* ── Age Groups ── */}
                   <SetupSection title="Age Groups" color="#0B3FCC"
-                    open={setupOpen === "agegroups"} onToggle={() => toggleSetup("agegroups")}
+                    open={setupStep === 4}
                     summary={ageGroups.length === 0 ? "No age groups — everyone scores together"
                       : `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}`}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -8970,7 +9090,7 @@
 
                   {/* ── Certificate & Event Config ── */}
                   <SetupSection title="Certificate &amp; Event" color="#0B3FCC"
-                    open={setupOpen === "cert"} onToggle={() => toggleSetup("cert")}
+                    open={setupStep === 4}
                     summary={[certConfig.eventName, certConfig.orgName, certConfig.customLogoB64 ? "logo added" : ""]
                       .filter(Boolean).join(" · ") || "Name the event that prints on certificates"}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -8991,7 +9111,7 @@
                   {/* `bare` — this panel owns its own padding and the sticky map,
                       so it can't sit inside the section's padded body. */}
                   <SetupSection title="📍 Course Map &amp; Waypoints" color="#04613F" bare
-                    open={setupOpen === "waypoints"} onToggle={() => toggleSetup("waypoints")}
+                    open={setupStep === 5} plain
                     summary={(() => {
                       const placed = waypoints.filter(w => w.lat !== null).length;
                       return placed === 0
@@ -9324,7 +9444,7 @@
                       Loading lives on Home under "Saved Races" — one list, one place,
                       so there's no second copy of it to wonder about. */}
                   <SetupSection title="Save This Race" color="#04613F"
-                    open={setupOpen === "save"} onToggle={() => toggleSetup("save")}
+                    open={setupStep === 5}
                     summary={loadedRaceId
                       ? "Editing a saved race — Update to keep your changes"
                       : savedRaces.length === 0
@@ -9365,23 +9485,56 @@
                     )}
                   </SetupSection>
 
-                  {/* The one thing you're actually heading for. It used to sit
-                      between "Add Athlete" and "Import CSV", which made the exit
-                      from this screen look like a third way to edit the roster. */}
-                  <button onClick={goToRace} disabled={athletes.length === 0}
-                    style={{ ...btnStyle("#0B3FCC"), width: "100%", marginTop: 20,
-                    padding: "15px", fontSize: 16, letterSpacing: 0.5, fontFamily: "var(--tm-font)",
-                    opacity: athletes.length === 0 ? 0.4 : 1,
-                    cursor: athletes.length === 0 ? "default" : "pointer" }}>
-                    Go to Race &#8594;
-                  </button>
-                  <div style={{ fontSize: 14, color: "#3D434B", textAlign: "center", marginTop: 8 }}>
-                    {athletes.length === 0
-                      ? "Add at least one athlete first"
-                      : `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""} ready`}
-                  </div>
-                </div>
-              )}
+                  </>
+                );
+                if (setupStep === 0) {
+                  return (
+                    <WizardStepList heading="Race setup" subheading={saveRaceName || certConfig.eventName || "Triathlon"}
+                      steps={summaries} onJump={setSetupStep}>
+                      {body}
+                      <button onClick={goToRace} disabled={athletes.length === 0}
+                        style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24, opacity: athletes.length === 0 ? 0.45 : 1 }}>
+                        Go to race →
+                      </button>
+                      <div style={{ ...TM_CAPTION, textAlign: "center", marginTop: 8 }}>{readyHint}</div>
+                      <div style={{ marginTop: 26, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        {clearRaceConfirm ? (<>
+                          <span style={{ fontSize: 16, fontWeight: 700 }}>Clear all setup?</span>
+                          <button onClick={clearRace} style={btnStyle(TM.live)}>Yes, clear</button>
+                          <button onClick={() => setClearRaceConfirm(false)} style={btnStyle(TM.ink, true)}>Cancel</button>
+                        </>) : (
+                          <button onClick={() => setClearRaceConfirm(true)} style={btnStyle(TM.live, true)}>Start over</button>
+                        )}
+                      </div>
+                    </WizardStepList>
+                  );
+                }
+                const last = setupStep === 5;
+                return (
+                  <WizardFrame step={setupStep} titles={TRI_STEPS} title={TRI_STEPS[setupStep - 1]}
+                    onJump={setSetupStep} onList={() => setSetupStep(0)}
+                    onBack={setupStep > 1 ? () => setSetupStep(setupStep - 1) : () => setView("myraces")}
+                    onNext={last ? goToRace : () => setSetupStep(setupStep + 1)}
+                    nextLabel={last ? "Go to race →" : setupStep === 4 ? "Next: course map →" : "Next →"}
+                    nextDisabled={last && athletes.length === 0}
+                    nextHint={last ? readyHint : null}>
+                    {setupStep === 1 && (
+                      <RaceKindStep kind="triathlon" name={saveRaceName} onName={setRaceName}
+                        onKind={k => { if (k !== "triathlon") startRaceOfKind(k, saveRaceName); }}
+                        lockedHint="Picking a different kind starts a new race of that kind. This triathlon stays open." />
+                    )}
+                    {setupStep === 5 && (
+                      <div style={{ ...rowStyle(TM.swim), marginBottom: 6 }}>
+                        <div style={{ fontSize: 16, fontWeight: 700 }}>This step is optional.</div>
+                        <div style={TM_CAPTION}>Pins let the clock log splits automatically from athletes' phones. Skip it and time by hand.</div>
+                        <button onClick={goToRace} disabled={athletes.length === 0}
+                          style={{ ...btnStyle(TM.ink, true), marginTop: 10, opacity: athletes.length === 0 ? 0.45 : 1 }}>Skip map — go to race →</button>
+                      </div>
+                    )}
+                    {body}
+                  </WizardFrame>
+                );
+              })()}
 
               {/* ── RACE ── */}
               {view === "race" && (
