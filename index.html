@@ -309,6 +309,28 @@
       }
       // LOGO_B64 is defined in the preceding plain <script> tag (keeps Babel fast)
 
+
+      // ── Race codes people can say out loud ───────────────────────────────────
+      // A word and a number ("OTTER42") is easy to read off a start sheet or shout
+      // across a pool deck. Words avoid look-alike letters' worst cases and are
+      // all kid-safe. Hosts can type their own instead (e.g. TIGERS24).
+      const FRIENDLY_WORDS = ["OTTER","TIGER","SHARK","EAGLE","ROCKET","COMET","FALCON","PANDA","DOLPHIN","BEAR",
+        "WOLF","HAWK","LION","ORCA","BISON","RAVEN","MOOSE","KOALA","LLAMA","ZEBRA","GECKO","PUMA","STAR","WAVE",
+        "SPLASH","SPRINT","TURBO","BLAZE","STORM","THUNDER","MAPLE","CEDAR","RIVER","LAKE","SUMMIT","CANYON",
+        "PEBBLE","MANGO","LEMON","CHERRY","COCONUT","PEPPER","MARBLE","BANJO","ROBIN","FINCH","HERON","SALMON"];
+      function friendlyCode() {
+        const w = FRIENDLY_WORDS[Math.floor(Math.random() * FRIENDLY_WORDS.length)];
+        return w + String(10 + Math.floor(Math.random() * 90));
+      }
+      // What people type is forgiving: "tigers 24", "Tigers-24" and "TIGERS24"
+      // are the same code.
+      function normCode(s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12); }
+      function codeProblem(c) {
+        if (!c) return "Enter a code.";
+        if (c.length < 4) return "At least 4 letters or numbers.";
+        return null;
+      }
+
       // ── Sunlight type scale ──────────────────────────────────────────────────
       const TM_DISPLAY = { fontFamily: "var(--tm-font)", fontWeight: 900, fontSize: 46, lineHeight: 0.92,
                            letterSpacing: -1.2, wordSpacing: "0.12em", textTransform: "uppercase", color: TM.ink, margin: 0 };
@@ -446,7 +468,8 @@
 
       // Step 1 of every setup: what kind of race, and what it's called. The three
       // kinds are full-bleed blocks; the chosen one is solid, the others outlined.
-      function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint }) {
+      function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint,
+                              code, onCode, codeStatus, codeLocked }) {
         const kinds = [
           ["triathlon", TM.ink,  "Triathlon", "Swim, bike, run — splits, GPS, certificates"],
           ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
@@ -482,6 +505,29 @@
                 style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
                          padding: "10px 14px", color: TM.ink, outline: "none" }} />
             </div>
+            {onCode && (
+              <div style={{ marginTop: 22 }}>
+                <label htmlFor={nameId + "-code"} style={TM_LABEL}>Race code — what parents type to watch</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input id={nameId + "-code"} value={code || ""} disabled={codeLocked} autoCapitalize="characters" autoComplete="off"
+                    onChange={e => onCode(normCode(e.target.value))} placeholder="TIGERS24"
+                    style={{ flex: 1, minWidth: 0, background: codeLocked ? TM.bgAlt : "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
+                             padding: "4px 14px", color: TM.ink, fontSize: 28, fontWeight: 900, letterSpacing: 2, outline: "none" }} />
+                  {!codeLocked && (
+                    <button type="button" onClick={() => onCode(friendlyCode())} style={{ ...btnStyle(TM.ink, true), padding: "0 14px" }}>New idea</button>
+                  )}
+                </div>
+                <div role="status" style={{ fontSize: 15, fontWeight: 700, marginTop: 8,
+                  color: codeStatus === "taken" || codeStatus === "invalid" ? TM.live : codeStatus === "free" ? TM.run : TM.inkMuted }}>
+                  {codeLocked ? "Locked — athletes and parents already have this code."
+                    : codeStatus === "taken" ? "✕ Someone else is using that code. Try another."
+                    : codeStatus === "invalid" ? "✕ " + (codeProblem(code) || "")
+                    : codeStatus === "free" ? "✓ Available"
+                    : codeStatus === "checking" ? "Checking…"
+                    : "A word and a number is easiest to say out loud. Letters and numbers only."}
+                </div>
+              </div>
+            )}
           </div>
         );
       }
@@ -1302,7 +1348,7 @@
       }
 
       function generateSwimCode() {
-        return Math.random().toString(36).substring(2, 8).toUpperCase();
+        return friendlyCode();
       }
 
       function getLaneOrder(numLanes) {
@@ -1639,6 +1685,10 @@
         const [setupStep, setSetupStep] = useState(1);
         const [newRaceKind, setNewRaceKind] = useState("triathlon");
         const [newRaceName, setNewRaceName] = useState("");
+        const [newRaceCode, setNewRaceCode] = useState("");
+        // The triathlon's code before it's locked in by sign-ups or going live.
+        const [customRaceCode, setCustomRaceCode] = useState("");
+        const [codeCheck, setCodeCheck] = useState({ code: "", status: "" });
         const [swimSetupStep, setSwimSetupStep] = useState(1);
         const [bikeSetupStep, setBikeSetupStep] = useState(1);
         const [deleteJoinedConfirm, setDeleteJoinedConfirm] = useState(null);
@@ -3188,7 +3238,7 @@
         }
 
         function generateRaceCode() {
-          return Math.random().toString(36).substring(2, 8).toUpperCase();
+          return customRaceCode || friendlyCode();
         }
 
         function resolveAgeGroup(dob, groups) {
@@ -3283,7 +3333,7 @@
           const code = registrationCode || generateRaceCode();
           const id = Date.now();
           const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null }));
-          const entry = { id, name, code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes };
+          const entry = { id, name, code, plannedCode: code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes };
           persistRaces([...savedRaces, entry]);
           mergeAthletesToLibrary(athletes);
           setLoadedRaceId(id);
@@ -3444,7 +3494,7 @@
           if (!code.trim()) { setLiveRaceError("Enter a race code."); return; }
           setLiveRaceLoading(true); setLiveRaceError("");
           if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); }
-          const ref = rtdb.ref("liveRaces/" + code.trim().toUpperCase());
+          const ref = rtdb.ref("liveRaces/" + normCode(code));
           const fn = snap => {
             setLiveRaceLoading(false);
             if (!snap.exists()) { setLiveRaceError("No active race found with that code."); setLiveRace(null); }
@@ -3635,6 +3685,7 @@
           const entry = {
             id, name,
             code: registrationCode || null,
+            plannedCode: customRaceCode || null,
             savedAt: new Date().toLocaleDateString(),
             ageGroups, courses, units,
             certConfig,
@@ -3652,7 +3703,7 @@
           if (!loadedRaceId) return;
           const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId }));
           const updated = savedRaces.map(r => r.id === loadedRaceId
-            ? { ...r, ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes, savedAt: new Date().toLocaleString() }
+            ? { ...r, ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes, plannedCode: customRaceCode || r.plannedCode || null, savedAt: new Date().toLocaleString() }
             : r);
           persistRaces(updated);
           mergeAthletesToLibrary(athletes);
@@ -3660,6 +3711,7 @@
         async function loadRace(race) {
           setLoadedRaceId(race.id);
           if (race.code) setRegistrationCode(race.code); else setRegistrationCode(null);
+          setCustomRaceCode(race.code || race.plannedCode || friendlyCode());
           setRegistrationOpen(false);
           stopRegListener();
           if (race.units) setUnits(race.units);
@@ -3829,7 +3881,7 @@
         function assignPhotoCode(raceId) {
           var existing = savedArchive.find(function(r) { return r.id === raceId; });
           if (existing && existing.photoCode) return existing.photoCode;
-          var code = Math.random().toString(36).substring(2, 8).toUpperCase();
+          var code = friendlyCode();
           persistArchiveUpdate(savedArchive.map(function(r) { return r.id === raceId ? Object.assign({}, r, { photoCode: code }) : r; }));
           return code;
         }
@@ -3838,7 +3890,7 @@
           if (!photoAlbum || photoAlbum.uploading) return;
           var files = photoAlbum.files;
           if (!files || files.length === 0) return;
-          var code = photoAlbum.shareCode || Math.random().toString(36).substring(2, 8).toUpperCase();
+          var code = photoAlbum.shareCode || friendlyCode();
           setPhotoAlbum(function(p) { return p ? Object.assign({}, p, { uploading: true, uploadProgress: { done: 0, total: files.length }, shareCode: code }) : p; });
           var cloudPhotos = [];
           for (var i = 0; i < files.length; i++) {
@@ -4263,7 +4315,7 @@
         }
 
         async function joinRaceByCode(codeOverride) {
-          const code = (codeOverride || joinCode).trim().toUpperCase();
+          const code = normCode(codeOverride || joinCode);
           if (!code) return;
           setRegError(""); setRegWorking(true);
           const snap = await rtdb.ref("liveRaces/" + code).once("value");
@@ -5112,7 +5164,7 @@
 
         function newBikeFeed() {
           return {
-            code: Math.random().toString(36).substring(2, 8).toUpperCase(),
+            code: friendlyCode(),
             riderId: null,        // → bikeRiders profile
             eventName: "",
             units: "mi",
@@ -6554,7 +6606,7 @@
 
         // A code says what kind of race it is; nobody gets asked.
         async function findRaceKind(code) {
-          const c = (code || "").trim().toUpperCase();
+          const c = normCode(code);
           if (!c) return null;
           const has = (path) => rtdb.ref(path).once("value").then(s => s.exists()).catch(() => false);
           const [tri, swim, bike] = await Promise.all([has("liveRaces/" + c), has("swimLive/" + c), has("bikeFeeds/" + c + "/meta")]);
@@ -6605,12 +6657,51 @@
           }
         }
 
+        // A code is free if no race of any kind uses it, or the one that does is
+        // this host's own. Unique across all three kinds, because a spectator's
+        // code box doesn't know which kind it's looking for.
+        async function codeIsFree(code) {
+          const c = normCode(code);
+          if (codeProblem(c)) return false;
+          const me = currentUser && currentUser.uid;
+          const get = (path) => rtdb.ref(path).once("value").then(s => s.val()).catch(() => null);
+          const [tri, swim, bike] = await Promise.all([get("liveRaces/" + c), get("swimLive/" + c), get("bikeFeeds/" + c + "/meta")]);
+          if (tri && tri.publishedBy !== me) return false;
+          if (swim && swim.hostUid !== me) return false;
+          if (bike && bike.createdBy !== me) return false;
+          return true;
+        }
+
+        const triCodeLocked = !!(registrationCode || liveRaceCode);
+        const bikeCodeLocked = !!(bikeDraft && bikeFeedList.some(f => f.code === bikeDraft.code));
+        const swimCodeLocked = !!(swimLiveCode || (swimMeet.code && swimSavedMeets.some(m => m.id === swimMeet._id && m.code === swimMeet.code && m.live)));
+        const codeToCheck =
+          view === "newrace" ? newRaceCode
+          : view === "setup" && setupStep === 1 && !triCodeLocked ? customRaceCode
+          : view === "swim" && swimView === "setup" && swimSetupStep === 1 && !swimCodeLocked ? (swimMeet.code || "")
+          : view === "bike" && bikeView === "setup" && bikeSetupStep === 1 && !bikeCodeLocked ? (bikeDraft?.code || "")
+          : "";
+        useEffect(() => {
+          if (!codeToCheck) { setCodeCheck({ code: "", status: "" }); return; }
+          if (codeProblem(codeToCheck)) { setCodeCheck({ code: codeToCheck, status: "invalid" }); return; }
+          setCodeCheck({ code: codeToCheck, status: "checking" });
+          let live = true;
+          const t = setTimeout(() => {
+            codeIsFree(codeToCheck).then(ok => { if (live) setCodeCheck({ code: codeToCheck, status: ok ? "free" : "taken" }); });
+          }, 450);
+          return () => { live = false; clearTimeout(t); };
+        }, [codeToCheck]);
+        const codeStatus = codeCheck.code === codeToCheck ? codeCheck.status : (codeToCheck ? "checking" : "");
+        const codeBlocksNext = !!codeToCheck && codeStatus !== "free";
+
         // Creating a race is the one moment anyone chooses a race kind.
-        function startRaceOfKind(kind, name) {
+        function startRaceOfKind(kind, name, code) {
           const nm = (name || "").trim();
+          const cd = normCode(code) || friendlyCode();
           selectMode(kind);
           if (kind === "triathlon") {
             startNewRace();
+            setCustomRaceCode(cd);
             if (nm) { setSaveRaceName(nm); setCertConfig(c => ({ ...c, eventName: nm })); }
             setSetupStep(2);
             return;
@@ -6619,13 +6710,13 @@
             const hasWork = swimMeet.meetName || swimMeet.events.length > 0;
             setView("swim");
             if (hasWork) { setSwimView("home"); setSwimConfirmNewMeet(true); return; }
-            setSwimMeet({ meetName: nm, pool: "25y", events: [] });
+            setSwimMeet({ meetName: nm, pool: "25y", events: [], code: cd });
             setSwimLiveCode(null);
             setSwimSetupStep(2);
             setSwimView("setup");
             return;
           }
-          setBikeDraft({ ...newBikeFeed(), eventName: nm }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
+          setBikeDraft({ ...newBikeFeed(), eventName: nm, code: cd }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
         }
 
         // Only hosts see host screens. Athletes get their race; spectators get the
@@ -6661,7 +6752,7 @@
           if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimMeets").set(meets).catch(console.error);
         }
         function joinSwimWatchCode(codeIn) {
-          const code = (codeIn || "").trim().toUpperCase();
+          const code = normCode(codeIn);
           if (!code) return;
           if (swimWatchListenerRef.current) {
             swimWatchListenerRef.current.ref.off("value", swimWatchListenerRef.current.fn);
@@ -6929,7 +7020,7 @@
                 const openTri = (race) => { selectMode("triathlon"); loadRace(race); };
                 const openSwim = (meet) => {
                   selectMode("swim");
-                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id });
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id, code: meet.code || friendlyCode() });
                   setSwimLiveCode(null); setSwimHomeSection(null); setSwimSetupStep(0);
                   setView("swim"); setSwimView("setup");
                 };
@@ -6950,7 +7041,7 @@
                   <div>
                     <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
 
-                    <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setView("newrace"); }}
+                    <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setNewRaceCode(friendlyCode()); setView("newrace"); }}
                       style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
                                minHeight: 96, padding: "22px 24px", background: TM.ink, color: "#FFFFFF", border: "none",
                                borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
@@ -7040,7 +7131,7 @@
                         <label htmlFor="photo-code" style={{ ...TM_LABEL }}>Race photos</label>
                         <div style={{ display: "flex", gap: 8 }}>
                           <input id="photo-code" value={photoCodeInput}
-                            onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
+                            onChange={e => setPhotoCodeInput(normCode(e.target.value))}
                             placeholder="Race code"
                             onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                             style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
@@ -7060,8 +7151,11 @@
                   title="What kind of race?"
                   onJump={() => {}}
                   onBack={() => setView("myraces")}
-                  onNext={() => startRaceOfKind(newRaceKind, newRaceName)}>
-                  <RaceKindStep kind={newRaceKind} onKind={setNewRaceKind} name={newRaceName} onName={setNewRaceName} nameId="new-race-name" />
+                  onNext={() => startRaceOfKind(newRaceKind, newRaceName, newRaceCode)}
+                  nextDisabled={codeBlocksNext}
+                  nextHint={codeBlocksNext && codeStatus !== "checking" ? "Pick a code that's available first" : null}>
+                  <RaceKindStep kind={newRaceKind} onKind={setNewRaceKind} name={newRaceName} onName={setNewRaceName} nameId="new-race-name"
+                    code={newRaceCode} onCode={setNewRaceCode} codeStatus={codeStatus} />
                 </WizardFrame>
               )}
 
@@ -7076,7 +7170,7 @@
                     style={{ marginLeft: -16, marginRight: -16, marginTop: 22, background: TM.run, padding: "22px 20px" }}>
                     <label htmlFor="spectate-code" style={{ ...TM_LABEL, color: "#FFFFFF" }}>Race code</label>
                     <input id="spectate-code" value={spectateCode} autoCapitalize="characters" autoComplete="off"
-                      onChange={e => { setSpectateCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)); setSpectateError(""); }}
+                      onChange={e => { setSpectateCode(normCode(e.target.value)); setSpectateError(""); }}
                       placeholder="ABC123"
                       style={{ width: "100%", background: "#FFFFFF", border: "none", borderRadius: 6, padding: "6px 14px",
                                color: TM.ink, fontSize: 34, fontWeight: 900, letterSpacing: 4, textAlign: "center",
@@ -7708,9 +7802,9 @@
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 8 }}>RACE CODE</div>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <input value={joinCode} onChange={e => { setJoinCode(e.target.value.toUpperCase()); setRegError(""); }}
+                        <input value={joinCode} onChange={e => { setJoinCode(normCode(e.target.value)); setRegError(""); }}
                           onKeyDown={e => e.key === "Enter" && joinRaceByCode()}
-                          placeholder="e.g. ABC123" maxLength={6}
+                          placeholder="e.g. ABC123" maxLength={12}
                           style={{ flex: 1, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "12px 14px", color: "#04613F", fontSize: 22, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center" }} />
                         <button onClick={() => joinRaceByCode()} disabled={regWorking} style={{ ...btnStyle("#04613F"), padding: "12px 20px", fontSize: 14, opacity: regWorking ? 0.6 : 1 }}>{regWorking ? "…" : "Find Race"}</button>
                       </div>
@@ -8454,9 +8548,9 @@
                           <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#0B0D10" }}>Watch a Race</div>
                           <div style={{ fontSize: 14, color: "#3D434B", marginTop: 4 }}>Enter the code from the race organizer</div>
                         </div>
-                        <input value={spectatorCode} onChange={e => setSpectatorCode(e.target.value.toUpperCase())}
+                        <input value={spectatorCode} onChange={e => setSpectatorCode(normCode(e.target.value))}
                           onKeyDown={e => e.key === "Enter" && watchRace(spectatorCode)}
-                          placeholder="RACE CODE" maxLength={6}
+                          placeholder="RACE CODE" maxLength={12}
                           style={{ width: "100%", boxSizing: "border-box", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
                         <button onClick={() => watchRace(spectatorCode)} disabled={liveRaceLoading}
                           style={{ width: "100%", background: "#0B3FCC", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#FFFFFF", cursor: "pointer", letterSpacing: 1 }}>
@@ -8475,7 +8569,7 @@
                           <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#0B3FCC" }}>View Race Photos</div>
                           <div style={{ fontSize: 14, color: "#3D434B", marginTop: 3 }}>Enter the photo code from the race organizer</div>
                         </div>
-                        <input value={photoCodeInput} onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
+                        <input value={photoCodeInput} onChange={e => setPhotoCodeInput(normCode(e.target.value))}
                           onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                           placeholder="PHOTO CODE"
                           style={{ width: "100%", boxSizing: "border-box", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
@@ -8733,7 +8827,7 @@
                 const placedPins = waypoints.filter(w => w.lat != null).length;
                 const u = { yards: "yd", meters: "m", miles: "mi", km: "km" };
                 const summaries = [
-                  { title: TRI_STEPS[0], done: !!(saveRaceName || certConfig.eventName), summary: `Triathlon · ${saveRaceName || certConfig.eventName || "no name yet"}` },
+                  { title: TRI_STEPS[0], done: !!(saveRaceName || certConfig.eventName), summary: `Triathlon · ${saveRaceName || certConfig.eventName || "no name yet"} · code ${registrationCode || liveRaceCode || customRaceCode || "—"}` },
                   { title: TRI_STEPS[1], done: athletes.length > 0, summary: `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""}${registrationOpen ? ` · sign-up open (${registrationCode})` : ""}` },
                   { title: TRI_STEPS[2], done: courses.length > 0, summary: courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} · ${c.bikeMiles}${u[units.bike]} · ${c.runMiles}${u[units.run]}`).join(" | ") || "No distances yet" },
                   { title: TRI_STEPS[3], done: ageGroups.length > 0, summary: `${ageGroups.length} age group${ageGroups.length !== 1 ? "s" : ""} · ${certConfig.eventName || "no event name"}` },
@@ -9516,12 +9610,14 @@
                   <WizardFrame step={setupStep} titles={TRI_STEPS} title={TRI_STEPS[setupStep - 1]}
                     onJump={setSetupStep} onList={() => setSetupStep(0)}
                     onBack={setupStep > 1 ? () => setSetupStep(setupStep - 1) : () => setView("myraces")}
-                    onNext={last ? goToRace : () => setSetupStep(setupStep + 1)}
+                    onNext={last ? goToRace : () => { if (setupStep === 1 && codeBlocksNext) return; setSetupStep(setupStep + 1); }}
                     nextLabel={last ? "Go to race →" : setupStep === 4 ? "Next: course map →" : "Next →"}
                     nextDisabled={last && athletes.length === 0}
                     nextHint={last ? readyHint : null}>
                     {setupStep === 1 && (
                       <RaceKindStep kind="triathlon" name={saveRaceName} onName={setRaceName}
+                        code={registrationCode || liveRaceCode || customRaceCode} onCode={setCustomRaceCode}
+                        codeStatus={codeStatus} codeLocked={triCodeLocked}
                         onKind={k => { if (k !== "triathlon") startRaceOfKind(k, saveRaceName); }}
                         lockedHint="Picking a different kind starts a new race of that kind. This triathlon stays open." />
                     )}
@@ -10212,7 +10308,10 @@
                     pool: swimMeet.pool,
                     savedAt: new Date().toLocaleDateString(),
                     events: swimMeet.events,
-                    code: existing?.code
+                    // A code parents already have (the meet went live) never changes;
+                    // before that, the one chosen in step 1 is kept.
+                    code: (existing?.live && existing.code) || swimMeet.code || existing?.code,
+                    live: existing?.live || false
                   };
                   if (existing) {
                     persistSwimMeets(swimSavedMeets.map(m => m.id === id ? entry : m));
@@ -10224,7 +10323,7 @@
                 function saveAndStartLiveSession(nameVal) {
                   const name = (nameVal || "").trim() || `Meet ${swimSavedMeets.length + 1}`;
                   const existing = swimSavedMeets.find(m => m.id === swimMeet._id);
-                  const code = existing?.code || generateSwimCode();
+                  const code = existing?.code || swimMeet.code || generateSwimCode();
                   const id = swimMeet._id || `meet_${Date.now()}`;
                   const entry = { id, meetName: name, pool: swimMeet.pool, savedAt: new Date().toLocaleDateString(), events: swimMeet.events, code };
                   if (existing) {
@@ -10244,7 +10343,7 @@
                   setSwimLiveCode(code);
                 }
                 function loadSwimMeet(meet) {
-                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id });
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id, code: meet.code || friendlyCode() });
                   setSwimLiveCode(null);
                   setSwimSetupStep(0);
                   setSwimView("setup");
@@ -10621,6 +10720,8 @@
                         <>
                           {st === 1 && (
                             <RaceKindStep kind="swim" name={swimMeet.meetName} nameId="swim-meet-name"
+                              code={swimMeet.code || ""} onCode={c => setSwimMeet(m => ({ ...m, code: c }))}
+                              codeStatus={codeStatus} codeLocked={swimCodeLocked}
                               onName={v => setSwimMeet(m => ({ ...m, meetName: v }))}
                               onKind={k => { if (k !== "swim") startRaceOfKind(k, swimMeet.meetName); }}
                               lockedHint="Picking a different kind starts a new race of that kind. This meet stays open." />
@@ -11009,7 +11110,7 @@
                         <WizardFrame step={st} titles={SWIM_STEPS} title={SWIM_STEPS[st - 1]}
                           onJump={setSwimSetupStep} onList={() => setSwimSetupStep(0)}
                           onBack={st > 1 ? () => setSwimSetupStep(st - 1) : () => setView("myraces")}
-                          onNext={st === 5 ? () => setSwimView("race") : () => setSwimSetupStep(st + 1)}
+                          onNext={st === 5 ? () => setSwimView("race") : () => { if (st === 1 && codeBlocksNext) return; setSwimSetupStep(st + 1); }}
                           nextLabel={st === 5 ? "Go to race →" : "Next →"}
                           nextDisabled={st === 5 && nEvents === 0}
                           nextHint={st === 5 ? (nEvents ? `${nEvents} event${nEvents !== 1 ? "s" : ""} ready` : "Add an event first") : null}>
@@ -11079,12 +11180,17 @@
                             <div style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"12px 14px", marginBottom:14 }}>
                               <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:8 }}>📡 Live Session</div>
                               {!swimLiveCode ? (
-                                <button style={{ ...btnStyle("#04613F"), fontSize:14, padding:"8px 20px" }} onClick={() => {
+                                <button style={{ ...btnStyle("#04613F"), fontSize:14, padding:"8px 20px" }} onClick={async () => {
                                   const savedMeet = swimSavedMeets.find(m => m.id === swimMeet._id);
                                   if (!swimMeet._id || !savedMeet) { setSwimShowSaveBefore(true); return; }
-                                  const code = savedMeet.code || generateSwimCode();
-                                  if (!savedMeet.code) persistSwimMeets(swimSavedMeets.map(m => m.id === swimMeet._id ? { ...m, code } : m));
+                                  const code = savedMeet.code || swimMeet.code || generateSwimCode();
+                                  // swimLive is writable by any signed-in user, so never
+                                  // take over a code another host's meet is using.
+                                  const free = await codeIsFree(code);
+                                  if (!free) { alert(`The code ${code} is already in use by another race. Pick a different code in step 1 of setup.`); return; }
+                                  persistSwimMeets(swimSavedMeets.map(m => m.id === swimMeet._id ? { ...m, code, live: true } : m));
                                   rtdb.ref(`swimLive/${code}`).set({
+                                    hostUid: currentUser ? currentUser.uid : null,
                                     meetName: swimMeet.meetName || "Unnamed Meet",
                                     pool: swimMeet.pool,
                                     activeEvent: swimActiveEvent,
@@ -11705,9 +11811,9 @@
                           <div style={{ fontSize:14, color:"#3D434B", marginBottom:3 }}>Meet Code</div>
                           <input
                             value={swimLaneCode}
-                            onChange={e => setSwimLaneCode(e.target.value.toUpperCase())}
+                            onChange={e => setSwimLaneCode(normCode(e.target.value))}
                             onKeyDown={e => e.key === "Enter" && joinLaneTimer()}
-                            maxLength={6}
+                            maxLength={12}
                             placeholder="ABC123"
                             style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:16, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
@@ -11891,9 +11997,9 @@
                           <div style={{ fontSize:14, color:"#3D434B", marginBottom:3 }}>Meet Code</div>
                           <input
                             value={swimWatchCode}
-                            onChange={e => setSwimWatchCode(e.target.value.toUpperCase())}
+                            onChange={e => setSwimWatchCode(normCode(e.target.value))}
                             onKeyDown={e => e.key === "Enter" && joinSwimWatch()}
-                            maxLength={6}
+                            maxLength={12}
                             placeholder="ABC123"
                             style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"10px 14px", color:"#0B0D10", fontSize:18, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
@@ -12089,8 +12195,8 @@
                           Enter the 6-character code the rider shared with you.
                         </div>
                         <div style={S.row}>
-                          <input value={bikeWatchCode} onChange={e => setBikeWatchCode(e.target.value.toUpperCase())}
-                            placeholder="ABC123" maxLength={6}
+                          <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
+                            placeholder="ABC123" maxLength={12}
                             style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           <button onClick={() => { if ((bikeWatchCode||"").trim().length >= 4) setBikeView("feed"); }}
                             style={{ ...btnStyle("#8A5A00"), whiteSpace:"nowrap" }}>Follow</button>
@@ -12295,10 +12401,12 @@
                       <WizardFrame step={st} titles={BIKE_STEPS} title={BIKE_STEPS[st - 1]}
                         onJump={setBikeSetupStep} onList={() => setBikeSetupStep(0)}
                         onBack={st > 1 ? () => setBikeSetupStep(st - 1) : () => { setBikeDraft(null); setView("myraces"); }}
-                        onNext={st === 5 ? publishDraft : () => setBikeSetupStep(st + 1)}
+                        onNext={st === 5 ? publishDraft : () => { if (st === 1 && codeBlocksNext) return; setBikeSetupStep(st + 1); }}
                         nextLabel={st === 5 ? "Save & publish →" : st === 3 ? "Next: map →" : "Next →"}>
                         {st === 1 && (
                           <RaceKindStep kind="bike" name={bikeDraft.eventName} nameId="bike-event-name"
+                            code={bikeDraft.code} onCode={c => setBikeDraft(d => ({ ...d, code: c }))}
+                            codeStatus={codeStatus} codeLocked={bikeCodeLocked}
                             onName={v => setBikeDraft(d => ({ ...d, eventName: v }))}
                             onKind={k => { if (k !== "bike") startRaceOfKind(k, bikeDraft.eventName); }}
                             lockedHint="Picking a different kind starts a new race of that kind." />
@@ -12691,8 +12799,8 @@
                       <div style={S.card}>
                         <div style={S.label}>Publishing to</div>
                         <div style={S.row}>
-                          <input value={bikeRideCode || ""} onChange={e => setBikeRideCode(e.target.value.toUpperCase())}
-                            placeholder="ABC123" maxLength={6} disabled={bikeRiding}
+                          <input value={bikeRideCode || ""} onChange={e => setBikeRideCode(normCode(e.target.value))}
+                            placeholder="ABC123" maxLength={12} disabled={bikeRiding}
                             style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center", opacity: bikeRiding ? 0.6 : 1 }} />
                         </div>
                         {bikeFeedList.length > 0 && !bikeRiding && (
@@ -12931,8 +13039,8 @@
                         <div style={S.card}>
                           <div style={S.label}>Follow a ride</div>
                           <div style={S.row}>
-                            <input value={bikeWatchCode} onChange={e => setBikeWatchCode(e.target.value.toUpperCase())}
-                              placeholder="ABC123" maxLength={6}
+                            <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
+                              placeholder="ABC123" maxLength={12}
                               style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           </div>
                         </div>
@@ -12993,8 +13101,8 @@
                             <div style={S.card}>
                               <div style={S.label}>Follow another rider</div>
                               <div style={S.row}>
-                                <input value={bikeAddCode} onChange={e => setBikeAddCode(e.target.value.toUpperCase())}
-                                  placeholder="ABC123" maxLength={6}
+                                <input value={bikeAddCode} onChange={e => setBikeAddCode(normCode(e.target.value))}
+                                  placeholder="ABC123" maxLength={12}
                                   style={{ ...S.input, fontFamily:"monospace", fontSize:16, letterSpacing:1.2, textAlign:"center" }} />
                                 <button onClick={() => {
                                   const c = (bikeAddCode || "").trim().toUpperCase();
