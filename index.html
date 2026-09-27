@@ -309,6 +309,66 @@
       }
       // LOGO_B64 is defined in the preceding plain <script> tag (keeps Babel fast)
 
+      // ── Sunlight type scale ──────────────────────────────────────────────────
+      const TM_DISPLAY = { fontFamily: "var(--tm-font)", fontWeight: 900, fontSize: 46, lineHeight: 0.92,
+                           letterSpacing: -1.2, wordSpacing: "0.12em", textTransform: "uppercase", color: TM.ink, margin: 0 };
+      const TM_H2      = { fontFamily: "var(--tm-font)", fontWeight: 800, fontSize: 22, lineHeight: 1.1,
+                           letterSpacing: 0.4, textTransform: "uppercase", color: TM.ink, margin: 0 };
+      const TM_LABEL   = { display: "block", fontFamily: "var(--tm-font)", fontWeight: 800, fontSize: 14,
+                           letterSpacing: 1.2, textTransform: "uppercase", color: TM.ink, marginBottom: 6 };
+      const TM_CAPTION = { fontSize: 14, fontWeight: 600, color: TM.inkMuted };
+      const TM_NUM     = { fontFamily: "var(--tm-font)", fontWeight: 900, letterSpacing: -2.6,
+                           fontVariantNumeric: "tabular-nums" };
+
+      // Segmented control: the chosen option is solid with reversed text, the
+      // others a 2px outline. No subtle tints — they vanish in glare.
+      function segStyle(active, colour = TM.ink) {
+        return { flex: 1, minHeight: 46, padding: "0 12px", borderRadius: 6, cursor: "pointer",
+                 fontFamily: "var(--tm-font)", fontWeight: 800, fontSize: 16,
+                 background: active ? colour : "#FFFFFF", color: active ? "#FFFFFF" : colour,
+                 border: `2px solid ${colour}` };
+      }
+
+      // A row with a status carries it as an 8px left edge in the discipline
+      // colour — never as a background tint.
+      function rowStyle(edge) {
+        return { background: "#FFFFFF", border: `2px solid ${TM.line}`, borderLeft: `8px solid ${edge || TM.line}`,
+                 borderRadius: 6, padding: "12px 14px" };
+      }
+
+      // Stroke icons, 28px, drawn in currentColor so they follow the text.
+      function RoleIcon({ kind, size = 28 }) {
+        const p = { fill: "none", stroke: "currentColor", strokeWidth: 2.6, strokeLinecap: "round", strokeLinejoin: "round" };
+        return (
+          <svg width={size} height={size} viewBox="0 0 28 28" aria-hidden="true" style={{ flexShrink: 0 }}>
+            {kind === "host" && (<g {...p}><circle cx="14" cy="16" r="9" /><path d="M14 16 L14 11" /><path d="M11 3 L17 3" /><path d="M14 3 L14 7" /><path d="M22 8 L24 6" /></g>)}
+            {kind === "athlete" && (<g {...p}><path d="M6 25 L6 3" /><path d="M6 4 L22 4 L18 9.5 L22 15 L6 15" /></g>)}
+            {kind === "spectator" && (<g {...p}><path d="M2 14 C6 7 10 5 14 5 C18 5 22 7 26 14 C22 21 18 23 14 23 C10 23 6 21 2 14 Z" /><circle cx="14" cy="14" r="4" /></g>)}
+          </svg>
+        );
+      }
+      function ArrowIcon({ size = 28 }) {
+        return (
+          <svg width={size} height={size} viewBox="0 0 28 28" aria-hidden="true" style={{ flexShrink: 0 }}>
+            <path d="M5 14 L22 14 M15 7 L22 14 L15 21" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        );
+      }
+      function PersonIcon({ size = 24 }) {
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+            <g fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><circle cx="12" cy="8" r="4" /><path d="M4 21 C4 16 8 14 12 14 C16 14 20 16 20 21" /></g>
+          </svg>
+        );
+      }
+
+      // Kind of race → its colour and name, so a list never relies on colour alone.
+      const RACE_KINDS = {
+        triathlon: { label: "Triathlon", colour: TM.ink },
+        swim:      { label: "Swim meet", colour: TM.swim },
+        bike:      { label: "Bike ride", colour: TM.bike },
+      };
+
       // One job per card on the Setup screen. Everything stays shut until you go
       // looking for it, and the summary line answers the usual question — how many
       // athletes, which distances — without opening anything.
@@ -1232,7 +1292,7 @@
 
       // ── App ──────────────────────────────────────────────────────────────────
       function App() {
-        const [view, setView] = useState("home");
+        const [view, setView] = useState("myraces");
         const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
         const [homeSection, setHomeSection] = useState(null); // "races" when Existing Race expanded
         const [athletes, setAthletes] = useState([
@@ -2509,7 +2569,7 @@
         // Guard: redirect to home if setup/race is accessed without a race being initialized
         useEffect(() => {
           if (!raceInitialized && (view === "setup" || view === "race")) {
-            setView("home");
+            setView("myraces");
           }
         }, [raceInitialized, view]);
 
@@ -2849,11 +2909,9 @@
                   setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "athlete" });
                   localStorage.setItem("tri-user-profile", JSON.stringify(data.profile));
                   const role = data.profile.role || "athlete";
-                  if (role === "host") setView("home");
-                  else if (role === "spectator") setView("watch");
-                  else setView("join");
+                  if (!roleFreshRef.current) setView(role === "host" ? "myraces" : role === "spectator" ? "spectate" : "join");
                 } else {
-                  try { const c = localStorage.getItem("tri-user-profile"); if (c) { const p = JSON.parse(c); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "athlete" }); const role = p.role || "athlete"; if (role === "host") setView("home"); else if (role === "spectator") setView("watch"); else setView("join"); } } catch(_) {}
+                  try { const c = localStorage.getItem("tri-user-profile"); if (c) { const p = JSON.parse(c); setUserProfile(p); setEditProfile({ firstName: p.firstName || "", lastName: p.lastName || "", birthday: p.birthday || "", gender: p.gender || "", role: p.role || "athlete" }); const role = p.role || "athlete"; if (!roleFreshRef.current) setView(role === "host" ? "myraces" : role === "spectator" ? "spectate" : "join"); } } catch(_) {}
                 }
 
                 // Races: RTDB → localStorage fallback, then push local up to RTDB if missing
@@ -3059,7 +3117,7 @@
           setClearRaceConfirm(false);
           try { localStorage.removeItem("tri-active-live"); } catch(e) {}
           setRaceInitialized(false);
-          setView("home");
+          setView("myraces");
         }
 
         async function _doOpenRegistration(code) {
@@ -4106,8 +4164,16 @@
           if (!code) return;
           setRegError(""); setRegWorking(true);
           const snap = await rtdb.ref("liveRaces/" + code).once("value");
+          if (!snap.exists()) {
+            // Not a triathlon — the same box takes swim meet and bike ride codes.
+            const kind = await findRaceKind(code);
+            setRegWorking(false);
+            if (kind === "swim") { selectMode("swim"); setSwimWatchCode(code); joinSwimWatchCode(code); setView("swimwatch"); return; }
+            if (kind === "bike") { selectMode("bike"); setBikeRideCode(code); setView("bike"); setBikeView("ride"); return; }
+            setRegError("No race found with that code. Check it with the organiser.");
+            return;
+          }
           setRegWorking(false);
-          if (!snap.exists()) { setRegError("No active race found with that code."); return; }
           const data = snap.val();
           const segs = data.segments || SEGMENTS;
           if (data.athletes) {
@@ -6307,244 +6373,373 @@
         // Deep link: ?bike=CODE drops straight into that rider's live feed.
         const bikeDeepLinkRef = useRef(false);
         useEffect(() => {
-          if (bikeDeepLinkRef.current || !currentUser) return;
+          if (bikeDeepLinkRef.current || authLoading) return;
           const code = new URLSearchParams(location.search).get("bike");
           if (!code) return;
           bikeDeepLinkRef.current = true;
+          // Bike feeds are publicly readable, so a shared link just opens as a spectator.
+          setChosenRole(r => r || "spectator");
           setAppMode("bike");
           try { localStorage.setItem("tri-appmode", "bike"); } catch(_) {}
           setBikeWatchCode(code.trim().toUpperCase());
           setView("bike");
           setBikeView("feed");
-        }, [currentUser]);
+        }, [currentUser, authLoading]);
 
-        // Role booleans — computed early for hook ordering (before any conditional returns)
-        const effectiveRole = (!userProfile?.role || userProfile.role === "participant") ? "athlete" : userProfile.role;
+        // ── Role: "pick your lane" ───────────────────────────────────────────────
+        // The role decides which app you get: hosts get the full timer, athletes
+        // their own race, spectators just a code box and the live view. It's
+        // remembered on the device and in the Firebase profile, so a returning user
+        // goes straight to their app; "Switch role" in the header undoes it.
+        const [chosenRole, setChosenRole] = useState(() => {
+          try { return localStorage.getItem("tm-role") || null; } catch(_) { return null; }
+        });
+        const [rolePickerOpen, setRolePickerOpen] = useState(false);
+        // A role picked on this device before signing in beats whatever the
+        // profile says — the person just told us what they're here to do.
+        const roleFreshRef = useRef(false);
+        const [spectatorWantsLogin, setSpectatorWantsLogin] = useState(false);
+        const profileRole = userProfile?.role === "participant" ? "athlete" : (userProfile?.role || null);
+        const signedIn = !!currentUser && !currentUser.isAnonymous;
+        const effectiveRole = chosenRole || (signedIn ? profileRole : null);
         const isHost      = effectiveRole === "host";
         const isAthlete   = effectiveRole === "athlete";
         const isSpectator = effectiveRole === "spectator";
 
-        function selectMode(mode) {
-          if (!mode) {
-            setAppMode(null);
-            localStorage.removeItem("tri-appmode");
-            setView(isHost ? "home" : "join");
-            return;
-          }
-          setAppMode(mode);
-          localStorage.setItem("tri-appmode", mode);
-          if (mode === "swim") { setView("swim"); setSwimView("home"); }
-          else if (mode === "bike") { setView("bike"); setBikeView("home"); }
-          else { setView(isHost ? "home" : "join"); }
+        function roleLanding(role) {
+          return role === "host" ? "myraces" : role === "spectator" ? "spectate" : "join";
         }
 
-        // View guard — redirect non-hosts away from host-only views
+        function chooseRole(role) {
+          roleFreshRef.current = true;
+          setChosenRole(role);
+          setAuthRole(role === "spectator" ? "spectator" : role);
+          try { localStorage.setItem("tm-role", role); } catch(_) {}
+          setRolePickerOpen(false);
+          setSpectatorWantsLogin(false);
+          setView(roleLanding(role));
+          if (role !== "host") { setAppMode(null); try { localStorage.removeItem("tri-appmode"); } catch(_) {} }
+        }
+
+        // Keep the profile and the device in step. A fresh pick is written up to
+        // the profile; otherwise a signed-in user's profile role is adopted, so the
+        // same account lands in the same app on any phone.
         useEffect(() => {
-          if (!currentUser) return;
-          if (!isHost && ["home","setup","race","results","devices","manual","athletes","swim"].includes(view)) {
-            setView(appMode === "swim" ? "swimwatch" : (isSpectator ? "watch" : "join"));
-          } else if (isSpectator && view === "join") {
-            setView("watch");
+          if (!signedIn || !userProfile) return;
+          if (roleFreshRef.current && chosenRole) {
+            if (profileRole !== chosenRole) {
+              const updated = { ...userProfile, role: chosenRole };
+              setUserProfile(updated);
+              try { localStorage.setItem("tri-user-profile", JSON.stringify(updated)); } catch(_) {}
+              rtdb.ref("users/" + currentUser.uid + "/profile/role").set(chosenRole).catch(console.error);
+            }
+            roleFreshRef.current = false;
+          } else if (profileRole && profileRole !== chosenRole) {
+            setChosenRole(profileRole);
+            try { localStorage.setItem("tm-role", profileRole); } catch(_) {}
           }
-        }, [currentUser, isHost, isAthlete, isSpectator, view, appMode]);
+        }, [signedIn, userProfile, chosenRole]);
 
-        // Redirect to correct landing when in bike mode. Bike Live Feed has no
-        // host-only gate: whoever is riding needs the rider page on their own phone.
-        useEffect(() => {
-          if (appMode === "bike" && view !== "bike") setView("bike");
-        }, [appMode, view]);
+        // The timer type is no longer chosen up front — it's a property of the race
+        // a host opens or creates. This just records which timer that is.
+        function selectMode(mode) {
+          const m = mode || null;
+          setAppMode(m);
+          try { if (m) localStorage.setItem("tri-appmode", m); else localStorage.removeItem("tri-appmode"); } catch(_) {}
+        }
 
-        // Redirect to correct landing when in swim mode
+        // A code says what kind of race it is; nobody gets asked.
+        async function findRaceKind(code) {
+          const c = (code || "").trim().toUpperCase();
+          if (!c) return null;
+          const has = (path) => rtdb.ref(path).once("value").then(s => s.exists()).catch(() => false);
+          const [tri, swim, bike] = await Promise.all([has("liveRaces/" + c), has("swimLive/" + c), has("bikeFeeds/" + c + "/meta")]);
+          return tri ? "triathlon" : swim ? "swim" : bike ? "bike" : null;
+        }
+
+        // Spectators never make an account. Anonymous auth satisfies the database
+        // rules behind the scenes (it has to be enabled in Firebase Auth → Sign-in
+        // method → Anonymous). Bike feeds are publicly readable, so they work even
+        // without it.
+        async function ensureViewerAuth() {
+          if (auth.currentUser) return true;
+          try { await auth.signInAnonymously(); return true; }
+          catch (e) { console.warn("Anonymous sign-in unavailable:", e && e.code); return false; }
+        }
+
+        const [spectateCode, setSpectateCode] = useState("");
+        const [spectateError, setSpectateError] = useState("");
+        const [spectateBusy, setSpectateBusy] = useState(false);
+        const [spectateNeedsAccount, setSpectateNeedsAccount] = useState(false);
+
+        async function spectateByCode() {
+          const c = spectateCode.trim().toUpperCase();
+          if (c.length < 4) { setSpectateError("Enter the race code — it's on the start sheet or ask the organiser."); return; }
+          setSpectateBusy(true); setSpectateError(""); setSpectateNeedsAccount(false);
+          const authed = await ensureViewerAuth();
+          const kind = await findRaceKind(c);
+          setSpectateBusy(false);
+          if (!kind) {
+            if (!authed) {
+              setSpectateNeedsAccount(true);
+              setSpectateError("Watching without an account isn't switched on for this site yet. Sign in to watch, or ask the organiser.");
+            } else {
+              setSpectateError("No race found with that code. Check it with the organiser.");
+            }
+            return;
+          }
+          openRaceAsViewer(kind, c);
+        }
+
+        function openRaceAsViewer(kind, c) {
+          if (kind === "triathlon") {
+            selectMode("triathlon"); setSpectatorCode(c); watchRace(c); setView("watch");
+          } else if (kind === "swim") {
+            selectMode("swim"); setSwimWatchCode(c); joinSwimWatchCode(c); setView("swimwatch");
+          } else {
+            selectMode("bike"); setBikeWatchCode(c); setView("bike"); setBikeView("feed");
+          }
+        }
+
+        // Only hosts see host screens. Athletes get their race; spectators get the
+        // code box and the live view. Anyone signed in keeps Profile.
         useEffect(() => {
-          if (appMode === "swim" && view === "home") {
-            setView(isHost ? "swim" : "swimwatch");
-            if (isHost) setSwimView("home");
+          if (!effectiveRole || effectiveRole === "host") return;
+          const allowed = effectiveRole === "athlete"
+            ? ["join", "swimwatch", "swimlane", "bike", "profile"]
+            : ["spectate", "watch", "swimwatch", "bike", "profile"];
+          if (!allowed.includes(view)) { setView(roleLanding(effectiveRole)); return; }
+          if (view === "bike") {
+            const ok = effectiveRole === "athlete" ? ["ride", "feed"] : ["feed"];
+            if (!ok.includes(bikeView)) setBikeView(ok[0]);
+          }
+        }, [effectiveRole, view, bikeView]);
+
+        // Host screens that belong to one timer send you to that timer's screen
+        // when the open race is a different kind.
+        useEffect(() => {
+          if (!isHost) return;
+          if (appMode === "bike" && ["home","setup","race","results","devices","athletes","swim"].includes(view)) setView("bike");
+          if (appMode === "swim" && ["home","setup","race","results","devices","athletes","bike"].includes(view)) {
+            setView("swim");
+            if (view === "home") setSwimView("home");
           }
         }, [appMode, view, isHost]);
 
+        // Top-level copies of two swim helpers so My Races and the spectator code
+        // box can use them; the swim screen keeps its own identical versions.
+        function persistSwimMeets(meets) {
+          setSwimSavedMeets(meets);
+          localStorage.setItem("swim-saved-meets", JSON.stringify(meets));
+          if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimMeets").set(meets).catch(console.error);
+        }
+        function joinSwimWatchCode(codeIn) {
+          const code = (codeIn || "").trim().toUpperCase();
+          if (!code) return;
+          if (swimWatchListenerRef.current) {
+            swimWatchListenerRef.current.ref.off("value", swimWatchListenerRef.current.fn);
+          }
+          setSwimWatchError("");
+          setSwimWatchSession(null);
+          const ref = rtdb.ref(`swimLive/${code}`);
+          const fn = snap => {
+            if (!snap.exists()) { setSwimWatchError("Meet not found. Check the code with your host."); setSwimWatchSession(null); return; }
+            setSwimWatchError("");
+            setSwimWatchSession(snap.val());
+          };
+          ref.on("value", fn);
+          swimWatchListenerRef.current = { ref, fn };
+        }
+
         // Auth loading screen
         if (authLoading) return (
-          <div style={{ minHeight: "100vh", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ minHeight: "100vh", background: TM.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <div style={{ textAlign: "center" }}>
-              <TimeathonLockup size={44} wordSize={34} />
-              <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2, marginTop: 14 }}>LOADING…</div>
+              <TimeathonLockup size={44} wordSize={34} rule />
+              <div style={{ fontSize: 14, fontWeight: 800, color: TM.inkMuted, letterSpacing: 1.2, marginTop: 16 }}>LOADING…</div>
             </div>
           </div>
         );
 
-        // Login / Sign up screen
-        if (!currentUser) return (
-          <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: "var(--tm-font)", color: "#0B0D10", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-            <div style={{ width: "100%", maxWidth: 400 }}>
-              <div style={{ textAlign: "center", marginBottom: 32 }}>
-                <TimeathonLockup size={52} wordSize={40} rule tagline="Swim · Bike · Run" />
-              </div>
-
-              <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "28px 24px" }}>
-                <div style={{ display: "flex", marginBottom: 24, background: "#FFFFFF", borderRadius: 6, padding: 3 }}>
-                  {[["login","Sign In"],["signup","Create Account"]].map(([mode, label]) => (
-                    <button key={mode} onClick={() => { setAuthMode(mode); setAuthError(""); }}
-                      style={{ flex: 1, padding: "8px", fontSize: 14, fontWeight: 700, letterSpacing: 1, background: authMode === mode ? "#0B3FCC" : "transparent", color: authMode === mode ? "#FFFFFF" : "#3D434B", border: "none", borderRadius: 4, cursor: "pointer" }}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {authMode === "signup" && (<>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <input value={authFirstName} onChange={e => setAuthFirstName(e.target.value)} placeholder="First name"
-                        style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "12px 14px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
-                      <input value={authLastName} onChange={e => setAuthLastName(e.target.value)} placeholder="Last name"
-                        style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "12px 14px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Birthday</div>
-                        <input type="date" value={authBirthday} onChange={e => setAuthBirthday(e.target.value)}
-                          style={{ width: "100%", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "11px 12px", color: "#0B0D10", fontSize: 14, outline: "none", colorScheme: "light" }} />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Gender</div>
-                        <select value={authGender} onChange={e => setAuthGender(e.target.value)}
-                          style={{ width: "100%", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "11px 12px", color: authGender ? "#0B0D10" : "#3D434B", fontSize: 14, outline: "none", cursor: "pointer" }}>
-                          <option value="">Select…</option>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                          <option value="Non-binary">Non-binary</option>
-                          <option value="Prefer not to say">Prefer not to say</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>I am a…</div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        {[["host","🎯","Host","I run races"],["athlete","🏊","Athlete","I race"],["spectator","👀","Spectator","I watch"]].map(([role, icon, title, sub]) => (
-                          <button key={role} onClick={() => setAuthRole(role)}
-                            style={{ flex: 1, padding: "10px 6px", background: authRole === role ? "#EFEDE8" : "transparent", border: `2px solid ${authRole === role ? "#0B3FCC" : "#C9C5BC"}`, borderRadius: 8, color: authRole === role ? "#0B3FCC" : "#3D434B", cursor: "pointer", textAlign: "center" }}>
-                            <div style={{ fontSize: 18, marginBottom: 2 }}>{icon}</div>
-                            <div style={{ fontSize: 14, fontWeight: 700 }}>{title}</div>
-                            <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>{sub}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>)}
-                  <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="Email address"
-                    onKeyDown={e => e.key === "Enter" && (authMode === "login" ? authSignIn() : authSignUp())}
-                    style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "12px 14px", color: "#0B0D10", fontSize: 14, outline: "none", width: "100%" }} />
-                  <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="Password"
-                    onKeyDown={e => e.key === "Enter" && (authMode === "login" ? authSignIn() : authSignUp())}
-                    style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "12px 14px", color: "#0B0D10", fontSize: 14, outline: "none", width: "100%" }} />
-
-                  {authError && (
-                    <div style={{ fontSize: 14, color: authError.includes("sent") ? "#04613F" : "#B3001B", background: authError.includes("sent") ? "#EFEDE8" : "#EFEDE8", border: `2px solid ${authError.includes("sent") ? "#C9C5BC" : "#C9C5BC"}`, borderRadius: 6, padding: "8px 12px" }}>
-                      {authError}
-                    </div>
-                  )}
-
-                  <button onClick={authMode === "login" ? authSignIn : authSignUp} disabled={authWorking}
-                    style={{ background: "#0B3FCC", border: "none", borderRadius: 6, padding: "13px", fontSize: 14, fontWeight: 700, color: "#FFFFFF", cursor: authWorking ? "default" : "pointer", opacity: authWorking ? 0.7 : 1, letterSpacing: 1 }}>
-                    {authWorking ? "Please wait…" : authMode === "login" ? "Sign In" : "Create Account"}
-                  </button>
-
-                  {authMode === "login" && (
-                    <button onClick={authResetPassword} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 14, cursor: "pointer", textAlign: "center", padding: "4px" }}>
-                      Forgot password?
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-
-
-        // Mode selector — shown to all roles when no mode is selected
-        if (currentUser && !appMode) {
+        // ── Role picker: three full-bleed blocks, the whole block is the target ──
+        if (rolePickerOpen || !effectiveRole) {
+          const lanes = [
+            ["host",      TM.swim, "Host",      "I'm running the race",          <RoleIcon kind="host" />],
+            ["athlete",   TM.bike, "Athlete",   "I'm racing today",              <RoleIcon kind="athlete" />],
+            ["spectator", TM.run,  "Spectator", "Watching — no account needed",  <RoleIcon kind="spectator" />],
+          ];
           return (
-            <div style={{ background:"#FFFFFF", minHeight:"100vh", fontFamily:"var(--tm-font)", color:"#0B0D10", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
-              <TimeathonLockup size={50} wordSize={38} rule />
-              <div style={{ color:"#3D434B", margin:"18px 0 46px", fontSize:14, letterSpacing:1.2, textTransform:"uppercase" }}>Choose your timer</div>
-              <div style={{ display:"flex", flexDirection:"column", gap:16, width:"100%", maxWidth:380 }}>
-                <div onClick={() => selectMode("triathlon")} style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"28px 24px", cursor:"pointer", transition:"border-color 0.15s" }}>
-                  <div style={{ fontSize:32, marginBottom:10 }}>🏊‍♂️🚴‍♂️🏃‍♂️</div>
-                  <div style={{ fontSize:22, fontWeight:700, color:"#0B0D10", letterSpacing:0.5 }}>Triathlon Timer</div>
-                  <div style={{ fontSize:14, color:"#3D434B", marginTop:5 }}>Swim · Bike · Run · Live GPS tracking</div>
+            <div style={{ minHeight: "100vh", background: TM.bg, color: TM.ink, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: "36px 20px 26px" }}>
+                <TimeathonLockup size={34} wordSize={26} center={false} />
+                <h1 style={{ ...TM_DISPLAY, marginTop: 30 }}>Pick your<br/>lane</h1>
+                <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted, marginTop: 12 }}>
+                  We'll remember this. You can switch any time from the top of the screen.
                 </div>
-                <div onClick={() => selectMode("swim")} style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"28px 24px", cursor:"pointer" }}>
-                  <div style={{ fontSize:32, marginBottom:10 }}>🏊‍♀️🏊‍♂️</div>
-                  <div style={{ fontSize:22, fontWeight:700, color:"#0B0D10", letterSpacing:0.5 }}>Swim Meet Timer</div>
-                  <div style={{ fontSize:14, color:"#3D434B", marginTop:5 }}>Multi-lane · Live results · Team scoring</div>
-                </div>
-                <div onClick={() => selectMode("bike")} style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:8, padding:"28px 24px", cursor:"pointer" }}>
-                  <div style={{ fontSize:32, marginBottom:10 }}>🚴‍♀️📍</div>
-                  <div style={{ fontSize:22, fontWeight:700, color:"#0B0D10", letterSpacing:0.5 }}>Bike Live Feed</div>
-                  <div style={{ fontSize:14, color:"#04613F", marginTop:5 }}>Follow one rider · Live GPS · Watts · Cadence</div>
-                </div>
+              </div>
+              <div>
+                {lanes.map(([role, bg, title, sub, icon]) => (
+                  <button key={role} onClick={() => chooseRole(role)} aria-label={`${title}: ${sub}`}
+                    style={{ display: "flex", alignItems: "center", gap: 16, width: "100%", minHeight: 108,
+                             padding: "22px 24px", background: bg, color: "#FFFFFF", border: "none",
+                             borderRadius: 0, textAlign: "left", cursor: "pointer" }}>
+                    {icon}
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4, lineHeight: 1 }}>{title}</span>
+                      <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 6 }}>{sub}</span>
+                    </span>
+                    <ArrowIcon />
+                  </button>
+                ))}
+              </div>
+              <div style={{ padding: "22px 20px 40px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                {rolePickerOpen && effectiveRole && (
+                  <button onClick={() => setRolePickerOpen(false)} style={btnStyle(TM.ink, true)}>Cancel</button>
+                )}
+                {signedIn && (
+                  <div style={{ fontSize: 14, fontWeight: 600, color: TM.inkMuted }}>
+                    Signed in as {currentUser.email}
+                  </div>
+                )}
               </div>
             </div>
           );
         }
 
-        return (
-          <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: "var(--tm-font)", color: "#0B0D10" }}>
-
-            {/* HEADER */}
-            <div style={{ background: "#FFFFFF", borderBottom: "3px solid transparent", borderImage: "linear-gradient(90deg,#0B3FCC,#04613F) 1", padding: "16px 20px 14px", textAlign: "center", position: "relative" }}>
-              {(() => {
-                if (appMode === "bike") {
-                  return bikeView !== "home" && (
-                    <button onClick={() => setBikeView("home")} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#3D434B", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
-                  );
-                }
-                const homeView = appMode === "swim" ? (isHost ? "swim" : "swimwatch") : (isHost ? "home" : "join");
-                return view !== homeView && (
-                  <button onClick={() => {
-                    if (appMode === "swim" && isHost) { setView("swim"); setSwimView("home"); }
-                    else setView(homeView);
-                  }} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#3D434B", fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1 }}>&#8592;</button>
-                );
-              })()}
-              <div onClick={() => {
-                if (appMode === "swim" && isHost) { setView("swim"); setSwimView("setup"); }
-                else setView(isHost ? "home" : "join");
-              }} style={{ cursor: "pointer" }}>
-                <TimeathonLockup size={30} wordSize={24} />
-              </div>
-              {/* The name of the timer you're in doubles as the way out of it.
-                  It replaces the old ⌂ nav tab, which sat next to "Home" and
-                  meant something entirely different. */}
-              <button onClick={() => selectMode(null)} title="Switch to a different timer"
-                style={{ background: "none", border: "none", cursor: "pointer", marginTop: 5, padding: "2px 6px",
-                         fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase",
-                         color: "var(--tm-run)", opacity: 0.75, fontFamily: "inherit" }}>
-                {appMode === "swim" ? "Swim Meet Timer" : appMode === "bike" ? "Bike Live Feed" : "Triathlon Timer"}
-                <span style={{ marginLeft: 6, opacity: 0.8 }}>&#8645;</span>
-              </button>
-              <button onClick={() => setView("profile")} title="Profile" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "2px solid #C9C5BC", borderRadius: 4, color: "#3D434B", fontSize: 14, cursor: "pointer", padding: "4px 8px", letterSpacing: 1 }}>
-                &#128100; {currentUser?.displayName ? currentUser.displayName.split(" ")[0] : currentUser?.email?.split("@")[0]}
-              </button>
+        // ── Sign in / create account — hosts and athletes only ──────────────────
+        // Spectators skip this entirely unless they ask to sign in.
+        const needsLogin = !signedIn && (effectiveRole !== "spectator" || spectatorWantsLogin);
+        if (needsLogin) {
+          const roleColour = isHost ? TM.swim : isAthlete ? TM.bike : TM.run;
+          const roleName = isHost ? "Host" : isAthlete ? "Athlete" : "Spectator";
+          const submit = () => (authMode === "login" ? authSignIn() : authSignUp());
+          const field = (id, label, input) => (
+            <div>
+              <label htmlFor={id} style={TM_LABEL}>{label}</label>
+              {input}
             </div>
+          );
+          const inp = { width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
+                        padding: "10px 14px", color: TM.ink, outline: "none" };
+          return (
+            <div style={{ minHeight: "100vh", background: TM.bg, color: TM.ink }}>
+              <div style={{ background: roleColour, color: "#FFFFFF", padding: "14px 16px 22px" }}>
+                <button onClick={() => { if (isSpectator) setSpectatorWantsLogin(false); else setRolePickerOpen(true); }}
+                  style={{ background: "#FFFFFF", color: roleColour, border: "none", borderRadius: 6, minHeight: 46,
+                           padding: "0 16px", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>
+                  ← {isSpectator ? "Back to watching" : "Change role"}
+                </button>
+                <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginTop: 22 }}>{roleName}</div>
+                <h1 style={{ ...TM_DISPLAY, color: "#FFFFFF", marginTop: 4 }}>{authMode === "login" ? "Sign in" : "Create account"}</h1>
+              </div>
+              <div style={{ maxWidth: 440, margin: "0 auto", padding: "22px 20px 48px" }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 22 }} role="tablist">
+                  {[["login","Sign in"],["signup","Create account"]].map(([mode, label]) => (
+                    <button key={mode} role="tab" aria-selected={authMode === mode}
+                      onClick={() => { setAuthMode(mode); setAuthError(""); }}
+                      style={segStyle(authMode === mode)}>{label}</button>
+                  ))}
+                </div>
+                <form onSubmit={e => { e.preventDefault(); submit(); }} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {authMode === "signup" && (<>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <div style={{ flex: 1 }}>{field("su-first", "First name",
+                        <input id="su-first" value={authFirstName} onChange={e => setAuthFirstName(e.target.value)} autoComplete="given-name" style={inp} />)}</div>
+                      <div style={{ flex: 1 }}>{field("su-last", "Last name",
+                        <input id="su-last" value={authLastName} onChange={e => setAuthLastName(e.target.value)} autoComplete="family-name" style={inp} />)}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <div style={{ flex: 1 }}>{field("su-bday", "Birthday",
+                        <input id="su-bday" type="date" value={authBirthday} onChange={e => setAuthBirthday(e.target.value)} style={inp} />)}</div>
+                      <div style={{ flex: 1 }}>{field("su-gender", "Gender",
+                        <select id="su-gender" value={authGender} onChange={e => setAuthGender(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                          <option value="">Select…</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                          <option value="Non-binary">Non-binary</option>
+                          <option value="Prefer not to say">Prefer not to say</option>
+                        </select>)}</div>
+                    </div>
+                  </>)}
+                  {field("au-email", "Email",
+                    <input id="au-email" type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} autoComplete="email" style={inp} />)}
+                  {field("au-pass", "Password",
+                    <input id="au-pass" type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)}
+                      autoComplete={authMode === "login" ? "current-password" : "new-password"} style={inp} />)}
+                  {authError && (
+                    <div role="alert" style={{ fontSize: 16, fontWeight: 600, color: TM.ink, background: TM.bgAlt,
+                      borderLeft: `8px solid ${authError.includes("sent") ? TM.run : TM.live}`, padding: "10px 14px" }}>
+                      {authError}
+                    </div>
+                  )}
+                  <button type="submit" disabled={authWorking}
+                    style={{ ...btnStyle(TM.ink), width: "100%", opacity: authWorking ? 0.7 : 1 }}>
+                    {authWorking ? "Please wait…" : authMode === "login" ? "Sign in →" : "Create account →"}
+                  </button>
+                  {authMode === "login" && (
+                    <button type="button" onClick={authResetPassword}
+                      style={{ background: "none", border: "none", color: TM.ink, fontSize: 16, fontWeight: 700,
+                               textDecoration: "underline", cursor: "pointer" }}>
+                      Forgot password?
+                    </button>
+                  )}
+                </form>
+              </div>
+            </div>
+          );
+        }
 
-            {/* NAV — conditional per mode/role */}
-            {(() => {
-              const swimNavMap = { swimhome:"home", swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
-              // No ⌂ tab any more — switching timers is the header button, so every
-              // tab in this strip stays inside the timer you're already in.
-              const navTabs = (appMode === "bike")
-                ? [["__bike_home__","🚴 Rides"],["__bike_riders__","👥 Riders"],["__bike_setup__","⚙️ Setup"],["__bike_ride__","📡 Ride"],["__bike_feed__","👀 Follow"]]
-                : (appMode === "swim" && isHost)
-                ? [["swimhome","🏠 Meet"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
-                : (appMode === "swim")
-                ? [["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
-                : isHost
-                ? [["home","🏠 Home"],["setup","⚙️ Setup"],["race","🏁 Race"],["results","📊 Results"],["join","📍 Join"],["devices","📡 Devices"]]
-                : isAthlete
-                  ? [["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
-                  : [["watch","👀 Watch"],["profile","👤 Profile"]];
+        // Where "back" goes for athletes and spectators, who have no nav bar.
+        const roleHome = roleLanding(effectiveRole);
+        const atRoleHome = view === roleHome && !(isAthlete && joinRace);
+        function goRoleHome() {
+          if (isAthlete && view === "join" && joinRace) { setJoinRace(null); setJoinAthIdx(null); return; }
+          if (!isHost) { selectMode(null); }
+          setView(roleHome);
+        }
+
+        return (
+          <div style={{ minHeight: "100vh", background: TM.bg, fontFamily: "var(--tm-font)", color: TM.ink }}>
+
+            {/* HEADER — brand on the left, the way out of this role on the right. */}
+            <header style={{ background: TM.bg, borderBottom: `3px solid ${TM.ink}`, padding: "8px 12px",
+                             display: "flex", alignItems: "center", gap: 10, minHeight: 64 }}>
+              {!isHost && !atRoleHome ? (
+                <button onClick={goRoleHome} aria-label="Back"
+                  style={{ ...btnStyle(TM.ink, true), minWidth: 46, padding: "0 12px", fontSize: 22 }}>←</button>
+              ) : null}
+              <button onClick={() => { if (isHost) setView("myraces"); else goRoleHome(); }}
+                aria-label="Timeathon home"
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", minWidth: 0,
+                         display: "flex", alignItems: "center", gap: 8 }}>
+                <TimeathonMark size={30} />
+                {/* No room for the wordmark beside a back arrow on a phone. */}
+                {(isHost || atRoleHome) && <span style={{ ...TM_WORD_STYLE, fontSize: 22 }}>Timeathon</span>}
+              </button>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+                <button onClick={() => setRolePickerOpen(true)}
+                  style={{ ...btnStyle(TM.ink, true), padding: "0 12px", fontSize: 15, whiteSpace: "nowrap" }}>
+                  Switch role
+                </button>
+                {signedIn && (
+                  <button onClick={() => setView("profile")} aria-label="Profile" title="Profile"
+                    style={{ ...btnStyle(TM.ink, view !== "profile"), minWidth: 46, width: 46, padding: 0 }}>
+                    <PersonIcon />
+                  </button>
+                )}
+              </div>
+            </header>
+
+            {/* NAV — hosts only. Athletes and spectators move with a back arrow. */}
+            {isHost && (() => {
+              const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimathletes:"athletes", swimdevices:"devices" };
+              const navTabs = appMode === "bike"
+                ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__","Ride"],["__bike_feed__","Follow"],["__bike_riders__","Riders"]]
+                : appMode === "swim"
+                ? [["myraces","My Races"],["swimsetup","Setup"],["swimrace","Race"],["swimresults","Results"],["swimathletes","Athletes"],["swimdevices","Devices"],["swimlane","Lane"]]
+                : [["myraces","My Races"],["setup","Setup"],["race","Race"],["results","Results"],["athletes","Athletes"],["devices","Devices"]];
               return (
-                <div className="tm-nav-wrap">
+                <nav className="tm-nav-wrap" aria-label="Host">
                 <div className="tm-nav" ref={navStripRef}>
                   {navTabs.map(([v, label]) => {
                     const bikeTab = v.startsWith("__bike_") ? v.slice(7, -2) : null;
@@ -6553,7 +6748,7 @@
                       : v === view || (v in swimNavMap && view === "swim" && swimView === swimNavMap[v]);
                     return (
                       <button key={v} className="tm-nav-btn"
-                        data-active={isActive ? "1" : "0"}
+                        data-active={isActive ? "1" : "0"} aria-current={isActive ? "page" : undefined}
                         onClick={() => {
                         if (bikeTab) { setView("bike"); setBikeView(bikeTab); }
                         else if (v in swimNavMap) { setView("swim"); setSwimView(swimNavMap[v]); }
@@ -6564,7 +6759,7 @@
                     );
                   })}
                 </div>
-                </div>
+                </nav>
               );
             })()}
 
@@ -6600,141 +6795,217 @@
                 </div>
               </div>}
 
-              {/* ── HOME ── */}
-              {view === "home" && (
-                <div style={{ padding: "10px 0 20px" }}>
-                  {/* Mode title — the brand lockup already sits in the header above,
-                      so repeating it here just read as the word twice. */}
-                  <div style={{ textAlign: "center", marginBottom: 26 }}>
-                    <div style={{ fontFamily: "var(--tm-font)", fontWeight: 900, fontSize: 30,
-                                  letterSpacing: -0.5, color: "var(--tm-ink)", lineHeight: 1 }}>Triathlon Timer</div>
-                    <div className="tm-lane" style={{ maxWidth: 190, margin: "12px auto 0" }} />
-                    <div style={{ fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase",
-                                  color: "var(--tm-run)", opacity: 0.75, marginTop: 10 }}>Swim · Bike · Run</div>
-                  </div>
+              {/* ── MY RACES (host landing) ── */}
+              {view === "myraces" && (() => {
+                const bleed = { marginLeft: -16, marginRight: -16 };
+                const openTri = (race) => { selectMode("triathlon"); loadRace(race); };
+                const openSwim = (meet) => {
+                  selectMode("swim");
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id });
+                  setSwimLiveCode(null); setSwimHomeSection(null);
+                  setView("swim"); setSwimView("setup");
+                };
+                const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f }); setView("bike"); setBikeView("setup"); };
+                const saved = [
+                  ...savedRaces.map(r => ({ key: "t" + r.id, kind: "triathlon", name: r.name || "Untitled race",
+                    meta: `${r.athletes.length} athlete${r.athletes.length !== 1 ? "s" : ""} · saved ${r.savedAt || ""}`,
+                    open: () => openTri(r), del: () => deleteRace(r.id) })),
+                  ...swimSavedMeets.map(m => ({ key: "s" + m.id, kind: "swim", name: m.meetName || "Untitled meet",
+                    meta: `${(m.events || []).length} event${(m.events || []).length !== 1 ? "s" : ""} · ${m.pool || ""}`,
+                    open: () => openSwim(m), del: () => persistSwimMeets(swimSavedMeets.filter(x => x.id !== m.id)) })),
+                  ...bikeFeedList.map(f => ({ key: "b" + f.code, kind: "bike", name: f.eventName || bikeRiderFor(f)?.name || "Untitled ride",
+                    meta: `${bikeRiderFor(f)?.name || "No rider yet"} · code ${f.code}`,
+                    open: () => openBike(f), del: () => { persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code)); rtdb.ref(`bikeFeeds/${f.code}`).remove().catch(console.error); } })),
+                ];
+                const inProgress = raceInitialized && appMode !== "swim" && appMode !== "bike";
+                return (
+                  <div>
+                    <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
 
-                  {/* Cards */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-                    {/* New Race */}
-                    <button onClick={startNewRace} style={{ background: "#EFEDE8", border: "2px solid #0B3FCC", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                      <div style={{ fontSize: 40, lineHeight: 1 }}>🏁</div>
-                      <div>
-                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#0B3FCC" }}>New Race</div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>Start fresh — set up athletes &amp; distances</div>
-                      </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#0B3FCC" }}>&#8594;</div>
+                    <button onClick={() => setView("newrace")}
+                      style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
+                               minHeight: 96, padding: "22px 24px", background: TM.ink, color: "#FFFFFF", border: "none",
+                               borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
+                      <span style={{ fontWeight: 900, fontSize: 34, lineHeight: 1 }}>+</span>
+                      <span style={{ flex: 1 }}>
+                        <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>New race</span>
+                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet or bike ride</span>
+                      </span>
+                      <ArrowIcon />
                     </button>
 
-                    {/* Existing Race */}
-                    <button onClick={() => setHomeSection(homeSection === "races" ? null : "races")} style={{ background: "#EFEDE8", border: "2px solid #8A5A00", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                      <div style={{ fontSize: 40, lineHeight: 1 }}>📋</div>
-                      <div>
-                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#8A5A00" }}>Saved Races</div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>
-                          {savedRaces.length === 0 ? "Races you set up but haven't run yet" : `${savedRaces.length} ready to run`}
-                        </div>
-                      </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#8A5A00" }}>{homeSection === "races" ? "▲" : "▼"}</div>
-                    </button>
+                    {inProgress && (
+                      <button onClick={() => setView(clockStarted ? "race" : "setup")}
+                        style={{ ...bleed, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
+                                 minHeight: 80, padding: "18px 24px", background: clockRunning ? TM.live : TM.bgAlt,
+                                 color: clockRunning ? "#FFFFFF" : TM.ink, border: "none", borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                            {clockRunning ? "● Live now" : "Open"}
+                          </span>
+                          <span style={{ display: "block", fontWeight: 900, fontSize: 22, textTransform: "uppercase", marginTop: 2 }}>
+                            {saveRaceName || certConfig.eventName || "Current race"}
+                          </span>
+                        </span>
+                        <ArrowIcon />
+                      </button>
+                    )}
 
-                    {/* Saved races expanded */}
-                    {homeSection === "races" && (
-                      <div style={{ marginTop: -6, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "12px", display: "flex", flexDirection: "column", gap: 8 }}>
-                        {savedRaces.length === 0 ? (
-                          <div style={{ fontSize: 14, color: "#3D434B", textAlign: "center", padding: "12px 0" }}>Nothing saved yet — start a New Race, then save it from the Setup screen.</div>
-                        ) : savedRaces.map(race => (
-                          <div key={race.id} style={{ background: "#EFEDE8", borderRadius: 6, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                            <div style={{ minWidth: 0 }}>
-                              <div style={{ fontWeight: 700, fontSize: 14, color: "#0B0D10" }}>{race.name}</div>
-                              <div style={{ fontSize: 14, color: "#3D434B" }}>{race.athletes.length} athletes · {(race.courses || []).map(c => c.name).join("/") || ""} · {race.savedAt}{race.waypoints && race.waypoints.some(w => w.lat !== null) ? <span style={{ color: "#04613F", marginLeft: 4 }}>· 📍 {race.waypoints.filter(w => w.lat !== null).length} pts</span> : null}</div>
+                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>Saved races</h2>
+                    {saved.length === 0 ? (
+                      <div style={{ ...rowStyle(), ...TM_CAPTION }}>Nothing saved yet. Start a new race — you can save it from Setup.</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {saved.map(r => (
+                          <div key={r.key} style={{ ...rowStyle(RACE_KINDS[r.kind].colour), display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: RACE_KINDS[r.kind].colour }}>{RACE_KINDS[r.kind].label}</div>
+                              <div style={{ fontSize: 17, fontWeight: 800, color: TM.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                              <div style={TM_CAPTION}>{r.meta}</div>
                             </div>
-                            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                              <button onClick={() => { loadRace(race); setHomeSection(null); }} style={{ ...btnStyle("#8A5A00"), padding: "5px 14px", fontSize: 14 }}>Load</button>
-                              {deleteConfirm === race.id ? (
-                                <>
-                                  <button onClick={() => { deleteRace(race.id); setDeleteConfirm(null); }} style={{ ...btnStyle("#04613F"), padding: "5px 10px", fontSize: 14 }}>Delete?</button>
-                                  <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle("#3D434B", true), padding: "5px 10px", fontSize: 14 }}>No</button>
-                                </>
-                              ) : (
-                                <button onClick={() => setDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 16, cursor: "pointer", padding: "0 4px" }}>&times;</button>
-                              )}
-                            </div>
+                            {deleteConfirm === r.key ? (
+                              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                                <button onClick={() => { r.del(); setDeleteConfirm(null); }} style={{ ...btnStyle(TM.live), minHeight: 46, padding: "0 12px" }}>Delete</button>
+                                <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle(TM.ink, true), padding: "0 12px" }}>Keep</button>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                                <button onClick={r.open} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px" }}>Open</button>
+                                <button onClick={() => setDeleteConfirm(r.key)} aria-label={`Delete ${r.name}`}
+                                  style={{ ...btnStyle(TM.ink, true), width: 46, minWidth: 46, padding: 0, fontSize: 22 }}>×</button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
                     )}
 
-                    {/* Athletes */}
-                    <button onClick={() => setView("athletes")} style={{ background: "#EFEDE8", border: "2px solid #04613F", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                      <div style={{ fontSize: 40, lineHeight: 1 }}>🏊</div>
-                      <div>
-                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#04613F" }}>Athlete Library</div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>
-                          {(() => { const cnt = allRaceAthletes().length; return cnt === 0 ? "Everyone who's ever raced with you" : `${cnt} name${cnt !== 1 ? "s" : ""} to pull into a race`; })()}
-                        </div>
-                      </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#04613F" }}>&#8594;</div>
-                    </button>
-
-                    {/* Past Races */}
-                    <button onClick={() => setView("archive")} style={{ background: "#EFEDE8", border: "2px solid #04613F", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                      <div style={{ fontSize: 40, lineHeight: 1 }}>📁</div>
-                      <div>
-                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#04613F" }}>Past Results</div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>
-                          {savedArchive.length === 0 ? "Finished races, with their times" : `${savedArchive.length} finished race${savedArchive.length !== 1 ? "s" : ""}`}
-                        </div>
-                      </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#04613F" }}>&#8594;</div>
-                    </button>
-
-                    {/* Manual Entry */}
-                    <button onClick={() => setView("manual")} style={{ background: "#EFEDE8", border: "2px solid #B3001B", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                      <div style={{ fontSize: 40, lineHeight: 1 }}>✏️</div>
-                      <div>
-                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#B3001B" }}>Manual Entry</div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>Enter times from a race that already happened</div>
-                      </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#B3001B" }}>&#8594;</div>
-                    </button>
-
-                    {/* Watch a Race */}
-                    <button onClick={() => setView("watch")} style={{ background: "#EFEDE8", border: "2px solid #0B3FCC", borderRadius: 8, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                      <div style={{ fontSize: 40, lineHeight: 1 }}>👀</div>
-                      <div>
-                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#0B3FCC" }}>Watch a Race</div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>Follow live with a race code</div>
-                      </div>
-                      <div style={{ marginLeft: "auto", fontSize: 22, color: "#0B3FCC" }}>&#8594;</div>
-                    </button>
-
-                    {/* Race Photos */}
-                    <div style={{ background: "#EFEDE8", border: "2px solid #0B3FCC", borderRadius: 8, overflow: "hidden" }}>
-                      <button onClick={() => setPhotoCodeSection(s => !s)} style={{ width: "100%", background: "none", border: "none", padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
-                        <div style={{ fontSize: 40, lineHeight: 1 }}>📷</div>
-                        <div>
-                          <div style={{ fontFamily: "var(--tm-font)", fontSize: 26, letterSpacing: 0.5, color: "#0B3FCC" }}>Race Photos</div>
-                          <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>View shared photos with a race code</div>
-                        </div>
-                        <div style={{ marginLeft: "auto", fontSize: 22, color: "#0B3FCC" }}>{photoCodeSection ? "▲" : "▼"}</div>
-                      </button>
-                      {photoCodeSection && (
-                        <div style={{ padding: "0 24px 20px", borderTop: "2px solid #C9C5BC" }}>
-                          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                            <input value={photoCodeInput}
-                              onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
-                              placeholder="Enter race code"
-                              onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) { loadPhotosByCode(photoCodeInput); setPhotoCodeSection(false); } }}
-                              style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 14px", color: "#0B0D10", fontSize: 15, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none" }} />
-                            <button onClick={() => { if (photoCodeInput.trim()) { loadPhotosByCode(photoCodeInput); setPhotoCodeSection(false); } }}
-                              style={{ ...btnStyle("#0B3FCC"), padding: "10px 20px", fontSize: 14 }}>View</button>
-                          </div>
-                        </div>
-                      )}
+                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>Finished races</h2>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {[
+                        ["triathlon", "Triathlon results", savedArchive.length, () => { selectMode("triathlon"); setView("archive"); }],
+                        ["swim", "Swim meet results", swimArchive.length, () => { selectMode("swim"); setView("swim"); setSwimView("archive"); }],
+                      ].map(([kind, label, n, go]) => (
+                        <button key={kind} onClick={go}
+                          style={{ ...rowStyle(RACE_KINDS[kind].colour), display: "flex", alignItems: "center", gap: 10, width: "100%",
+                                   minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>{label}</span>
+                            <span style={{ display: "block", ...TM_CAPTION }}>{n === 0 ? "None yet" : `${n} finished`}</span>
+                          </span>
+                          <ArrowIcon size={24} />
+                        </button>
+                      ))}
                     </div>
 
+                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>More</h2>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <button onClick={() => { selectMode("triathlon"); setView("manual"); }}
+                        style={{ ...rowStyle(), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>Manual entry</span>
+                          <span style={{ display: "block", ...TM_CAPTION }}>Type in times from a race that already happened</span>
+                        </span>
+                        <ArrowIcon size={24} />
+                      </button>
+                      <div style={{ ...rowStyle() }}>
+                        <label htmlFor="photo-code" style={{ ...TM_LABEL }}>Race photos</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input id="photo-code" value={photoCodeInput}
+                            onChange={e => setPhotoCodeInput(e.target.value.toUpperCase().slice(0, 8))}
+                            placeholder="Race code"
+                            onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                            style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
+                                     padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none" }} />
+                          <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                            style={{ ...btnStyle(TM.ink), minHeight: 46 }}>View</button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
+                );
+              })()}
+
+              {/* ── NEW RACE: the host is the only one ever asked what kind ── */}
+              {view === "newrace" && (() => {
+                const kinds = [
+                  ["triathlon", TM.ink,  "Triathlon", "Swim, bike, run — splits, GPS, certificates"],
+                  ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
+                  ["bike",      TM.bike, "Bike ride", "Live map of one or more riders"],
+                ];
+                const start = (kind) => {
+                  selectMode(kind);
+                  if (kind === "triathlon") { startNewRace(); return; }
+                  if (kind === "swim") {
+                    const hasWork = swimMeet.meetName || swimMeet.events.length > 0;
+                    setView("swim");
+                    if (hasWork) { setSwimView("home"); setSwimConfirmNewMeet(true); return; }
+                    setSwimMeet({ meetName: "", pool: "25y", events: [] });
+                    setSwimLiveCode(null);
+                    setSwimView("setup");
+                    return;
+                  }
+                  setBikeDraft(newBikeFeed()); setView("bike"); setBikeView("setup");
+                };
+                return (
+                  <div>
+                    <button onClick={() => setView("myraces")} style={{ ...btnStyle(TM.ink, true), marginTop: 4 }}>← My races</button>
+                    <h1 style={{ ...TM_DISPLAY, marginTop: 20 }}>What kind of race?</h1>
+                    <div style={{ marginLeft: -16, marginRight: -16, marginTop: 22 }}>
+                      {kinds.map(([kind, bg, title, sub]) => (
+                        <button key={kind} onClick={() => start(kind)}
+                          style={{ display: "flex", alignItems: "center", gap: 16, width: "100%", minHeight: 100,
+                                   padding: "22px 24px", background: bg, color: "#FFFFFF", border: "none", borderRadius: 0,
+                                   textAlign: "left", cursor: "pointer" }}>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4, lineHeight: 1 }}>{title}</span>
+                            <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 6 }}>{sub}</span>
+                          </span>
+                          <ArrowIcon />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── SPECTATE: the spectator's whole app is this box and the live view ── */}
+              {view === "spectate" && (
+                <div>
+                  <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>Watch a race</h1>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted, marginTop: 12 }}>
+                    Type the code from the start sheet. Works for triathlons, swim meets and bike rides.
+                  </div>
+                  <form onSubmit={e => { e.preventDefault(); spectateByCode(); }}
+                    style={{ marginLeft: -16, marginRight: -16, marginTop: 22, background: TM.run, padding: "22px 20px" }}>
+                    <label htmlFor="spectate-code" style={{ ...TM_LABEL, color: "#FFFFFF" }}>Race code</label>
+                    <input id="spectate-code" value={spectateCode} autoCapitalize="characters" autoComplete="off"
+                      onChange={e => { setSpectateCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)); setSpectateError(""); }}
+                      placeholder="ABC123"
+                      style={{ width: "100%", background: "#FFFFFF", border: "none", borderRadius: 6, padding: "6px 14px",
+                               color: TM.ink, fontSize: 34, fontWeight: 900, letterSpacing: 4, textAlign: "center",
+                               minHeight: 64, outline: "none" }} />
+                    <button type="submit" disabled={spectateBusy}
+                      style={{ width: "100%", marginTop: 12, minHeight: 56, background: "#FFFFFF", color: TM.run, border: "none",
+                               borderRadius: 6, fontWeight: 800, fontSize: 17, cursor: "pointer", opacity: spectateBusy ? 0.7 : 1 }}>
+                      {spectateBusy ? "Finding race…" : "Watch live →"}
+                    </button>
+                  </form>
+                  {spectateError && (
+                    <div role="alert" style={{ marginTop: 16, fontSize: 16, fontWeight: 600, color: TM.ink, background: TM.bgAlt,
+                      borderLeft: `8px solid ${TM.live}`, padding: "12px 14px" }}>
+                      {spectateError}
+                    </div>
+                  )}
+                  {(spectateNeedsAccount || !signedIn) && (
+                    <div style={{ marginTop: 22, ...TM_CAPTION }}>
+                      {spectateNeedsAccount ? "" : "No account needed. "}
+                      {!signedIn && (
+                        <button onClick={() => { setSpectatorWantsLogin(true); setAuthMode("login"); }}
+                          style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>Sign in instead</button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -7993,21 +8264,17 @@
                           </select>
                         </div>
                       </div>
-                      <div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 6 }}>Role</div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          {[["host","🎯 Host"],["athlete","🏊 Athlete"],["spectator","👀 Spectator"]].map(([role, label]) => (
-                            <button key={role} onClick={() => setEditProfile(p => ({ ...p, role }))}
-                              style={{ flex: 1, padding: "9px 6px", background: (editProfile.role === role || (role === "athlete" && editProfile.role === "participant")) ? "#EFEDE8" : "transparent", border: `2px solid ${(editProfile.role === role || (role === "athlete" && editProfile.role === "participant")) ? "#0B3FCC" : "#C9C5BC"}`, borderRadius: 8, color: (editProfile.role === role || (role === "athlete" && editProfile.role === "participant")) ? "#0B3FCC" : "#3D434B", cursor: "pointer", fontSize: 14, fontWeight: 700 }}>
-                              {label}
-                            </button>
-                          ))}
+                      <div style={{ ...rowStyle(isHost ? TM.swim : isAthlete ? TM.bike : TM.run), display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={TM_LABEL}>Role</div>
+                          <div style={{ fontSize: 17, fontWeight: 800 }}>{isHost ? "Host" : isAthlete ? "Athlete" : "Spectator"}</div>
                         </div>
+                        <button onClick={() => setRolePickerOpen(true)} style={btnStyle(TM.ink, true)}>Switch role</button>
                       </div>
                       <button onClick={async () => {
                         setProfileSaving(true); setProfileSaved(false); setProfileError("");
                         const displayName = `${editProfile.firstName.trim()} ${editProfile.lastName.trim()}`;
-                        const updated = { ...editProfile, displayName, email: currentUser.email };
+                        const updated = { ...editProfile, role: effectiveRole || editProfile.role, displayName, email: currentUser.email };
                         try { await currentUser.updateProfile({ displayName }); } catch(e) { console.error("Auth update:", e); }
                         // Always update local state and localStorage immediately
                         setUserProfile(updated);
@@ -9086,7 +9353,7 @@
                     </div>
 
                     {savedRaces.length > 0 ? (
-                      <button onClick={() => { setView("home"); setHomeSection("races"); }}
+                      <button onClick={() => { setView("myraces"); setHomeSection("races"); }}
                         style={{ background: "none", border: "none", color: "#3D434B", fontSize: 14, cursor: "pointer",
                                  padding: "10px 0 0", textAlign: "left", textDecoration: "underline" }}>
                         Open a different saved race &#8594;
@@ -11397,23 +11664,7 @@
 
             {/* ── SWIM MEET VIEWER ── */}
             {view === "swimwatch" && (() => {
-              function joinSwimWatch() {
-                const code = swimWatchCode.trim().toUpperCase();
-                if (!code) return;
-                if (swimWatchListenerRef.current) {
-                  swimWatchListenerRef.current.ref.off("value", swimWatchListenerRef.current.fn);
-                }
-                setSwimWatchError("");
-                setSwimWatchSession(null);
-                const ref = rtdb.ref(`swimLive/${code}`);
-                const fn = snap => {
-                  if (!snap.exists()) { setSwimWatchError("Meet not found. Check the code with your host."); setSwimWatchSession(null); return; }
-                  setSwimWatchError("");
-                  setSwimWatchSession(snap.val());
-                };
-                ref.on("value", fn);
-                swimWatchListenerRef.current = { ref, fn };
-              }
+              function joinSwimWatch() { joinSwimWatchCode(swimWatchCode); }
 
               const session = swimWatchSession;
               const connected = !!session;
