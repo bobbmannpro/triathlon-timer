@@ -469,7 +469,11 @@
       // Step 1 of every setup: what kind of race, and what it's called. The three
       // kinds are full-bleed blocks; the chosen one is solid, the others outlined.
       function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint,
-                              code, onCode, codeStatus, codeLocked }) {
+                              code, onCode, codeStatus, codeLocked, onChangeLocked, listed, onListed }) {
+        const [changing, setChanging] = React.useState(false);
+        const [draft, setDraft] = React.useState("");
+        const [changeErr, setChangeErr] = React.useState("");
+        const [changeBusy, setChangeBusy] = React.useState(false);
         const kinds = [
           ["triathlon", TM.ink,  "Triathlon", "Swim, bike, run — splits, GPS, certificates"],
           ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
@@ -519,12 +523,55 @@
                 </div>
                 <div role="status" style={{ fontSize: 15, fontWeight: 700, marginTop: 8,
                   color: codeStatus === "taken" || codeStatus === "invalid" ? TM.live : codeStatus === "free" ? TM.run : TM.inkMuted }}>
-                  {codeLocked ? "Locked — athletes and parents already have this code."
+                  {codeLocked ? (onChangeLocked ? "In use. You can still change it — the old code and links forward to the new one." : "Locked — athletes and parents already have this code.")
                     : codeStatus === "taken" ? "✕ Someone else is using that code. Try another."
                     : codeStatus === "invalid" ? "✕ " + (codeProblem(code) || "")
                     : codeStatus === "free" ? "✓ Available"
                     : codeStatus === "checking" ? "Checking…"
                     : "A word and a number is easiest to say out loud. Letters and numbers only."}
+                </div>
+                {codeLocked && onChangeLocked && !changing && (
+                  <button type="button" onClick={() => { setChanging(true); setDraft(friendlyCode()); setChangeErr(""); }}
+                    style={{ ...btnStyle(TM.ink, true), marginTop: 10 }}>Change code</button>
+                )}
+                {codeLocked && onChangeLocked && changing && (
+                  <div style={{ ...rowStyle(TM.warn), marginTop: 10 }}>
+                    <label htmlFor={nameId + "-newcode"} style={TM_LABEL}>New code</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input id={nameId + "-newcode"} value={draft} autoCapitalize="characters" autoComplete="off"
+                        onChange={e => { setDraft(normCode(e.target.value)); setChangeErr(""); }}
+                        style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
+                                 padding: "4px 14px", color: TM.ink, fontSize: 28, fontWeight: 900, letterSpacing: 2, outline: "none" }} />
+                      <button type="button" onClick={() => setDraft(friendlyCode())} style={{ ...btnStyle(TM.ink, true), padding: "0 14px" }}>New idea</button>
+                    </div>
+                    <div style={{ ...TM_CAPTION, marginTop: 8 }}>
+                      Anyone using the old code or link is sent to the new one. Athletes tracking GPS will need to tap Start GPS again, so change it before the race starts if you can.
+                    </div>
+                    {changeErr && <div role="alert" style={{ fontSize: 15, fontWeight: 700, color: TM.live, marginTop: 8 }}>✕ {changeErr}</div>}
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <button type="button" disabled={changeBusy} onClick={async () => {
+                        setChangeBusy(true);
+                        const err = await onChangeLocked(draft);
+                        setChangeBusy(false);
+                        if (err) setChangeErr(err); else setChanging(false);
+                      }} style={{ ...btnStyle(TM.ink), flex: 1, opacity: changeBusy ? 0.6 : 1 }}>{changeBusy ? "Changing…" : "Use new code"}</button>
+                      <button type="button" onClick={() => setChanging(false)} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {onListed && (
+              <div style={{ marginTop: 22 }}>
+                <div style={TM_LABEL}>How people find it</div>
+                <div role="radiogroup" aria-label="How people find it" style={{ display: "flex", gap: 8 }}>
+                  <button type="button" role="radio" aria-checked={listed !== false} onClick={() => onListed(true)} style={segStyle(listed !== false)}>Today's races</button>
+                  <button type="button" role="radio" aria-checked={listed === false} onClick={() => onListed(false)} style={segStyle(listed === false)}>Code only</button>
+                </div>
+                <div style={{ ...TM_CAPTION, marginTop: 6 }}>
+                  {listed !== false
+                    ? "Shows up in the Today's races list, so people can tap it without a code. The code still works too."
+                    : "Hidden from the list. Only people you give the code or link to can find it."}
                 </div>
               </div>
             )}
@@ -1693,6 +1740,8 @@
         const [emailCopied, setEmailCopied] = useState("");
         // The triathlon's code before it's locked in by sign-ups or going live.
         const [customRaceCode, setCustomRaceCode] = useState("");
+        const [raceListed, setRaceListed] = useState(true);   // show in Today's races
+        const [oldRaceCodes, setOldRaceCodes] = useState([]);  // codes this race used before a change
         const [codeCheck, setCodeCheck] = useState({ code: "", status: "" });
         const [swimSetupStep, setSwimSetupStep] = useState(1);
         const [bikeSetupStep, setBikeSetupStep] = useState(1);
@@ -2833,7 +2882,11 @@
           }
           if (!joinRace?.code) { setJoinLiveData(null); return; }
           const ref = rtdb.ref("liveRaces/" + joinRace.code);
-          const fn = snap => setJoinLiveData(snap.exists() ? { ...snap.val(), code: snap.key } : null);
+          const fn = snap => {
+            const v = snap.val();
+            if (v && v.status === "moved" && v.movedTo) { followMovedJoin(joinRace.code, v.movedTo); return; }
+            setJoinLiveData(snap.exists() ? { ...v, code: snap.key } : null);
+          };
           ref.on("value", fn);
           joinLiveListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); joinLiveListenerRef.current = null; };
@@ -3262,8 +3315,8 @@
 
         function clearRace() {
           stopRegListener();
-          if (registrationCode && !liveRaceCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error);
-          if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/status").set("closed").catch(console.error);
+          if (registrationCode && !liveRaceCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error); unlistRace(registrationCode);
+          if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/status").set("closed").catch(console.error); unlistRace(liveRaceCode);
           setAthletes([freshAthlete()]);
           resetClock();
           setRegistrationCode(null);
@@ -3275,6 +3328,29 @@
           try { localStorage.removeItem("tri-active-live"); } catch(e) {}
           setRaceInitialized(false);
           setView("myraces");
+        }
+
+        function attachRegListener(code) {
+          stopRegListener(); // detach any previous listener before attaching a new one
+          const ref = rtdb.ref("liveRaces/" + code + "/registrations");
+          const fn = snap => {
+            if (!snap.exists()) { setRegAthleteCount(0); return; }
+            const regs = snap.val();
+            const entries = Object.values(regs);
+            setRegAthleteCount(entries.length);
+            setAthletes(prev => {
+              const existingUids = new Set(prev.map(a => a.uid).filter(Boolean));
+              const toAdd = entries.filter(r => !existingUids.has(r.uid)).map(r => ({
+                ...freshAthlete(`${r.firstName} ${r.lastName}`.trim(), r.uid, r.gender, r.ageGroup),
+                uid: r.uid,
+                dob: r.dob || "",
+                courseId: r.courseId || courses[0]?.id || null
+              }));
+              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+            });
+          };
+          ref.on("value", fn, err => console.error("reg listener:", err));
+          regListenerRef.current = { ref, fn };
         }
 
         async function _doOpenRegistration(code) {
@@ -3297,26 +3373,7 @@
             setRegistrationCode(code);
             setRegistrationOpen(true);
             setRegAthleteCount(0);
-            stopRegListener(); // detach any previous listener before attaching a new one
-            const ref = rtdb.ref("liveRaces/" + code + "/registrations");
-            const fn = snap => {
-              if (!snap.exists()) { setRegAthleteCount(0); return; }
-              const regs = snap.val();
-              const entries = Object.values(regs);
-              setRegAthleteCount(entries.length);
-              setAthletes(prev => {
-                const existingUids = new Set(prev.map(a => a.uid).filter(Boolean));
-                const toAdd = entries.filter(r => !existingUids.has(r.uid)).map(r => ({
-                  ...freshAthlete(`${r.firstName} ${r.lastName}`.trim(), r.uid, r.gender, r.ageGroup),
-                  uid: r.uid,
-                  dob: r.dob || "",
-                  courseId: r.courseId || courses[0]?.id || null
-                }));
-                return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-              });
-            };
-            ref.on("value", fn, err => console.error("reg listener:", err));
-            regListenerRef.current = { ref, fn };
+            attachRegListener(code);
           } catch(e) { console.error("openRegistration:", e); }
         }
 
@@ -3350,7 +3407,7 @@
         function closeRegistration() {
           stopRegListener();
           setRegistrationOpen(false);
-          if (registrationCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error);
+          if (registrationCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error); unlistRace(registrationCode);
         }
 
         // Kept out of liveRaces on purpose: any signed-in user can read a live race,
@@ -3511,6 +3568,11 @@
           const fn = snap => {
             setLiveRaceLoading(false);
             if (!snap.exists()) { setLiveRaceError("No active race found with that code."); setLiveRace(null); }
+            else if (snap.val().status === "moved" && snap.val().movedTo) {
+              // The host changed the code: follow it.
+              const to = snap.val().movedTo;
+              setSpectatorCode(to); watchRace(to);
+            }
             else {
               const data = snap.val();
               const segCount = (data.segments || SEGMENTS).length;
@@ -3733,6 +3795,8 @@
             id, name,
             code: registrationCode || null,
             plannedCode: customRaceCode || null,
+            listed: raceListed,
+            oldCodes: oldRaceCodes,
             savedAt: new Date().toLocaleDateString(),
             ageGroups, courses, units,
             certConfig,
@@ -3750,7 +3814,7 @@
           if (!loadedRaceId) return;
           const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId , email: a.email || "" }));
           const updated = savedRaces.map(r => r.id === loadedRaceId
-            ? { ...r, ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes, plannedCode: customRaceCode || r.plannedCode || null, savedAt: new Date().toLocaleString() }
+            ? { ...r, ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes, plannedCode: customRaceCode || r.plannedCode || null, listed: raceListed, oldCodes: oldRaceCodes, savedAt: new Date().toLocaleString() }
             : r);
           persistRaces(updated);
           mergeAthletesToLibrary(athletes);
@@ -3759,6 +3823,8 @@
           setLoadedRaceId(race.id);
           if (race.code) setRegistrationCode(race.code); else setRegistrationCode(null);
           setCustomRaceCode(race.code || race.plannedCode || friendlyCode());
+          setRaceListed(race.listed !== false);
+          setOldRaceCodes(race.oldCodes || []);
           setRegistrationOpen(false);
           stopRegListener();
           if (race.units) setUnits(race.units);
@@ -4137,8 +4203,8 @@
         }
         function startNewRace() {
           stopRegListener();
-          if (registrationCode && !liveRaceCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error);
-          if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/status").set("closed").catch(console.error);
+          if (registrationCode && !liveRaceCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error); unlistRace(registrationCode);
+          if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/status").set("closed").catch(console.error); unlistRace(liveRaceCode);
           setAthletes([freshAthlete()]);
           resetClock();
           setCourses([{ id: 1, name: "Sprint", swimYards: 100, bikeMiles: 6, runMiles: 1.5, bikeType: "gps" }]);
@@ -4367,7 +4433,7 @@
         }
 
         async function joinRaceByCode(codeOverride) {
-          const code = normCode(codeOverride || joinCode);
+          const code = await resolveMovedCode(normCode(codeOverride || joinCode));
           if (!code) return;
           setRegError(""); setRegWorking(true);
           const snap = await rtdb.ref("liveRaces/" + code).once("value");
@@ -5264,6 +5330,8 @@
         function publishBikeMeta(feed, ridersOverride) {
           if (!feed?.code) return Promise.resolve();
           const r = bikeRiderFor(feed, ridersOverride);
+          if (feed.listed !== false) listRace(feed.code, "bike", { name: feed.eventName || (r?.name ? `${r.name}'s ride` : "Bike ride"), status: "live" });
+          else unlistRace(feed.code);
           return rtdb.ref(`bikeFeeds/${feed.code}/meta`).set({
             // Ownership marker the database rules check: only the creator may edit
             // meta, while anyone signed in can publish telemetry to live/track.
@@ -6685,7 +6753,8 @@
           if (c.length < 4) { setSpectateError("Enter the race code — it's on the start sheet or ask the organiser."); return; }
           setSpectateBusy(true); setSpectateError(""); setSpectateNeedsAccount(false);
           const authed = await ensureViewerAuth();
-          const kind = await findRaceKind(c);
+          const c2 = await resolveMovedCode(c);
+          const kind = await findRaceKind(c2);
           setSpectateBusy(false);
           if (!kind) {
             if (!authed) {
@@ -6696,7 +6765,7 @@
             }
             return;
           }
-          openRaceAsViewer(kind, c);
+          openRaceAsViewer(kind, c2);
         }
 
         function openRaceAsViewer(kind, c) {
@@ -6746,11 +6815,179 @@
         const codeStatus = codeCheck.code === codeToCheck ? codeCheck.status : (codeToCheck ? "checking" : "");
         const codeBlocksNext = !!codeToCheck && codeStatus !== "free";
 
+        // ── Today's races: find a race without a code, like the Ironman app ─────
+        // raceDirectory holds only what the list shows — kind, name, host, status —
+        // never athletes or emails, and only for races the host chose to list.
+        // It's publicly readable so the list works before anyone signs in.
+        function listRace(code, kind, fields) {
+          if (!code || !currentUser) return;
+          rtdb.ref("raceDirectory/" + code).set({
+            kind, hostUid: currentUser.uid,
+            hostName: userProfile?.displayName || [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(" ") || "",
+            updatedAt: Date.now(), ...fields,
+          }).catch(e => console.warn("raceDirectory not writable yet (publish the rule):", e && e.code));
+        }
+        function unlistRace(code) {
+          if (code && currentUser) rtdb.ref("raceDirectory/" + code).remove().catch(() => {});
+        }
+
+        // The open triathlon is listed while sign-ups are open or it's live, and
+        // comes off the list when it closes or the host switches it to code-only.
+        const listedCodeRef = useRef(null);
+        const raceTitle = saveRaceName || (certConfig.eventName !== "Timeathon Race Event" && certConfig.eventName) || "Triathlon";
+        useEffect(() => {
+          if (!isHost) return;
+          const code = liveRaceCode || (registrationOpen ? registrationCode : null);
+          const prev = listedCodeRef.current;
+          if (prev && prev !== code) unlistRace(prev);
+          if (code && raceListed) {
+            listRace(code, "triathlon", { name: raceTitle, status: liveRaceCode ? "live" : "registration" });
+            listedCodeRef.current = code;
+          } else {
+            if (code) unlistRace(code);
+            listedCodeRef.current = null;
+          }
+        }, [isHost, liveRaceCode, registrationOpen, registrationCode, raceListed, raceTitle]);
+
+        // A code that was changed leaves a forwarding note behind; follow it.
+        async function resolveMovedCode(code) {
+          let c = normCode(code);
+          for (let hop = 0; hop < 4 && c; hop++) {
+            const v = await rtdb.ref("liveRaces/" + c).once("value").then(sn => sn.val()).catch(() => null);
+            if (v && v.status === "moved" && v.movedTo) c = v.movedTo; else break;
+          }
+          return c;
+        }
+
+        // Changing a code that's already out there: copy the race to the new code,
+        // leave a forwarding note at the old one, and carry everything over. The
+        // old code and old links keep working.
+        async function changeRaceCode(newCodeIn) {
+          const nc = normCode(newCodeIn);
+          const bad = codeProblem(nc);
+          if (bad) return bad;
+          const old = liveRaceCode || registrationCode;
+          if (nc === old) return null;
+          if (!(await codeIsFree(nc))) return "Someone else is using that code. Try another.";
+          if (!old) { setCustomRaceCode(nc); return null; }
+          const data = await rtdb.ref("liveRaces/" + old).once("value").then(sn => sn.val()).catch(() => null);
+          if (!data) return "Couldn't read the race to move it. Check your connection and try again.";
+          try {
+            await rtdb.ref("liveRaces/" + nc).set({ ...data, code: nc, previousCodes: [...(data.previousCodes || []), old], updatedAt: Date.now() });
+            await rtdb.ref("liveRaces/" + old).set({ status: "moved", movedTo: nc, publishedBy: currentUser.uid, raceName: data.raceName || "", updatedAt: Date.now() });
+          } catch (e) {
+            return "Couldn't change the code: " + ((e && e.message) || "permission denied");
+          }
+          unlistRace(old);
+          listedCodeRef.current = null;
+          const olds = [...oldRaceCodes, old];
+          setOldRaceCodes(olds);
+          if (registrationCode) setRegistrationCode(nc);
+          if (liveRaceCode) setLiveRaceCode(nc);
+          setCustomRaceCode(nc);
+          persistRaces(savedRaces.map(r => (r.code === old || r.id === loadedRaceId)
+            ? { ...r, code: r.code ? nc : r.code, plannedCode: nc, oldCodes: olds } : r));
+          if (regListenerRef.current) attachRegListener(nc);
+          return null;
+        }
+
+        // An athlete whose race changed code: move with it, and say so if GPS was
+        // running (the tracker was writing to the old code).
+        function followMovedJoin(oldCode, newCode) {
+          setJoinRace(r => (r && r.code === oldCode) ? { ...r, code: newCode } : r);
+          if (joinedRaces[oldCode]) {
+            const next = { ...joinedRaces, [newCode]: { ...joinedRaces[oldCode], code: newCode } };
+            delete next[oldCode];
+            setJoinedRaces(next);
+            try { localStorage.setItem("tri-joined-races", JSON.stringify(next)); } catch(_) {}
+            if (currentUser) {
+              rtdb.ref("users/" + currentUser.uid + "/joinedRaces/" + newCode).set(next[newCode]).catch(() => {});
+              rtdb.ref("users/" + currentUser.uid + "/joinedRaces/" + oldCode).remove().catch(() => {});
+            }
+          }
+          if (gpsWatchRef.current !== null) {
+            stopGpsTracking();
+            setJoinGpsStatus("The organiser changed the race code. Tap Start GPS to carry on.");
+          }
+        }
+
+        const [todayRaces, setTodayRaces] = useState(null);   // null while loading
+        const [todayBusy, setTodayBusy] = useState(null);
+        const showToday = view === "spectate" || (view === "join" && !joinRace);
+        useEffect(() => {
+          if (!showToday) return;
+          let live = true;
+          const load = () => rtdb.ref("raceDirectory").once("value").then(sn => {
+            if (!live) return;
+            const now = Date.now(), H = 3600e3;
+            const list = Object.entries(sn.val() || {})
+              .map(([code, r]) => ({ code, ...(r || {}) }))
+              .filter(r => r.kind && (r.status === "live" ? now - (r.updatedAt || 0) < 36 * H
+                                    : r.status === "registration" ? now - (r.updatedAt || 0) < 21 * 24 * H : false))
+              .sort((a, b) => ((a.status === "live" ? 0 : 1) - (b.status === "live" ? 0 : 1)) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
+            setTodayRaces(list);
+          }).catch(() => { if (live) setTodayRaces([]); });
+          load();
+          const t = setInterval(load, 60000);
+          return () => { live = false; clearInterval(t); };
+        }, [showToday]);
+
+        async function pickTodayRace(r, mode) {
+          setTodayBusy(r.code);
+          if (mode === "join") { setJoinCode(r.code); await joinRaceByCode(r.code); setTodayBusy(null); return; }
+          setSpectateCode(r.code); setSpectateError("");
+          const authed = await ensureViewerAuth();
+          setTodayBusy(null);
+          if (!authed && r.kind !== "bike") {
+            setSpectateNeedsAccount(true);
+            setSpectateError("Watching without an account isn't switched on for this site yet. Sign in to watch, or ask the organiser.");
+            return;
+          }
+          openRaceAsViewer(r.kind, r.code);
+        }
+
+        function renderTodayRaces(mode) {
+          const list = todayRaces;
+          return (
+            <section aria-label="Today's races" style={{ marginTop: 20 }}>
+              <h2 style={{ ...TM_H2, marginBottom: 10 }}>Today's races</h2>
+              {list === null ? (
+                <div style={TM_CAPTION}>Loading…</div>
+              ) : list.length === 0 ? (
+                <div style={{ ...rowStyle(), ...TM_CAPTION }}>No races listed right now. If you have a code, type it below.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {list.map(r => {
+                    const k = RACE_KINDS[r.kind] || RACE_KINDS.triathlon;
+                    return (
+                      <button key={r.code} onClick={() => pickTodayRace(r, mode)} disabled={todayBusy === r.code}
+                        style={{ ...rowStyle(k.colour), display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 76,
+                                 textAlign: "left", cursor: "pointer", color: TM.ink, opacity: todayBusy === r.code ? 0.6 : 1 }}>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: k.colour }}>{k.label}</span>
+                            {r.status === "live"
+                              ? <span style={{ background: TM.live, color: "#FFFFFF", fontSize: 14, fontWeight: 900, letterSpacing: 1.2, padding: "1px 8px", borderRadius: 4 }}>● LIVE</span>
+                              : <span style={{ border: `2px solid ${TM.ink}`, fontSize: 14, fontWeight: 800, letterSpacing: 0.4, padding: "0 8px", borderRadius: 4 }}>SIGN-UPS OPEN</span>}
+                          </span>
+                          <span style={{ display: "block", fontSize: 19, fontWeight: 900, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || "Race"}</span>
+                          {r.hostName && <span style={{ display: "block", ...TM_CAPTION }}>Hosted by {r.hostName}</span>}
+                        </span>
+                        {todayBusy === r.code ? <span style={{ fontWeight: 800 }}>…</span> : <ArrowIcon />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          );
+        }
+
         // Emails athletes shared when they signed themselves up (host-only path).
         useEffect(() => {
           const code = liveRaceCode || registrationCode;
           if (!isHost || !code) return;
-          const ref = rtdb.ref("raceContacts/" + code);
+          const refs = [code, ...oldRaceCodes.filter(c => c !== code)].map(c => rtdb.ref("raceContacts/" + c));
           const fn = snap => {
             const contacts = snap.val() || {};
             setAthletes(prev => {
@@ -6763,9 +7000,9 @@
               return changed ? next : prev;
             });
           };
-          ref.on("value", fn, err => console.warn("raceContacts not readable yet (publish the rule):", err && err.code));
-          return () => ref.off("value", fn);
-        }, [isHost, liveRaceCode, registrationCode]);
+          refs.forEach(ref => ref.on("value", fn, err => console.warn("raceContacts not readable yet (publish the rule):", err && err.code)));
+          return () => refs.forEach(ref => ref.off("value", fn));
+        }, [isHost, liveRaceCode, registrationCode, oldRaceCodes.join(",")]);
 
         // Creating a race is the one moment anyone chooses a race kind.
         function startRaceOfKind(kind, name, code) {
@@ -6775,6 +7012,8 @@
           if (kind === "triathlon") {
             startNewRace();
             setCustomRaceCode(cd);
+            setRaceListed(true);
+            setOldRaceCodes([]);
             if (nm) { setSaveRaceName(nm); setCertConfig(c => ({ ...c, eventName: nm })); }
             setSetupStep(2);
             return;
@@ -6806,9 +7045,10 @@
           (async () => {
             setSpectateBusy(true);
             const authed = await ensureViewerAuth();
-            const kind = await findRaceKind(code);
+            const code2 = await resolveMovedCode(code);
+            const kind = await findRaceKind(code2);
             setSpectateBusy(false);
-            if (kind) { openRaceAsViewer(kind, code); return; }
+            if (kind) { openRaceAsViewer(kind, code2); return; }
             setView(effectiveRole === "athlete" ? "join" : "spectate");
             setSpectateNeedsAccount(!authed);
             setSpectateError(authed ? "That race isn't live yet. Keep this link — it'll work once the race starts."
@@ -7414,8 +7654,10 @@
               {view === "spectate" && (
                 <div>
                   <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>Watch a race</h1>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted, marginTop: 12 }}>
-                    Type the code from the start sheet. Works for triathlons, swim meets and bike rides.
+                  {renderTodayRaces("watch")}
+                  <h2 style={{ ...TM_H2, marginTop: 28 }}>Have a code?</h2>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted, marginTop: 6 }}>
+                    Type the code from the start sheet or email. Works for triathlons, swim meets and bike rides.
                   </div>
                   <form onSubmit={e => { e.preventDefault(); spectateByCode(); }}
                     style={{ marginLeft: -16, marginRight: -16, marginTop: 22, background: TM.run, padding: "22px 20px" }}>
@@ -8051,12 +8293,14 @@
                   {/* Enter new code */}
                   {registrationStep === "code" && !joinRace && (
                     <div>
+                      {renderTodayRaces("join")}
+                      <h2 style={{ ...TM_H2, marginTop: 28, marginBottom: 10 }}>Have a code?</h2>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 8 }}>RACE CODE</div>
                       <div style={{ display: "flex", gap: 8 }}>
                         <input value={joinCode} onChange={e => { setJoinCode(normCode(e.target.value)); setRegError(""); }}
                           onKeyDown={e => e.key === "Enter" && joinRaceByCode()}
                           placeholder="e.g. ABC123" maxLength={12}
-                          style={{ flex: 1, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "12px 14px", color: "#04613F", fontSize: 22, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center" }} />
+                          style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "6px 14px", color: TM.ink, fontSize: 24, fontWeight: 900, fontFamily: "var(--tm-font)", letterSpacing: 2, outline: "none", textAlign: "center" }} />
                         <button onClick={() => joinRaceByCode()} disabled={regWorking} style={{ ...btnStyle("#04613F"), padding: "12px 20px", fontSize: 14, opacity: regWorking ? 0.6 : 1 }}>{regWorking ? "…" : "Find Race"}</button>
                       </div>
                       {regError && <div style={{ fontSize: 14, color: "#B3001B", marginTop: 8 }}>{regError}</div>}
@@ -9876,7 +10120,8 @@
                     {setupStep === 1 && (
                       <RaceKindStep kind="triathlon" name={saveRaceName} onName={setRaceName}
                         code={registrationCode || liveRaceCode || customRaceCode} onCode={setCustomRaceCode}
-                        codeStatus={codeStatus} codeLocked={triCodeLocked}
+                        codeStatus={codeStatus} codeLocked={triCodeLocked} onChangeLocked={changeRaceCode}
+                        listed={raceListed} onListed={setRaceListed}
                         onKind={k => { if (k !== "triathlon") startRaceOfKind(k, saveRaceName); }}
                         lockedHint="Picking a different kind starts a new race of that kind. This triathlon stays open." />
                     )}
@@ -10600,6 +10845,7 @@
                   setSwimMeet(m => ({ ...m, meetName: name, _id: id }));
                   setSwimShowSaveBefore(false);
                   setSwimSaveBeforeName("");
+                  if (swimMeet.listed !== false) listRace(code, "swim", { name: swimMeet.meetName || "Swim meet", status: "live" }); else unlistRace(code);
                   rtdb.ref(`swimLive/${code}`).set({
                     meetName: name, pool: swimMeet.pool,
                     activeEvent: swimActiveEvent, activeHeat: swimActiveHeat,
@@ -10988,6 +11234,7 @@
                             <RaceKindStep kind="swim" name={swimMeet.meetName} nameId="swim-meet-name"
                               code={swimMeet.code || ""} onCode={c => setSwimMeet(m => ({ ...m, code: c }))}
                               codeStatus={codeStatus} codeLocked={swimCodeLocked}
+                              listed={swimMeet.listed} onListed={v => setSwimMeet(m => ({ ...m, listed: v }))}
                               onName={v => setSwimMeet(m => ({ ...m, meetName: v }))}
                               onKind={k => { if (k !== "swim") startRaceOfKind(k, swimMeet.meetName); }}
                               lockedHint="Picking a different kind starts a new race of that kind. This meet stays open." />
@@ -11455,6 +11702,7 @@
                                   const free = await codeIsFree(code);
                                   if (!free) { alert(`The code ${code} is already in use by another race. Pick a different code in step 1 of setup.`); return; }
                                   persistSwimMeets(swimSavedMeets.map(m => m.id === swimMeet._id ? { ...m, code, live: true } : m));
+                                  if (swimMeet.listed !== false) listRace(code, "swim", { name: swimMeet.meetName || "Swim meet", status: "live" }); else unlistRace(code);
                                   rtdb.ref(`swimLive/${code}`).set({
                                     hostUid: currentUser ? currentUser.uid : null,
                                     meetName: swimMeet.meetName || "Unnamed Meet",
@@ -12673,6 +12921,7 @@
                           <RaceKindStep kind="bike" name={bikeDraft.eventName} nameId="bike-event-name"
                             code={bikeDraft.code} onCode={c => setBikeDraft(d => ({ ...d, code: c }))}
                             codeStatus={codeStatus} codeLocked={bikeCodeLocked}
+                            listed={bikeDraft.listed} onListed={v => setBikeDraft(d => ({ ...d, listed: v }))}
                             onName={v => setBikeDraft(d => ({ ...d, eventName: v }))}
                             onKind={k => { if (k !== "bike") startRaceOfKind(k, bikeDraft.eventName); }}
                             lockedHint="Picking a different kind starts a new race of that kind." />

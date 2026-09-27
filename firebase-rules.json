@@ -45,6 +45,13 @@
         }
       }
     },
+    "raceDirectory": {
+      ".read": true,
+      "$code": {
+        ".write": "auth != null && (data.exists() ? data.child('hostUid').val() === auth.uid : newData.child('hostUid').val() === auth.uid)",
+        ".validate": "!newData.exists() || (newData.child('hostUid').val() === auth.uid && newData.hasChildren(['kind', 'name', 'status']))"
+      }
+    },
     "raceContacts": {
       "$code": {
         ".read": "auth != null && root.child('liveRaces').child($code).child('publishedBy').val() === auth.uid",
