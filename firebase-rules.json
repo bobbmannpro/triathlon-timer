@@ -45,6 +45,15 @@
         }
       }
     },
+    "raceContacts": {
+      "$code": {
+        ".read": "auth != null && root.child('liveRaces').child($code).child('publishedBy').val() === auth.uid",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.hasChildren(['email']) && newData.child('email').isString()"
+        }
+      }
+    },
     "swimLive": {
       "$code": {
         ".read": "auth != null",

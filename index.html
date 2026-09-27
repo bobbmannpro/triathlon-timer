@@ -1080,7 +1080,7 @@
         const parts = name.trim().split(" ");
         const firstName = parts[0] || "";
         const lastName = parts.slice(1).join(" ") || "";
-        return { id, name: name.trim(), firstName, lastName, gender, ageGroup, courseId, dob: "", raceNumber: null, startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
+        return { id, name: name.trim(), firstName, lastName, gender, ageGroup, courseId, dob: "", email: "", raceNumber: null, startOffset: null, splits: Array(SEGMENTS.length).fill(null), started: false, finished: false };
       }
       function athleteName(ath) {
         if (ath.firstName || ath.lastName) return `${ath.firstName || ""} ${ath.lastName || ""}`.trim();
@@ -1686,6 +1686,11 @@
         const [newRaceKind, setNewRaceKind] = useState("triathlon");
         const [newRaceName, setNewRaceName] = useState("");
         const [newRaceCode, setNewRaceCode] = useState("");
+        const [emailKind, setEmailKind] = useState("watch");     // watch | results | custom
+        const [emailSkip, setEmailSkip] = useState({});           // athlete id → left off this email
+        const [emailSubject, setEmailSubject] = useState("");
+        const [emailBody, setEmailBody] = useState("");
+        const [emailCopied, setEmailCopied] = useState("");
         // The triathlon's code before it's locked in by sign-ups or going live.
         const [customRaceCode, setCustomRaceCode] = useState("");
         const [codeCheck, setCodeCheck] = useState({ code: "", status: "" });
@@ -3332,7 +3337,7 @@
           const name = nameVal.trim() || `Race ${savedRaces.length + 1}`;
           const code = registrationCode || generateRaceCode();
           const id = Date.now();
-          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null }));
+          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null , email: a.email || "" }));
           const entry = { id, name, code, plannedCode: code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes };
           persistRaces([...savedRaces, entry]);
           mergeAthletesToLibrary(athletes);
@@ -3348,6 +3353,9 @@
           if (registrationCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error);
         }
 
+        // Kept out of liveRaces on purpose: any signed-in user can read a live race,
+        // so emails live under raceContacts, which only the race's host can read.
+        const [regEmailOptIn, setRegEmailOptIn] = useState(true);
         async function registerForRace(code, profileData, selectedCourseId) {
           if (!currentUser) { setRegError("You must be logged in to register."); return; }
           setRegWorking(true); setRegError("");
@@ -3368,6 +3376,11 @@
           };
           try {
             await rtdb.ref("liveRaces/" + code + "/registrations/" + uid).set(registration);
+            if (regEmailOptIn && currentUser.email) {
+              rtdb.ref("raceContacts/" + code + "/" + uid)
+                .set({ email: currentUser.email, name: registration.name, at: Date.now() })
+                .catch(e => console.warn("raceContacts (publish the raceContacts rule):", e && e.code));
+            }
             const joined = { code, raceName, hostName, joinedAt: Date.now() };
             const updatedJoined = { ...joinedRaces, [code]: joined };
             setJoinedRaces(updatedJoined);
@@ -3671,17 +3684,24 @@
             const key = fullName.trim().toLowerCase();
             if (!key) return;
             if (!existingKeys.has(key)) {
-              toAdd.push({ id: Date.now() + Math.random(), name: fullName, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0] || "9-10", dob: a.dob || "" });
+              toAdd.push({ id: Date.now() + Math.random(), email: a.email || "", name: fullName, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0] || "9-10", dob: a.dob || "" });
               existingKeys.add(key);
             }
           });
-          if (toAdd.length > 0) persistSavedAthletes([...savedAthletes, ...toAdd]);
+          const byName = new Map(raceAthletes.filter(a => a.email).map(a => [(athleteName(a) || a.name || "").trim().toLowerCase(), a.email]));
+          let changed = false;
+          const withEmails = savedAthletes.map(la => {
+            const e = byName.get((athleteName(la) || la.name || "").trim().toLowerCase());
+            if (e && la.email !== e) { changed = true; return { ...la, email: e }; }
+            return la;
+          });
+          if (toAdd.length > 0 || changed) persistSavedAthletes([...withEmails, ...toAdd]);
         }
 
         function saveRace() {
           const name = saveRaceName.trim() || `Race ${savedRaces.length + 1}`;
           const id = Date.now();
-          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null }));
+          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null , email: a.email || "" }));
           const entry = {
             id, name,
             code: registrationCode || null,
@@ -3701,7 +3721,7 @@
 
         function updateSavedRace() {
           if (!loadedRaceId) return;
-          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId }));
+          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId , email: a.email || "" }));
           const updated = savedRaces.map(r => r.id === loadedRaceId
             ? { ...r, ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes, plannedCode: customRaceCode || r.plannedCode || null, savedAt: new Date().toLocaleString() }
             : r);
@@ -3742,6 +3762,7 @@
               gender: a.gender || "Male",
               ageGroup: a.ageGroup || loadedAgeGroups[0] || "9-10",
               dob: a.dob || "",
+              email: a.email || "",
               courseId: a.courseId || loadedCourses[0].id,
               raceNumber: a.raceNumber ?? null
             };
@@ -4022,7 +4043,8 @@
               const cells = line.split(",").map(c => c.trim());
               const sw=mmss(cells[col("swim")]), t1=mmss(cells[col("t1")]), bk=mmss(cells[col("bike")]), t2=mmss(cells[col("t2")]), rn=mmss(cells[col("run")]);
               const s0=sw, s1=(s0!=null&&t1!=null?s0+t1:null), s2=(s1!=null&&bk!=null?s1+bk:null), s3=(s2!=null&&t2!=null?s2+t2:null), s4=(s3!=null&&rn!=null?s3+rn:null);
-              return { id: Date.now()+idx, name: col("name")>=0?cells[col("name")]:`Athlete ${idx+1}`, gender: col("gender")>=0?cells[col("gender")]:"Male", ageGroup: col("agegroup")>=0?cells[col("agegroup")]:(ageGroups[0]||""), dob: col("dob")>=0?cells[col("dob")]:"", courseId: courses[0].id, startOffset:0, splits:[s0,s1,s2,s3,s4], started:true, finished:s4!==null };
+              const emailCol = col("email") >= 0 ? col("email") : col("parent email");
+              return { id: Date.now()+idx, email: emailCol >= 0 ? (cells[emailCol] || "") : "", name: col("name")>=0?cells[col("name")]:`Athlete ${idx+1}`, gender: col("gender")>=0?cells[col("gender")]:"Male", ageGroup: col("agegroup")>=0?cells[col("agegroup")]:(ageGroups[0]||""), dob: col("dob")>=0?cells[col("dob")]:"", courseId: courses[0].id, startOffset:0, splits:[s0,s1,s2,s3,s4], started:true, finished:s4!==null };
             }).filter(a => a.name);
             if (newAthletes.length > 0) { setAthletes(newAthletes); setClockStarted(true); setClockRunning(false); setView("results"); }
           };
@@ -4117,20 +4139,22 @@
             (race.athletes || []).forEach(a => {
               if (!a.name || !a.name.trim()) return;
               const key = a.name.trim().toLowerCase();
-              if (!seen.has(key)) seen.set(key, { name: a.name.trim(), gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0], dob: a.dob || "" });
+              if (!seen.has(key)) seen.set(key, { name: a.name.trim(), gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0], dob: a.dob || "", email: a.email || "" });
+              else if (a.email && !seen.get(key).email) seen.get(key).email = a.email;
             });
           });
           (savedAthletes || []).forEach(a => {
             if (!a.name || !a.name.trim()) return;
             const key = a.name.trim().toLowerCase();
-            if (!seen.has(key)) seen.set(key, { name: a.name.trim(), gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0], dob: a.dob || "" });
+            if (!seen.has(key)) seen.set(key, { name: a.name.trim(), gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0], dob: a.dob || "", email: a.email || "" });
+              else if (a.email && !seen.get(key).email) seen.get(key).email = a.email;
           });
           return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
         }
 
         function addAthleteFromPicker(picked) {
           const base = freshAthlete(picked.name, Date.now(), picked.gender, picked.ageGroup);
-          setAthletes(a => { const nextBib = Math.max(0, ...a.map(x => x.raceNumber || 0)) + 1; return [...a, { ...base, dob: picked.dob || "", courseId: courses[0]?.id || null, raceNumber: nextBib }]; });
+          setAthletes(a => { const nextBib = Math.max(0, ...a.map(x => x.raceNumber || 0)) + 1; return [...a, { ...base, dob: picked.dob || "", email: picked.email || "", courseId: courses[0]?.id || null, raceNumber: nextBib }]; });
           setShowAthletePicker(false);
           setAthletePickerSearch("");
         }
@@ -4162,6 +4186,7 @@
         function updateLastName(i, v)   { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, lastName: v, name: `${ath.firstName || ""} ${v}`.trim() } : ath)); }
         function updateGender(i, v)     { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, gender: v } : ath)); }
         function updateAgeGroup(i, v)   { setAthletes(a => a.map((ath, idx) => idx === i ? { ...ath, ageGroup: v } : ath)); }
+        function updateAthleteEmail(i, v) { setAthletes(a => a.map((x, j) => j === i ? { ...x, email: v.trim() } : x)); }
         function updateDob(i, v) {
           setAthletes(a => a.map((ath, idx) => {
             if (idx !== i) return ath;
@@ -6694,6 +6719,27 @@
         const codeStatus = codeCheck.code === codeToCheck ? codeCheck.status : (codeToCheck ? "checking" : "");
         const codeBlocksNext = !!codeToCheck && codeStatus !== "free";
 
+        // Emails athletes shared when they signed themselves up (host-only path).
+        useEffect(() => {
+          const code = liveRaceCode || registrationCode;
+          if (!isHost || !code) return;
+          const ref = rtdb.ref("raceContacts/" + code);
+          const fn = snap => {
+            const contacts = snap.val() || {};
+            setAthletes(prev => {
+              let changed = false;
+              const next = prev.map(a => {
+                const c = a.uid && contacts[a.uid];
+                if (c && c.email && !a.email) { changed = true; return { ...a, email: c.email }; }
+                return a;
+              });
+              return changed ? next : prev;
+            });
+          };
+          ref.on("value", fn, err => console.warn("raceContacts not readable yet (publish the rule):", err && err.code));
+          return () => ref.off("value", fn);
+        }, [isHost, liveRaceCode, registrationCode]);
+
         // Creating a race is the one moment anyone chooses a race kind.
         function startRaceOfKind(kind, name, code) {
           const nm = (name || "").trim();
@@ -6719,12 +6765,37 @@
           setBikeDraft({ ...newBikeFeed(), eventName: nm, code: cd }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
         }
 
+        const watchLinkRef = useRef(false);
+        useEffect(() => {
+          if (watchLinkRef.current || authLoading) return;
+          const code = normCode(new URLSearchParams(location.search).get("watch"));
+          if (!code) return;
+          watchLinkRef.current = true;
+          setChosenRole(r => r || "spectator");
+          // Land somewhere this role is allowed right away, so the role guard has
+          // nothing to redirect while the race is being looked up.
+          setView(roleLanding(effectiveRole || "spectator"));
+          setSpectateCode(code);
+          (async () => {
+            setSpectateBusy(true);
+            const authed = await ensureViewerAuth();
+            const kind = await findRaceKind(code);
+            setSpectateBusy(false);
+            if (kind) { openRaceAsViewer(kind, code); return; }
+            setView(effectiveRole === "athlete" ? "join" : "spectate");
+            setSpectateNeedsAccount(!authed);
+            setSpectateError(authed ? "That race isn't live yet. Keep this link — it'll work once the race starts."
+                                    : "Watching without an account isn't switched on for this site yet. Sign in to watch, or ask the organiser.");
+          })();
+        }, [authLoading]);
+        function watchLink(code) { return `${location.origin}${location.pathname}?watch=${code}`; }
+
         // Only hosts see host screens. Athletes get their race; spectators get the
         // code box and the live view. Anyone signed in keeps Profile.
         useEffect(() => {
           if (!effectiveRole || effectiveRole === "host") return;
           const allowed = effectiveRole === "athlete"
-            ? ["join", "swimwatch", "swimlane", "bike", "profile"]
+            ? ["join", "watch", "swimwatch", "swimlane", "bike", "profile"]
             : ["spectate", "watch", "swimwatch", "bike", "profile"];
           if (!allowed.includes(view)) { setView(roleLanding(effectiveRole)); return; }
           if (view === "bike") {
@@ -7158,6 +7229,154 @@
                     code={newRaceCode} onCode={setNewRaceCode} codeStatus={codeStatus} />
                 </WizardFrame>
               )}
+
+              {/* ── EMAIL FAMILIES ──
+                  There's no mail server behind this app, so it writes the email and
+                  hands it to the host's own mail app (Gmail, Mail, Outlook) with every
+                  family in BCC. Nothing is sent until the host presses Send there. */}
+              {view === "email" && (() => {
+                const code = liveRaceCode || registrationCode || customRaceCode;
+                const raceName = saveRaceName || (certConfig.eventName !== "Timeathon Race Event" && certConfig.eventName) || (liveRace && liveRace.raceName) || "the race";
+                const link = code ? watchLink(code) : "";
+                const ordinal = (n) => n + (["th","st","nd","rd"][((n % 100) - 20) % 10] || ["th","st","nd","rd"][n % 100] || "th");
+                const segTimes = (a) => {
+                  let prev = a.startOffset || 0; const out = [];
+                  SEGMENTS.forEach((seg, si) => {
+                    const v = a.splits && a.splits[si];
+                    if (v != null) { out.push(`${seg} ${formatTime(v - prev)}`); prev = v; }
+                  });
+                  return out.join(" · ");
+                };
+                const finishers = sorted.filter(a => totalChipTime(a) !== null);
+                const resultFor = (a) => {
+                  const t = totalChipTime(a);
+                  if (t === null) return `${athleteName(a)} didn't record a finish time.`;
+                  const place = finishers.findIndex(x => x.id === a.id) + 1;
+                  const ag = ageGroupPlace(a);
+                  return `${athleteName(a)}: ${formatTime(t)}\n` +
+                         `${ordinal(place)} of ${finishers.length} overall` + (ag ? ` · ${ordinal(ag)} in ${a.gender} ${a.ageGroup}` : "") + "\n" +
+                         segTimes(a);
+                };
+                const templates = {
+                  watch: {
+                    subject: raceName === "the race" ? "Watch the race live" : `${raceName}: watch it live`,
+                    body: `Hi everyone,\n\nYou can follow ${raceName} live on your phone — times update as each athlete finishes a leg.\n\n` +
+                          (link ? `Tap this link:\n${link}\n\nOr open the Timeathon app, choose Spectator and type the code: ${code}\n\n` : "") +
+                          `No account needed.\n\nSee you there!`,
+                  },
+                  results: {
+                    subject: raceName === "the race" ? "Race results" : `${raceName}: results`,
+                    body: `Hi everyone,\n\nThanks for coming to ${raceName}! Here are the results:\n\n` +
+                          finishers.map((a, i) => `${i + 1}. ${athleteName(a)} — ${formatTime(totalChipTime(a))}`).join("\n") +
+                          (link ? `\n\nFull live results: ${link}` : "") + `\n\nGreat racing, everyone!`,
+                  },
+                  custom: { subject: raceName, body: "" },
+                };
+                const withEmail = athletes.filter(a => a.email);
+                const missing = athletes.filter(a => !a.email);
+                const chosen = withEmail.filter(a => !emailSkip[a.id]);
+                const addresses = [...new Set(chosen.map(a => a.email.toLowerCase()))];
+                const subject = emailSubject || templates[emailKind].subject;
+                const body = emailBody || templates[emailKind].body;
+                const pick = (k) => { setEmailKind(k); setEmailSubject(""); setEmailBody(""); setEmailCopied(""); };
+                const openMail = (to, bcc, subj, text) => {
+                  const q = [bcc && bcc.length ? `bcc=${bcc.join(",")}` : "", `subject=${encodeURIComponent(subj)}`, `body=${encodeURIComponent(text)}`].filter(Boolean).join("&");
+                  window.location.href = `mailto:${encodeURIComponent(to || "")}?${q}`;
+                };
+                const copy = (text, what) => {
+                  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+                    .then(() => setEmailCopied(what)).catch(() => setEmailCopied("copy-failed"));
+                };
+                return (
+                  <div>
+                    <button onClick={() => setView(clockStarted ? "race" : "setup")} style={{ ...btnStyle(TM.ink, true), marginTop: 4 }}>← Back</button>
+                    <h1 style={{ ...TM_DISPLAY, marginTop: 18 }}>Email families</h1>
+                    <div style={{ ...TM_CAPTION, fontSize: 16, marginTop: 8 }}>
+                      Opens your own email app with everyone in BCC, so families don't see each other's addresses. Nothing sends until you press Send there.
+                    </div>
+
+                    <div style={{ ...TM_LABEL, marginTop: 22 }}>What are you sending?</div>
+                    <div role="radiogroup" aria-label="Message" style={{ display: "flex", gap: 8 }}>
+                      {[["watch", "Watch link"], ["results", "Results"], ["custom", "Your own"]].map(([k, label]) => (
+                        <button key={k} role="radio" aria-checked={emailKind === k} onClick={() => pick(k)} style={segStyle(emailKind === k)}>{label}</button>
+                      ))}
+                    </div>
+                    {emailKind === "watch" && !code && (
+                      <div style={{ ...rowStyle(TM.warn), marginTop: 12, fontSize: 16, fontWeight: 600 }}>This race has no code yet — set one in Setup step 1.</div>
+                    )}
+                    {emailKind === "watch" && code && !(liveRaceCode || registrationOpen) && (
+                      <div style={{ ...rowStyle(TM.warn), marginTop: 12 }}>
+                        <div style={{ fontSize: 16, fontWeight: 700 }}>The link starts working when you go live.</div>
+                        <div style={TM_CAPTION}>Fine to send it now — parents can keep it and tap it on race day.</div>
+                      </div>
+                    )}
+                    {emailKind === "results" && finishers.length === 0 && (
+                      <div style={{ ...rowStyle(TM.warn), marginTop: 12, fontSize: 16, fontWeight: 600 }}>Nobody has a finish time yet.</div>
+                    )}
+
+                    <div style={{ marginTop: 18 }}>
+                      <label htmlFor="email-subject" style={TM_LABEL}>Subject</label>
+                      <input id="email-subject" value={subject} onChange={e => setEmailSubject(e.target.value)}
+                        style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 14px", color: TM.ink, outline: "none" }} />
+                    </div>
+                    <div style={{ marginTop: 14 }}>
+                      <label htmlFor="email-body" style={TM_LABEL}>Message</label>
+                      <textarea id="email-body" value={body} onChange={e => setEmailBody(e.target.value)} rows={10}
+                        style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 14px",
+                                 color: TM.ink, outline: "none", lineHeight: 1.45, resize: "vertical" }} />
+                    </div>
+
+                    <h2 style={{ ...TM_H2, marginTop: 24, marginBottom: 6 }}>To ({addresses.length})</h2>
+                    {withEmail.length === 0 ? (
+                      <div style={{ ...rowStyle(TM.warn), fontSize: 16, fontWeight: 600 }}>
+                        No emails yet. Add them to athletes in Setup step 2, import a CSV with an "email" column, or open sign-ups — athletes who sign themselves up can share theirs.
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {withEmail.map(a => (
+                          <label key={a.id} style={{ ...rowStyle(emailSkip[a.id] ? TM.line : TM.run), display: "flex", gap: 12, alignItems: "center", cursor: "pointer" }}>
+                            <input type="checkbox" checked={!emailSkip[a.id]} onChange={e => setEmailSkip(sk => ({ ...sk, [a.id]: !e.target.checked }))} />
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>{athleteName(a)}</span>
+                              <span style={{ display: "block", ...TM_CAPTION, overflow: "hidden", textOverflow: "ellipsis" }}>{a.email}</span>
+                            </span>
+                            {emailKind === "results" && totalChipTime(a) !== null && (
+                              <button type="button" onClick={e => { e.preventDefault();
+                                openMail(a.email, null, `${raceName}: ${athleteName(a)}'s result`,
+                                  `Hi,\n\nHere's how ${a.firstName || athleteName(a)} did at ${raceName}:\n\n${resultFor(a)}\n\n` + (link ? `All results: ${link}\n\n` : "") + "Great racing!"); }}
+                                style={{ ...btnStyle(TM.ink, true), padding: "0 12px", fontSize: 15, flexShrink: 0 }}>Just theirs</button>
+                            )}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {missing.length > 0 && (
+                      <div style={{ ...TM_CAPTION, marginTop: 10 }}>
+                        No email for: {missing.map(a => athleteName(a) || "unnamed").join(", ")}.{" "}
+                        <button onClick={() => { setSetupStep(2); setView("setup"); }}
+                          style={{ background: "none", border: "none", padding: 0, minHeight: 0, color: TM.ink, fontWeight: 800, fontSize: 14, textDecoration: "underline", cursor: "pointer" }}>Add them</button>
+                      </div>
+                    )}
+
+                    <button onClick={() => openMail(currentUser?.email, addresses, subject, body)} disabled={addresses.length === 0}
+                      style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 22, opacity: addresses.length === 0 ? 0.45 : 1 }}>
+                      Open in my email app →
+                    </button>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <button onClick={() => copy(addresses.join(", "), "addresses")} disabled={addresses.length === 0} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Copy addresses</button>
+                      <button onClick={() => copy(`${subject}\n\n${body}`, "message")} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Copy message</button>
+                    </div>
+                    {emailCopied && (
+                      <div role="status" style={{ ...TM_CAPTION, marginTop: 8, color: emailCopied === "copy-failed" ? TM.live : TM.run, fontWeight: 700 }}>
+                        {emailCopied === "copy-failed" ? "Couldn't copy — select the text and copy it by hand." : `Copied the ${emailCopied}. Paste into any email.`}
+                      </div>
+                    )}
+                    {emailKind === "results" && (
+                      <div style={{ ...TM_CAPTION, marginTop: 14 }}>"Just theirs" opens a separate email to one family with that athlete's time, place and splits.</div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* ── SPECTATE: the spectator's whole app is this box and the live view ── */}
               {view === "spectate" && (
@@ -7893,6 +8112,10 @@
                       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                         <button onClick={() => { setRegistrationStep("code"); setRegError(""); setRegRaceData(null); }}
                           style={{ ...btnStyle("#3D434B", true), padding: "10px 18px", fontSize: 14 }}>Back</button>
+                        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "4px 0 14px", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
+                          <input type="checkbox" checked={regEmailOptIn} onChange={e => setRegEmailOptIn(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
+                          <span>Email me the watch link and my results{currentUser?.email ? ` at ${currentUser.email}` : ""}. Only the race host sees this address.</span>
+                        </label>
                         <button onClick={() => registerForRace(regRaceData.code, regProfile, regCourseId)}
                           disabled={regWorking || !regProfile.firstName.trim() || !regProfile.lastName.trim()}
                           style={{ ...btnStyle("#04613F"), flex: 1, padding: "12px", fontSize: 14, letterSpacing: 1, opacity: (regWorking || !regProfile.firstName.trim() || !regProfile.lastName.trim()) ? 0.5 : 1 }}>
@@ -8913,6 +9136,9 @@
                         </select>
                         <input type="date" value={ath.dob || ""} onChange={e => updateDob(i, e.target.value)} title="Date of Birth"
                           style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 8px", color: "#0B0D10", fontSize: 14, outline: "none", colorScheme: "light" }} />
+                        <input type="email" inputMode="email" value={ath.email || ""} onChange={e => updateAthleteEmail(i, e.target.value)}
+                          placeholder="Parent or athlete email" aria-label={`Email for ${athleteName(ath) || "athlete " + (i + 1)}`} autoComplete="off"
+                          style={{ flex: "1 1 240px", minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 10px", color: "#0B0D10", outline: "none" }} />
                         {ath.dob && calcAge(ath.dob) !== null && (
                           <div style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 8px", fontSize: 14, color: "#0B3FCC", fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
                             Age {calcAge(ath.dob)}
@@ -8949,6 +9175,7 @@
 
                   {/* The two ways to add someone, next to the list they add to. */}
                   <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                    <button onClick={() => { setEmailKind("watch"); setView("email"); }} style={btnStyle(TM.ink, true)}>✉ Email families</button>
                     <button onClick={() => { setAthletePickerSearch(""); setShowAthletePicker(true); }} style={btnStyle("#04613F", true)}>+ Add Athlete</button>
                     <button onClick={() => csvInputRef.current.click()} style={btnStyle("#04613F", true)}>&#8679; Import from CSV</button>
                     <input ref={csvInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSVImport} />
@@ -9679,13 +9906,16 @@
                           }} style={{ ...btnStyle("#8A5A00", true), padding: "5px 14px", fontSize: 14, letterSpacing: 1, opacity: livePublishing ? 0.6 : 1 }}>
                             {livePublishing ? "Publishing…" : "📡 Share Live Results"}
                           </button>
+                          <button onClick={() => { setEmailKind("watch"); setView("email"); }}
+                            style={{ ...btnStyle(TM.ink, true), marginLeft: 8 }}>✉ Email families</button>
                           {livePublishError && <div style={{ fontSize: 14, color: "#B3001B", marginTop: 6, maxWidth: 280, lineHeight: 1.4 }}>{livePublishError}</div>}
                         </div>
                       ) : (
-                        <div style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, padding: "6px 12px" }}>
-                          <span style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1 }}>LIVE</span>
-                          <span style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#8A5A00", letterSpacing: 0.5 }}>{liveRaceCode}</span>
-                          <span style={{ fontSize: 14, color: "#3D434B" }}>anyone with this code can follow along</span>
+                        <div style={{ ...rowStyle(TM.live), display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, textTransform: "none", letterSpacing: 0 }}>
+                          <span style={{ background: TM.live, color: "#FFFFFF", fontWeight: 900, fontSize: 14, letterSpacing: 1.2, padding: "4px 10px", borderRadius: 4 }}>● LIVE</span>
+                          <span style={{ ...TM_NUM, fontSize: 30, letterSpacing: 1, color: TM.ink }}>{liveRaceCode}</span>
+                          <span style={{ ...TM_CAPTION, flex: "1 1 160px" }}>Anyone with this code can follow along.</span>
+                          <button onClick={() => { setEmailKind("watch"); setView("email"); }} style={{ ...btnStyle(TM.ink, true), padding: "0 14px", fontSize: 15 }}>✉ Email families</button>
                           <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); localStorage.removeItem("tri-active-live"); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
                             style={{ background: "none", border: "none", color: "#3D434B", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>&times;</button>
                         </div>
@@ -9934,6 +10164,10 @@
               )}
 
               {/* ── RESULTS ── */}
+              {view === "results" && athletes.some(a => a.finished) && (
+                <button onClick={() => { setEmailKind("results"); setView("email"); }}
+                  style={{ ...btnStyle(TM.ink), width: "100%", marginBottom: 14 }}>✉ Email results to families</button>
+              )}
               {view === "results" && (
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, padding: "12px 14px", background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC" }}>
