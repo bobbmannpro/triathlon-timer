@@ -110,7 +110,6 @@
         color: var(--tm-text-dim);
       }
       .tm-nav-btn[data-active="1"] { color: var(--tm-accent-1); border-bottom-color: var(--tm-accent-1); }
-      .tm-nav-btn[data-home="1"]   { color: var(--tm-text-faint); font-size: 16px; padding: 0 12px; }
       @media (max-width: 380px) {
         .tm-nav-btn { padding: 0 11px; font-size: 12px; }
       }
@@ -316,6 +315,41 @@
         );
       }
       // LOGO_B64 is defined in the preceding plain <script> tag (keeps Babel fast)
+
+      // One job per card on the Setup screen. Everything stays shut until you go
+      // looking for it, and the summary line answers the usual question — how many
+      // athletes, which distances — without opening anything.
+      // `bare` skips the padded body for panels that manage their own padding and
+      // sticky layout (the waypoint map).
+      function SetupSection({ title, summary, color = "#00C6FF", open, onToggle, bare = false, children }) {
+        const edge = open ? color : "rgba(0,198,255,0.18)";
+        return (
+          // No `overflow: hidden` here on purpose — it would trap the waypoint
+          // map's `position: sticky` inside this card. The header rounds its own
+          // corners instead.
+          // A `bare` section carries no frame of its own: the waypoint panel widens
+          // past this column on desktop, and a border drawn here would cut across it.
+          <div style={{ marginTop: 14, background: bare ? "none" : "#0D2240", borderRadius: 8,
+                        border: bare ? "none" : `1px solid ${edge}` }}>
+            <button onClick={onToggle} style={{ width: "100%", textAlign: "left", cursor: "pointer",
+              background: bare ? "#0D2240" : "none",
+              border: bare ? `1px solid ${edge}` : "none",
+              borderRadius: open ? "7px 7px 0 0" : 7,
+              padding: "13px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase",
+                              color: open ? color : "#8FB0CC" }}>{title}</div>
+                {summary && (
+                  <div style={{ fontSize: 12, color: "#4E6B85", marginTop: 3,
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary}</div>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: open ? color : "#4E6B85", flexShrink: 0 }}>{open ? "▲" : "▼"}</div>
+            </button>
+            {open && (bare ? children : <div style={{ padding: "0 16px 16px" }}>{children}</div>)}
+          </div>
+        );
+      }
 
       // Great-circle distance in metres. Module scope so the pure distance helpers
       // below can use it as well as the component.
@@ -1409,9 +1443,11 @@
           setTimeout(() => map.invalidateSize(), 200);
         }, [liveRace?.code, view]);
 
-        // Measure clock banner height so sticky map knows where to sit
+        // Measure clock banner height so sticky map knows where to sit.
+        // The banner isn't always on screen now, so an absent ref means 0 —
+        // otherwise the map would keep a gap for a clock that isn't there.
         useEffect(() => {
-          const measure = () => { if (clockBannerRef.current) setClockBannerH(clockBannerRef.current.offsetHeight); };
+          const measure = () => setClockBannerH(clockBannerRef.current ? clockBannerRef.current.offsetHeight : 0);
           measure();
           const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
           if (ro && clockBannerRef.current) ro.observe(clockBannerRef.current);
@@ -1433,6 +1469,11 @@
         const [deleteConfirm, setDeleteConfirm] = useState(null);
         const [showSaveBeforeReg, setShowSaveBeforeReg] = useState(false);
         const [clearRaceConfirm, setClearRaceConfirm] = useState(false);
+        // Which Setup card is open. One at a time, so Setup is a short list of
+        // jobs instead of one long scroll. The roster is what you almost always
+        // came for, so it starts open.
+        const [setupOpen, setSetupOpen] = useState("athletes");
+        const toggleSetup = (k) => setSetupOpen(s => (s === k ? null : k));
         const [deleteJoinedConfirm, setDeleteJoinedConfirm] = useState(null);
         const [raceMode, setRaceMode] = useState("separate");
         const [liveRaceCode, setLiveRaceCode] = useState(null);
@@ -6466,9 +6507,16 @@
               }} style={{ cursor: "pointer" }}>
                 <TimeathonLockup size={30} wordSize={24} />
               </div>
-              <div style={{ fontSize: 10, letterSpacing: 3, textTransform: "uppercase", color: "var(--tm-accent-2)", opacity: 0.7, marginTop: 5 }}>
+              {/* The name of the timer you're in doubles as the way out of it.
+                  It replaces the old ⌂ nav tab, which sat next to "Home" and
+                  meant something entirely different. */}
+              <button onClick={() => selectMode(null)} title="Switch to a different timer"
+                style={{ background: "none", border: "none", cursor: "pointer", marginTop: 5, padding: "2px 6px",
+                         fontSize: 10, letterSpacing: 3, textTransform: "uppercase",
+                         color: "var(--tm-accent-2)", opacity: 0.75, fontFamily: "inherit" }}>
                 {appMode === "swim" ? "Swim Meet Timer" : appMode === "bike" ? "Bike Live Feed" : "Triathlon Timer"}
-              </div>
+                <span style={{ marginLeft: 6, opacity: 0.8 }}>&#8645;</span>
+              </button>
               <button onClick={() => setView("profile")} title="Profile" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "1px solid rgba(143,176,204,0.3)", borderRadius: 4, color: "#8FB0CC", fontSize: 11, cursor: "pointer", padding: "4px 8px", letterSpacing: 1 }}>
                 &#128100; {currentUser?.displayName ? currentUser.displayName.split(" ")[0] : currentUser?.email?.split("@")[0]}
               </button>
@@ -6477,17 +6525,19 @@
             {/* NAV — conditional per mode/role */}
             {(() => {
               const swimNavMap = { swimhome:"home", swimsetup:"setup", swimrace:"race", swimresults:"results", swimdevices:"devices", swimarchive:"archive" };
+              // No ⌂ tab any more — switching timers is the header button, so every
+              // tab in this strip stays inside the timer you're already in.
               const navTabs = (appMode === "bike")
-                ? [["__home__","⌂"],["__bike_home__","🚴 Rides"],["__bike_riders__","👥 Riders"],["__bike_setup__","⚙️ Setup"],["__bike_ride__","📡 Ride"],["__bike_feed__","👀 Follow"]]
+                ? [["__bike_home__","🚴 Rides"],["__bike_riders__","👥 Riders"],["__bike_setup__","⚙️ Setup"],["__bike_ride__","📡 Ride"],["__bike_feed__","👀 Follow"]]
                 : (appMode === "swim" && isHost)
-                ? [["__home__","⌂"],["swimhome","🏠 Meet"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
+                ? [["swimhome","🏠 Meet"],["swimsetup","⚙️ Setup"],["swimrace","🏁 Race"],["swimresults","📊 Results"],["swimdevices","📡 Devices"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["swimarchive","🗂 Archive"]]
                 : (appMode === "swim")
-                ? [["__home__","⌂"],["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
+                ? [["swimwatch","👀 Watch"],["swimlane","🏁 Lane"],["profile","👤 Profile"]]
                 : isHost
-                ? [["__home__","⌂"],["home","Home"],["setup","Setup"],["race","Race"],["results","Results"],["join","📍 Join"],["devices","📡 Devices"]]
+                ? [["home","🏠 Home"],["setup","⚙️ Setup"],["race","🏁 Race"],["results","📊 Results"],["join","📍 Join"],["devices","📡 Devices"]]
                 : isAthlete
-                  ? [["__home__","⌂"],["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
-                  : [["__home__","⌂"],["watch","👀 Watch"],["profile","👤 Profile"]];
+                  ? [["join","📍 Races"],["watch","👀 Watch"],["profile","👤 Profile"]]
+                  : [["watch","👀 Watch"],["profile","👤 Profile"]];
               return (
                 <div className="tm-nav-wrap">
                 <div className="tm-nav" ref={navStripRef}>
@@ -6499,10 +6549,8 @@
                     return (
                       <button key={v} className="tm-nav-btn"
                         data-active={isActive ? "1" : "0"}
-                        data-home={v === "__home__" ? "1" : "0"}
                         onClick={() => {
-                        if (v === "__home__") { selectMode(null); }
-                        else if (bikeTab) { setView("bike"); setBikeView(bikeTab); }
+                        if (bikeTab) { setView("bike"); setBikeView(bikeTab); }
                         else if (v in swimNavMap) { setView("swim"); setSwimView(swimNavMap[v]); }
                         else { setView(v); }
                       }}>
@@ -6517,8 +6565,10 @@
 
             <div style={{ maxWidth: 640, margin: "0 auto", padding: "16px 16px 60px" }}>
 
-              {/* STOPWATCH — race flow only */}
-              {["setup", "race", "results"].includes(view) && <div ref={clockBannerRef} style={{ background: "#0D2240", borderRadius: 8, border: "1px solid rgba(0,198,255,0.3)", padding: "14px 20px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
+              {/* STOPWATCH — the Race screen, plus anywhere else *while it's running*,
+                  so stepping back to Setup mid-race never hides the clock. It no
+                  longer pins itself over Setup forms or finished Results. */}
+              {(view === "race" || (clockStarted && ["setup", "results"].includes(view))) && <div ref={clockBannerRef} style={{ background: "#0D2240", borderRadius: 8, border: "1px solid rgba(0,198,255,0.3)", padding: "14px 20px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
                 <div className="tm-clock" style={{ fontSize: 52, fontWeight: 700, color: clockRunning ? "#00E5CC" : clockStarted ? "#FFCB45" : "#4E6B85", lineHeight: 1 }}>
                   {formatTime(clockMs)}
                 </div>
@@ -6529,9 +6579,11 @@
                       ? <button onClick={pauseClock} style={btnStyle("#FFCB45")}>Pause</button>
                       : <button onClick={resumeClock} style={btnStyle("#7DF9C4")}>Resume</button>
                   }
-                  <button onClick={resetClock} style={btnStyle("#8FB0CC", true)}>Reset Clock</button>
+                  <button onClick={resetClock} title="Put the clock back to zero — athlete times are untouched"
+                    style={btnStyle("#8FB0CC", true)}>Clock to Zero</button>
                   {!resetConfirm
-                    ? <button onClick={() => setResetConfirm(true)} style={btnStyle("#7DF9C4", true)}>Reset All</button>
+                    ? <button onClick={() => setResetConfirm(true)} title="Wipe every recorded split but keep the roster"
+                        style={btnStyle("#7DF9C4", true)}>Clear All Times</button>
                     : (
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <span style={{ fontSize: 12, color: "#7DF9C4" }}>Keep names, clear all times?</span>
@@ -6573,9 +6625,9 @@
                     <button onClick={() => setHomeSection(homeSection === "races" ? null : "races")} style={{ background: "linear-gradient(135deg,#0D2240,#113052)", border: "2px solid #FFCB45", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📋</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#FFCB45" }}>Existing Race</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#FFCB45" }}>Saved Races</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>
-                          {savedRaces.length === 0 ? "No saved races yet" : `${savedRaces.length} saved race${savedRaces.length > 1 ? "s" : ""}`}
+                          {savedRaces.length === 0 ? "Races you set up but haven't run yet" : `${savedRaces.length} ready to run`}
                         </div>
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#FFCB45" }}>{homeSection === "races" ? "▲" : "▼"}</div>
@@ -6585,7 +6637,7 @@
                     {homeSection === "races" && (
                       <div style={{ marginTop: -6, background: "#0D2240", border: "1px solid rgba(255,203,69,0.25)", borderRadius: 8, padding: "12px", display: "flex", flexDirection: "column", gap: 8 }}>
                         {savedRaces.length === 0 ? (
-                          <div style={{ fontSize: 12, color: "#4E6B85", textAlign: "center", padding: "12px 0" }}>No saved races — go to Setup to save one.</div>
+                          <div style={{ fontSize: 12, color: "#4E6B85", textAlign: "center", padding: "12px 0" }}>Nothing saved yet — start a New Race, then save it from the Setup screen.</div>
                         ) : savedRaces.map(race => (
                           <div key={race.id} style={{ background: "#0D2240", borderRadius: 6, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                             <div style={{ minWidth: 0 }}>
@@ -6612,9 +6664,9 @@
                     <button onClick={() => setView("athletes")} style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid #7DF9C4", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>🏊</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#7DF9C4" }}>Athletes</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#7DF9C4" }}>Athlete Library</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>
-                          {(() => { const cnt = allRaceAthletes().length; return cnt === 0 ? "Your athlete library" : `${cnt} athlete${cnt !== 1 ? "s" : ""} in library`; })()}
+                          {(() => { const cnt = allRaceAthletes().length; return cnt === 0 ? "Everyone who's ever raced with you" : `${cnt} name${cnt !== 1 ? "s" : ""} to pull into a race`; })()}
                         </div>
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#7DF9C4" }}>&#8594;</div>
@@ -6624,9 +6676,9 @@
                     <button onClick={() => setView("archive")} style={{ background: "linear-gradient(135deg,#0D2240,#0D2240)", border: "2px solid #7DF9C4", borderRadius: 12, padding: "22px 24px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 18 }}>
                       <div style={{ fontSize: 40, lineHeight: 1 }}>📁</div>
                       <div>
-                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#7DF9C4" }}>Past Races</div>
+                        <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 26, letterSpacing: 0.5, color: "#7DF9C4" }}>Past Results</div>
                         <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>
-                          {savedArchive.length === 0 ? "No past races yet" : `${savedArchive.length} race${savedArchive.length !== 1 ? "s" : ""} saved`}
+                          {savedArchive.length === 0 ? "Finished races, with their times" : `${savedArchive.length} finished race${savedArchive.length !== 1 ? "s" : ""}`}
                         </div>
                       </div>
                       <div style={{ marginLeft: "auto", fontSize: 22, color: "#7DF9C4" }}>&#8594;</div>
@@ -6988,7 +7040,7 @@
                                   setSavedArchive(updated);
                                   localStorage.setItem("tri-archive", JSON.stringify(updated));
                                   if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
-                                  setManualSavedMsg("Saved to Past Races!");
+                                  setManualSavedMsg("Saved to Past Results!");
                                   setTimeout(() => setManualSavedMsg(""), 3000);
                                 }} style={{ ...btnStyle("#7DF9C4", true), padding: "5px 10px", fontSize: 11 }}>💾 Save</button>
                               </div>
@@ -7061,7 +7113,7 @@
               {/* ── PAST RACES ── */}
               {view === "archive" && (
                 <div style={{ paddingTop: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#7DF9C4", marginBottom: 16 }}>📁 Past Races</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#7DF9C4", marginBottom: 16 }}>📁 Past Results</div>
                   {savedArchive.length === 0 ? (
                     <div style={{ background: "#0D2240", border: "1px solid rgba(125,249,196,0.2)", borderRadius: 8, padding: "28px 20px", textAlign: "center", color: "#4E6B85", fontSize: 13 }}>
                       No past races yet — races are saved automatically when an athlete finishes.
@@ -8314,7 +8366,7 @@
                         <button onClick={() => setClearRaceConfirm(false)} style={{ ...btnStyle("#8FB0CC", true), padding: "5px 12px", fontSize: 12 }}>Cancel</button>
                       </div>
                     ) : (
-                      <button onClick={() => setClearRaceConfirm(true)} style={{ ...btnStyle("#8FB0CC", true), padding: "5px 14px", fontSize: 12 }}>&#10005; Clear Race</button>
+                      <button onClick={() => setClearRaceConfirm(true)} style={{ ...btnStyle("#8FB0CC", true), padding: "5px 14px", fontSize: 12 }}>&#10005; Start Over</button>
                     )}
                   </div>
 
@@ -8341,17 +8393,22 @@
                     </div>
                   )}
 
-                  {/* Race mode toggle */}
-                  <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+                  {/* Race mode toggle — one line, above the cards, because it changes
+                      what the Race screen asks you to do. */}
+                  <div style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "center", flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, color: "#8FB0CC", letterSpacing: 1, textTransform: "uppercase", flexShrink: 0 }}>Start Mode</span>
-                    {[["separate","Separate Start","#00C6FF"],["simultaneous","Simultaneous Start","#FFCB45"]].map(([mode, label, col]) => (
+                    {[["separate","One at a time","#00C6FF"],["simultaneous","All at once","#FFCB45"]].map(([mode, label, col]) => (
                       <button key={mode} onClick={() => setRaceMode(mode)} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 700, letterSpacing: 1, background: raceMode === mode ? col : "transparent", color: raceMode === mode ? "#0A1628" : "#8FB0CC", border: `1px solid ${raceMode === mode ? col : "rgba(255,255,255,0.1)"}`, borderRadius: 4, cursor: "pointer" }}>{label}</button>
                     ))}
+                    <span style={{ fontSize: 11, color: "#4E6B85" }}>
+                      {raceMode === "simultaneous" ? "— one gun starts everybody" : "— send each athlete off as they go"}
+                    </span>
                   </div>
 
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#8FB0CC", marginBottom: 10 }}>
-                    Athletes
-                  </div>
+                  <SetupSection title="Athletes" color="#00E5CC"
+                    open={setupOpen === "athletes"} onToggle={() => toggleSetup("athletes")}
+                    summary={athletes.length === 0 ? "Nobody added yet"
+                      : `${athletes.length} racing${registrationOpen ? " · sign-ups open" : ""}`}>
                   {athletes.map((ath, i) => (
                     <div key={ath.id} data-drag-idx={i}
                       onDragOver={e => onDragOver(e, i)} onDrop={e => onDrop(e, i)}
@@ -8420,17 +8477,28 @@
                     </div>
                   ))}
 
-                  <div style={{ marginTop: 16, background: "#0D2240", border: `2px solid ${registrationOpen ? "rgba(125,249,196,0.5)" : "rgba(0,198,255,0.2)"}`, borderRadius: 8, padding: "14px 16px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: registrationOpen ? "#7DF9C4" : "#8FB0CC" }}>
-                          {registrationOpen ? "Registration Open" : "Athlete Self-Registration"}
-                        </div>
-                        {registrationOpen && <div style={{ fontSize: 12, color: "#8FB0CC", marginTop: 2 }}>{regAthleteCount} athlete{regAthleteCount !== 1 ? "s" : ""} joined</div>}
+                  {/* The two ways to add someone, next to the list they add to. */}
+                  <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                    <button onClick={() => { setAthletePickerSearch(""); setShowAthletePicker(true); }} style={btnStyle("#00E5CC", true)}>+ Add Athlete</button>
+                    <button onClick={() => csvInputRef.current.click()} style={btnStyle("#00E5CC", true)}>&#8679; Import from CSV</button>
+                    <input ref={csvInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSVImport} />
+                  </div>
+                  </SetupSection>
+
+                  <SetupSection title="Let Athletes Sign Themselves Up" color="#7DF9C4"
+                    open={setupOpen === "registration"} onToggle={() => toggleSetup("registration")}
+                    summary={registrationOpen
+                      ? `Open · code ${registrationCode} · ${regAthleteCount} joined`
+                      : "Closed — open it to get a code athletes can enter"}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 12, color: "#8FB0CC", flex: 1, minWidth: 180 }}>
+                        {registrationOpen
+                          ? `${regAthleteCount} athlete${regAthleteCount !== 1 ? "s" : ""} have joined so far.`
+                          : "Athletes enter a code on their own phone and add themselves to your roster."}
                       </div>
                       {!registrationOpen
-                        ? <button onClick={openRegistration} style={{ ...btnStyle("#7DF9C4"), padding: "6px 14px", fontSize: 12 }}>Open Registration</button>
-                        : <button onClick={closeRegistration} style={{ ...btnStyle("#FF5C7A", true), padding: "6px 14px", fontSize: 12 }}>Close</button>
+                        ? <button onClick={openRegistration} style={{ ...btnStyle("#7DF9C4"), padding: "6px 14px", fontSize: 12 }}>Open Sign-Ups</button>
+                        : <button onClick={closeRegistration} style={{ ...btnStyle("#FF5C7A", true), padding: "6px 14px", fontSize: 12 }}>Close Sign-Ups</button>
                       }
                     </div>
                     {registrationOpen && (
@@ -8449,14 +8517,7 @@
                         )}
                       </div>
                     )}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-                    <button onClick={() => { setAthletePickerSearch(""); setShowAthletePicker(true); }} style={btnStyle("#00E5CC", true)}>+ Add Athlete</button>
-                    <button onClick={goToRace} style={btnStyle("#00C6FF")}>Go to Race &#8594;</button>
-                    <button onClick={() => csvInputRef.current.click()} style={btnStyle("#00E5CC", true)}>&#8679; Import CSV</button>
-                    <input ref={csvInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSVImport} />
-                  </div>
+                  </SetupSection>
 
                   {/* Athlete picker modal */}
                   {showAthletePicker && (() => {
@@ -8512,10 +8573,17 @@
                   })()}
 
                   {/* ── Courses (distances) ── */}
-                  <div style={{ marginTop: 20, background: "#0D2240", border: "1px solid rgba(0,198,255,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                  <SetupSection title="Courses" color="#00E5CC"
+                    open={setupOpen === "courses"} onToggle={() => toggleSetup("courses")}
+                    summary={(() => {
+                      // Short forms so a one-line summary never reads "1 miles".
+                      const u = { yards: "yd", meters: "m", miles: "mi", km: "km" };
+                      return courses.length === 0 ? "No distances set yet"
+                        : courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} swim · ${c.bikeMiles}${u[units.bike]} bike · ${c.runMiles}${u[units.run]} run`).join("   |   ");
+                    })()}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                       <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#8FB0CC" }}>Courses &nbsp;&mdash;&nbsp; <span style={{ color: "#00E5CC", fontWeight: 400 }}>distances for pace calculations</span></div>
+                        <div style={{ fontSize: 11, color: "#8FB0CC" }}>Distances are what turn raw times into pace.</div>
                         <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
                           {[["swim","#00C6FF",["yards","meters"]],["bike","#FFCB45",["miles","km"]],["run","#7DF9C4",["miles","km"]]].map(([seg, col, opts]) => (
                             <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -8570,10 +8638,13 @@
                         </div>
                       </div>
                     ))}
-                  </div>
+                  </SetupSection>
 
                   {/* ── Age Groups ── */}
-                  <div style={{ marginTop: 20, background: "#0D2240", border: "1px solid rgba(0,198,255,0.2)", borderRadius: 8, padding: "14px 16px" }}>
+                  <SetupSection title="Age Groups" color="#00C6FF"
+                    open={setupOpen === "agegroups"} onToggle={() => toggleSetup("agegroups")}
+                    summary={ageGroups.length === 0 ? "No age groups — everyone scores together"
+                      : `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}`}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#8FB0CC" }}>Age Groups</div>
                       <div style={{ display: "flex", gap: 6 }}>
@@ -8623,11 +8694,13 @@
                         );
                       })}
                     </div>
-                  </div>
+                  </SetupSection>
 
                   {/* ── Certificate & Event Config ── */}
-                  <div style={{ marginTop: 20, background: "#0D2240", border: "1px solid rgba(0,198,255,0.2)", borderRadius: 8, padding: "14px 16px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#8FB0CC", marginBottom: 12 }}>Certificate &amp; Event</div>
+                  <SetupSection title="Certificate &amp; Event" color="#00C6FF"
+                    open={setupOpen === "cert"} onToggle={() => toggleSetup("cert")}
+                    summary={[certConfig.eventName, certConfig.orgName, certConfig.customLogoB64 ? "logo added" : ""]
+                      .filter(Boolean).join(" · ") || "Name the event that prints on certificates"}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <input value={certConfig.eventName} onChange={e => setCertConfig(cfg => ({ ...cfg, eventName: e.target.value }))} placeholder="Event name for certificates"
                         style={{ background: "#0A1628", border: "1px solid rgba(0,198,255,0.3)", borderRadius: 4, padding: "8px 12px", color: "#EAF4FF", fontSize: 13, outline: "none" }} />
@@ -8640,10 +8713,20 @@
                         <input ref={logoInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleLogoImport} />
                       </div>
                     </div>
-                  </div>
+                  </SetupSection>
 
                   {/* ── GPS Waypoints ── */}
-                  <div className="tri-wp-panel" style={{ marginTop: 20, background: "#0D2240", border: "2px solid rgba(125,249,196,0.35)", borderRadius: 8 }}>
+                  {/* `bare` — this panel owns its own padding and the sticky map,
+                      so it can't sit inside the section's padded body. */}
+                  <SetupSection title="📍 Course Map &amp; Waypoints" color="#7DF9C4" bare
+                    open={setupOpen === "waypoints"} onToggle={() => toggleSetup("waypoints")}
+                    summary={(() => {
+                      const placed = waypoints.filter(w => w.lat !== null).length;
+                      return placed === 0
+                        ? "Optional — drop pins so the clock can log splits by itself"
+                        : `${placed} of ${waypoints.length} pins placed`;
+                    })()}>
+                  <div className="tri-wp-panel" style={{ background: "#0D2240", border: "1px solid rgba(125,249,196,0.35)", borderTop: "none", borderRadius: "0 0 8px 8px" }}>
 
                     {/* Finding the venue is a once-per-race job, so it scrolls away
                         rather than eating room at the top of every screen. */}
@@ -8962,15 +9045,22 @@
                     </div>{/* end cards section */}
                     </div>{/* end map/list grid */}
                   </div>{/* end GPS Waypoints card */}
+                  </SetupSection>
 
-                  {/* ── Saved Races ── */}
-                  <div style={{ marginTop: 20, background: "#0D2240", border: "1px solid rgba(0,198,255,0.2)", borderRadius: 8, padding: "14px 16px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", color: "#8FB0CC", marginBottom: 12 }}>
-                      Saved Race Presets
-                    </div>
+                  {/* ── Save this race ──
+                      Saving lives here because it acts on what's on this screen.
+                      Loading lives on Home under "Saved Races" — one list, one place,
+                      so there's no second copy of it to wonder about. */}
+                  <SetupSection title="Save This Race" color="#7DF9C4"
+                    open={setupOpen === "save"} onToggle={() => toggleSetup("save")}
+                    summary={loadedRaceId
+                      ? "Editing a saved race — Update to keep your changes"
+                      : savedRaces.length === 0
+                        ? "Not saved yet"
+                        : `Not saved yet · ${savedRaces.length} saved race${savedRaces.length !== 1 ? "s" : ""} on Home`}>
 
                     {/* Save current setup */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: savedRaces.length > 0 ? 14 : 0 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <input
                         value={saveRaceName}
                         onChange={e => setSaveRaceName(e.target.value)}
@@ -8990,46 +9080,33 @@
                       </div>
                     </div>
 
-                    {/* Saved race list */}
-                    {savedRaces.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {savedRaces.map(race => (
-                          <div key={race.id} style={{ background: "#0A1628", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontWeight: 700, fontSize: 13, color: "#EAF4FF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{race.name}</div>
-                              <div style={{ fontSize: 11, color: "#4E6B85", marginTop: 2 }}>
-                                {race.athletes.length} athletes &nbsp;&middot;&nbsp; {(race.courses || []).map(c => c.name).join(" / ") || `${race.swimYards}y/${race.bikeMiles}mi/${race.runMiles}mi`} &nbsp;&middot;&nbsp; {race.savedAt}
-                                {race.waypoints && race.waypoints.some(w => w.lat !== null) && <span style={{ color: "#7DF9C4", marginLeft: 6 }}>· 📍 {race.waypoints.filter(w => w.lat !== null).length} waypoints</span>}
-                              </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                              <button onClick={() => loadRace(race)} style={{ ...btnStyle("#00C6FF"), padding: "5px 12px", fontSize: 11 }}>Load</button>
-                              {deleteConfirm === race.id ? (
-                                <>
-                                  <button onClick={() => deleteRace(race.id)} style={{ ...btnStyle("#7DF9C4"), padding: "5px 10px", fontSize: 11 }}>Delete?</button>
-                                  <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle("#8FB0CC", true), padding: "5px 10px", fontSize: 11 }}>No</button>
-                                </>
-                              ) : (
-                                <button onClick={() => setDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#4E6B85", fontSize: 16, cursor: "pointer", padding: "0 4px" }}>&times;</button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                    {savedRaces.length > 0 ? (
+                      <button onClick={() => { setView("home"); setHomeSection("races"); }}
+                        style={{ background: "none", border: "none", color: "#8FB0CC", fontSize: 12, cursor: "pointer",
+                                 padding: "10px 0 0", textAlign: "left", textDecoration: "underline" }}>
+                        Open a different saved race &#8594;
+                      </button>
+                    ) : (
+                      <div style={{ fontSize: 12, color: "#4E6B85", marginTop: 10 }}>
+                        Saving keeps your athletes, distances and pins so you can run this race again next season.
                       </div>
                     )}
+                  </SetupSection>
 
-                    {savedRaces.length === 0 && (
-                      <div style={{ fontSize: 12, color: "#4E6B85", marginTop: 6 }}>
-                        No presets saved yet — set up your athletes &amp; distances above, then save.
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ marginTop: 14, background: "#113052", borderLeft: "3px solid #00C6FF", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#8FB0CC" }}>
-                    {raceMode === "simultaneous"
-                      ? <>All athletes start the moment you press <strong style={{ color: "#FFCB45" }}>START RACE</strong>. Tap segments in order — <strong style={{ color: "#7DF9C4" }}>Run</strong> ends their race. Use <strong style={{ color: "#00E5CC" }}>Edit Times</strong> to correct any mis-tap.</>
-                      : <>Tap <strong style={{ color: "#00E5CC" }}>Send Off</strong> per athlete at dive-in, or <strong style={{ color: "#FFCB45" }}>Send Off All</strong> for a mass start. Tap segments in order — <strong style={{ color: "#7DF9C4" }}>Run</strong> ends their race. Use <strong style={{ color: "#00E5CC" }}>Edit Times</strong> to correct any mis-tap.</>
-                    }
+                  {/* The one thing you're actually heading for. It used to sit
+                      between "Add Athlete" and "Import CSV", which made the exit
+                      from this screen look like a third way to edit the roster. */}
+                  <button onClick={goToRace} disabled={athletes.length === 0}
+                    style={{ ...btnStyle("#00C6FF"), width: "100%", marginTop: 20,
+                    padding: "15px", fontSize: 16, letterSpacing: 0.5, fontFamily: "var(--tm-font-display)",
+                    opacity: athletes.length === 0 ? 0.4 : 1,
+                    cursor: athletes.length === 0 ? "default" : "pointer" }}>
+                    Go to Race &#8594;
+                  </button>
+                  <div style={{ fontSize: 11, color: "#4E6B85", textAlign: "center", marginTop: 8 }}>
+                    {athletes.length === 0
+                      ? "Add at least one athlete first"
+                      : `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""} ready`}
                   </div>
                 </div>
               )}
@@ -9037,6 +9114,14 @@
               {/* ── RACE ── */}
               {view === "race" && (
                 <div>
+                  {/* Moved off Setup: these are the taps you make on *this* screen,
+                      so they belong where you're about to make them. */}
+                  <div style={{ marginBottom: 14, background: "#113052", borderLeft: "3px solid #00C6FF", borderRadius: 4, padding: "10px 14px", fontSize: 12, color: "#8FB0CC" }}>
+                    {raceMode === "simultaneous"
+                      ? <>All athletes start the moment you press <strong style={{ color: "#FFCB45" }}>START RACE</strong>. Tap segments in order — <strong style={{ color: "#7DF9C4" }}>Run</strong> ends their race. Use <strong style={{ color: "#00E5CC" }}>Edit Times</strong> to correct any mis-tap.</>
+                      : <>Tap <strong style={{ color: "#00E5CC" }}>Send Off</strong> per athlete at dive-in, or <strong style={{ color: "#FFCB45" }}>Send Off All</strong> for a mass start. Tap segments in order — <strong style={{ color: "#7DF9C4" }}>Run</strong> ends their race. Use <strong style={{ color: "#00E5CC" }}>Edit Times</strong> to correct any mis-tap.</>
+                    }
+                  </div>
                   {!clockStarted && (
                     <div style={{ background: "linear-gradient(135deg,#113052,#113052)", border: `2px solid ${raceMode === "simultaneous" ? "#FFCB45" : "#00C6FF"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
                       <div style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, letterSpacing: 0.5, color: "#EAF4FF", marginBottom: 4 }}>Ready to Race?</div>
@@ -9051,7 +9136,7 @@
 
                   {clockStarted && anyUnstarted && raceMode === "separate" && (
                     <button onClick={sendOffAll} style={{ ...btnStyle("#FFCB45"), width: "100%", marginBottom: 12, fontSize: 14, letterSpacing: 2 }}>
-                      &#9654;&#9654; Send Off All (Simultaneous Start)
+                      &#9654;&#9654; Start Everyone Now
                     </button>
                   )}
 
@@ -9069,7 +9154,7 @@
                             if (ok === true) { setLiveRaceCode(code); }
                             else { setLivePublishError(String(ok || "Could not go live.")); }
                           }} style={{ ...btnStyle("#FFCB45", true), padding: "5px 14px", fontSize: 11, letterSpacing: 1, opacity: livePublishing ? 0.6 : 1 }}>
-                            {livePublishing ? "Publishing…" : "📡 Go Live"}
+                            {livePublishing ? "Publishing…" : "📡 Share Live Results"}
                           </button>
                           {livePublishError && <div style={{ fontSize: 11, color: "#FF5C7A", marginTop: 6, maxWidth: 280, lineHeight: 1.4 }}>{livePublishError}</div>}
                         </div>
@@ -9077,7 +9162,7 @@
                         <div style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "rgba(255,203,69,0.08)", border: "1px solid rgba(255,203,69,0.3)", borderRadius: 6, padding: "6px 12px" }}>
                           <span style={{ fontSize: 11, color: "#8FB0CC", letterSpacing: 1 }}>LIVE</span>
                           <span style={{ fontFamily: "var(--tm-font-display)", fontSize: 22, color: "#FFCB45", letterSpacing: 0.5 }}>{liveRaceCode}</span>
-                          <span style={{ fontSize: 10, color: "#8FB0CC" }}>share with spectators</span>
+                          <span style={{ fontSize: 10, color: "#8FB0CC" }}>anyone with this code can follow along</span>
                           <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); localStorage.removeItem("tri-active-live"); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
                             style={{ background: "none", border: "none", color: "#4E6B85", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>&times;</button>
                         </div>
