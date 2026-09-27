@@ -5850,7 +5850,7 @@
             });
             bikeEditPinsRef.current[i] = m;
           });
-        }, [bikeDraft?.checkpoints, bikeView, bikeEditMode]);
+        }, [bikeDraft?.checkpoints, bikeView, bikeEditMode, bikeSetupStep]);
 
         // Redraw the course line and its start/finish markers whenever it changes.
         useEffect(() => {
@@ -5884,7 +5884,7 @@
                     + `text-align:center">${letter}</div>` }),
             }).addTo(map);
           });
-        }, [bikeDraft?.route, bikeView]);
+        }, [bikeDraft?.route, bikeView, bikeSetupStep]);
 
         // Frame an imported route so it's immediately visible.
         useEffect(() => {
@@ -5896,7 +5896,8 @@
 
         // Rebuild the editor map cleanly on leaving Setup.
         useEffect(() => {
-          if (appMode === "bike" && bikeView === "setup" && bikeDraft) return;
+          // The editor map lives on wizard step 4 only.
+          if (appMode === "bike" && bikeView === "setup" && bikeDraft && bikeSetupStep === 4) return;
           if (bikeEditMapRef.current) {
             try { bikeEditMapRef.current.remove(); } catch(_) {}
             bikeEditMapRef.current = null;
@@ -5905,7 +5906,7 @@
             bikeEditStartRef.current = null;
             bikeEditEndRef.current = null;
           }
-        }, [appMode, bikeView, bikeDraft]);
+        }, [appMode, bikeView, bikeDraft, bikeSetupStep]);
 
         function initBikeRideMap(el) {
           if (!el || bikeRideMapRef.current) return;
@@ -6932,7 +6933,7 @@
                   setSwimLiveCode(null); setSwimHomeSection(null); setSwimSetupStep(0);
                   setView("swim"); setSwimView("setup");
                 };
-                const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f }); setView("bike"); setBikeView("setup"); };
+                const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); setView("bike"); setBikeView("setup"); };
                 const saved = [
                   ...savedRaces.map(r => ({ key: "t" + r.id, kind: "triathlon", name: r.name || "Untitled race",
                     meta: `${r.athletes.length} athlete${r.athletes.length !== 1 ? "s" : ""} · saved ${r.savedAt || ""}`,
@@ -12098,7 +12099,7 @@
 
                       <div style={{ ...S.row, justifyContent:"space-between", margin:"18px 0 8px" }}>
                         <div style={{ ...S.label, marginBottom:0 }}>Your ride feeds</div>
-                        <button onClick={() => { setBikeDraft(newBikeFeed()); setBikeView("setup"); }}
+                        <button onClick={() => { setBikeDraft(newBikeFeed()); setBikeSetupStep(1); setBikeView("setup"); }}
                           style={{ ...btnStyle("#8A5A00"), padding:"7px 14px", fontSize:14 }}>+ New Feed</button>
                       </div>
 
@@ -12118,7 +12119,7 @@
                             <div style={{ fontFamily:"monospace", fontSize:20, letterSpacing:1.2, color:"#8A5A00" }}>{f.code}</div>
                           </div>
                           <div style={{ ...S.row, flexWrap:"wrap", gap:6, marginTop:10 }}>
-                            <button onClick={() => { setBikeDraft({ ...newBikeFeed(), ...f }); setBikeView("setup"); }}
+                            <button onClick={() => { setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); setBikeView("setup"); }}
                               style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>⚙️ Edit</button>
                             <button onClick={() => { setBikeRideCode(f.code); setBikeView("ride"); }}
                               style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>📡 Ride</button>
@@ -12232,7 +12233,7 @@
                         <div style={{ fontSize:14, color:"#3D434B", marginBottom:10 }}>
                           Starts a fresh ride with its own follow code. You'll pick which rider it's for.
                         </div>
-                        <button onClick={() => setBikeDraft(newBikeFeed())} style={btnStyle("#8A5A00")}>+ New Event</button>
+                        <button onClick={() => { setBikeDraft(newBikeFeed()); setBikeSetupStep(1); }} style={btnStyle("#8A5A00")}>+ New Event</button>
                       </div>
                       {bikeFeedList.length > 0 && (
                         <div style={S.card}>
@@ -12245,7 +12246,7 @@
                                   {f.eventName || "Untitled event"}
                                   <span style={{ color:"#3D434B", fontSize:14 }}>{r?.name ? "  ·  " + r.name : "  ·  no rider"}</span>
                                 </span>
-                                <button onClick={() => setBikeDraft({ ...newBikeFeed(), ...f })}
+                                <button onClick={() => { setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); }}
                                   style={{ ...btnStyle("#04613F", true), padding:"5px 10px", fontSize:14, whiteSpace:"nowrap" }}>Edit</button>
                               </div>
                             );
@@ -12253,16 +12254,56 @@
                         </div>
                       )}
                     </div>
-                  ) : (
-                    <div>
-                      <div style={S.card}>
-                        <div style={{ ...S.row, justifyContent:"space-between" }}>
-                          <div style={{ ...S.label, marginBottom:0 }}>Follow code</div>
-                          <div style={{ fontFamily:"monospace", fontSize:22, letterSpacing:1.2, color:"#8A5A00" }}>{bikeDraft.code}</div>
-                        </div>
-                        <div style={{ fontSize:14, color:"#3D434B", marginTop:8, wordBreak:"break-all" }}>{shareLink(bikeDraft.code)}</div>
-                      </div>
-
+                  ) : (() => {
+                    const BIKE_STEPS = ["What kind of race?", "Who's riding?", "Ride type", "Map & route", "Save & publish"];
+                    const st = bikeSetupStep;
+                    const publishDraft = () => {
+                          const r = bikeRiderFor(bikeDraft);
+                          if (!r || !(r.name || "").trim()) { alert("Pick or create a rider profile first, so viewers know who they're following."); return; }
+                          if (bikeSnapping > 0) { alert("Still routing the last leg — give it a second and save again."); return; }
+                          // A snapped course can run to thousands of points; viewers
+                          // download this, so simplify before it's stored.
+                          let toSave = bikeDraft;
+                          if ((bikeDraft.route || []).length > BIKE_ROUTE_MAX_PTS) {
+                            const { points, toleranceM } = bikeSimplifyTo(bikeDraft.route, BIKE_ROUTE_MAX_PTS, BIKE_ROUTE_TOL_M);
+                            toSave = { ...bikeDraft, route: points,
+                              routeMeta: { ...(bikeDraft.routeMeta || {}), points: points.length, toleranceM } };
+                          }
+                          const rest = bikeFeedList.filter(f => f.code !== bikeDraft.code);
+                          persistBikeFeeds([...rest, toSave]);
+                          publishBikeMeta(toSave);
+                          setBikeDraft(null);   // back to the chooser next time Setup opens
+                          setBikeView("home");
+                        };
+                    const rider = bikeRiderFor(bikeDraft);
+                    const cps = (bikeDraft.checkpoints || []).length;
+                    const summaries = [
+                      { title: BIKE_STEPS[0], done: !!bikeDraft.eventName, summary: `Bike ride · ${bikeDraft.eventName || "no name yet"}` },
+                      { title: BIKE_STEPS[1], done: !!rider, summary: rider?.name || "No rider picked yet" },
+                      { title: BIKE_STEPS[2], done: true, summary: `${bikeDraft.rideMode === "route" ? "Planned route" : "Free ride"} · ${bikeDraft.units === "km" ? "km" : "miles"}${bikeDraft.multiDay ? " · multi-day" : ""}` },
+                      { title: BIKE_STEPS[3], done: cps > 0 || (bikeDraft.route || []).length > 1, summary: `${cps} checkpoint${cps !== 1 ? "s" : ""}${(bikeDraft.route || []).length > 1 ? " · route drawn" : ""}` },
+                      { title: BIKE_STEPS[4], done: bikeFeedList.some(f => f.code === bikeDraft.code), summary: `Follow code ${bikeDraft.code}` },
+                    ];
+                    if (st === 0) {
+                      return (
+                        <WizardStepList heading="Ride setup" subheading={bikeDraft.eventName || "Bike ride"} steps={summaries} onJump={setBikeSetupStep}>
+                          <button onClick={publishDraft} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24 }}>Save &amp; publish →</button>
+                        </WizardStepList>
+                      );
+                    }
+                    return (
+                      <WizardFrame step={st} titles={BIKE_STEPS} title={BIKE_STEPS[st - 1]}
+                        onJump={setBikeSetupStep} onList={() => setBikeSetupStep(0)}
+                        onBack={st > 1 ? () => setBikeSetupStep(st - 1) : () => { setBikeDraft(null); setView("myraces"); }}
+                        onNext={st === 5 ? publishDraft : () => setBikeSetupStep(st + 1)}
+                        nextLabel={st === 5 ? "Save & publish →" : st === 3 ? "Next: map →" : "Next →"}>
+                        {st === 1 && (
+                          <RaceKindStep kind="bike" name={bikeDraft.eventName} nameId="bike-event-name"
+                            onName={v => setBikeDraft(d => ({ ...d, eventName: v }))}
+                            onKind={k => { if (k !== "bike") startRaceOfKind(k, bikeDraft.eventName); }}
+                            lockedHint="Picking a different kind starts a new race of that kind." />
+                        )}
+                        {st === 2 && (<>
                       <div style={S.card}>
                         <div style={S.label}>Rider</div>
                         {bikeRiders.length === 0 ? (
@@ -12307,6 +12348,8 @@
                         })()}
                       </div>
 
+                        </>)}
+                        {st === 3 && (<>
                       <div style={S.card}>
                         <div style={S.label}>Event</div>
                         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -12356,6 +12399,12 @@
                         </div>
                       </div>
 
+                        </>)}
+                        {st === 4 && (<>
+                          <div style={{ ...rowStyle(TM.bike), marginBottom: 12 }}>
+                            <div style={{ fontSize: 16, fontWeight: 700 }}>Optional for a free ride.</div>
+                            <div style={TM_CAPTION}>Checkpoints and a planned route show followers where the rider is headed.</div>
+                          </div>
                       <div style={S.card}>
                         <div style={S.label}>Map</div>
                         <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginBottom:8 }}>
@@ -12611,30 +12660,30 @@
                       </div>
                       )}
 
-                      <div style={{ ...S.row, gap:8, flexWrap:"wrap", marginBottom:24 }}>
-                        <button onClick={() => {
-                          const r = bikeRiderFor(bikeDraft);
-                          if (!r || !(r.name || "").trim()) { alert("Pick or create a rider profile first, so viewers know who they're following."); return; }
-                          if (bikeSnapping > 0) { alert("Still routing the last leg — give it a second and save again."); return; }
-                          // A snapped course can run to thousands of points; viewers
-                          // download this, so simplify before it's stored.
-                          let toSave = bikeDraft;
-                          if ((bikeDraft.route || []).length > BIKE_ROUTE_MAX_PTS) {
-                            const { points, toleranceM } = bikeSimplifyTo(bikeDraft.route, BIKE_ROUTE_MAX_PTS, BIKE_ROUTE_TOL_M);
-                            toSave = { ...bikeDraft, route: points,
-                              routeMeta: { ...(bikeDraft.routeMeta || {}), points: points.length, toleranceM } };
-                          }
-                          const rest = bikeFeedList.filter(f => f.code !== bikeDraft.code);
-                          persistBikeFeeds([...rest, toSave]);
-                          publishBikeMeta(toSave);
-                          setBikeDraft(null);   // back to the chooser next time Setup opens
-                          setBikeView("home");
-                        }} style={btnStyle("#04613F")}>Save &amp; Publish</button>
-                        <button onClick={() => { setBikeDraft(null); setBikeView("home"); }}
-                          style={btnStyle("#3D434B", true)}>Cancel</button>
+                        </>)}
+                        {st === 5 && (<>
+                      <div style={S.card}>
+                        <div style={{ ...S.row, justifyContent:"space-between" }}>
+                          <div style={{ ...S.label, marginBottom:0 }}>Follow code</div>
+                          <div style={{ fontFamily:"monospace", fontSize:22, letterSpacing:1.2, color:"#8A5A00" }}>{bikeDraft.code}</div>
+                        </div>
+                        <div style={{ fontSize:14, color:"#3D434B", marginTop:8, wordBreak:"break-all" }}>{shareLink(bikeDraft.code)}</div>
                       </div>
-                    </div>
-                  ))}
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                            {summaries.slice(0, 4).map((x, i) => (
+                              <div key={i} style={rowStyle(x.done ? TM.bike : TM.line)}>
+                                <div style={{ fontSize: 17, fontWeight: 800 }}>{x.title}</div>
+                                <div style={TM_CAPTION}>{x.summary}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <button onClick={() => { setBikeDraft(null); setView("myraces"); }}
+                            style={{ ...btnStyle(TM.ink, true), marginTop: 14 }}>Cancel — don't save</button>
+                        </>)}
+                      </WizardFrame>
+                    );
+                  })())}
 
                   {/* ─── RIDE (rider's own phone) ─────────────────────────────── */}
                   {bikeView === "ride" && (
