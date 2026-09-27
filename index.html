@@ -6889,7 +6889,8 @@
               );
             })()}
 
-            <div style={{ maxWidth: 640, margin: "0 auto", padding: "16px 16px 60px" }}>
+            {/* Swim, bike, lane and meet-viewer screens render outside this column, so it collapses there. */}
+            <div style={{ maxWidth: 640, margin: "0 auto", padding: ["swim","bike","swimlane","swimwatch"].includes(view) ? 0 : "16px 16px 60px" }}>
 
               {/* STOPWATCH — the Race screen, plus anywhere else *while it's running*,
                   so stepping back to Setup mid-race never hides the clock. It no
@@ -6928,7 +6929,7 @@
                 const openSwim = (meet) => {
                   selectMode("swim");
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id });
-                  setSwimLiveCode(null); setSwimHomeSection(null);
+                  setSwimLiveCode(null); setSwimHomeSection(null); setSwimSetupStep(0);
                   setView("swim"); setSwimView("setup");
                 };
                 const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f }); setView("bike"); setBikeView("setup"); };
@@ -10244,6 +10245,7 @@
                 function loadSwimMeet(meet) {
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id });
                   setSwimLiveCode(null);
+                  setSwimSetupStep(0);
                   setSwimView("setup");
                   setSwimHomeSection(null);
                 }
@@ -10473,21 +10475,16 @@
                 const heatIndex  = activeEv ? activeEv.heats.findIndex(h => h.heatNum === swimActiveHeat) : -1;
 
                 const S = { // shared styles
-                  card: { background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 },
-                  label: { fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:4 },
-                  input: { background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" },
+                  card: { background:"#FFFFFF", border:`2px solid ${TM.line}`, borderRadius:6, padding:"16px", marginBottom:12 },
+                  label: { ...TM_LABEL },
+                  input: { background:"#FFFFFF", border:`2px solid ${TM.line}`, borderRadius:6, padding:"10px 14px", color:TM.ink, outline:"none", width:"100%", boxSizing:"border-box" },
                   row: { display:"flex", gap:8, alignItems:"center" }
                 };
 
-                const swimTabStyle = (active) => ({
-                  padding:"8px 16px", fontSize:14, fontWeight:700, letterSpacing:1, textTransform:"uppercase",
-                  background: active ? "#EFEDE8" : "transparent",
-                  border: active ? "2px solid #C9C5BC" : "2px solid #C9C5BC",
-                  borderRadius:6, color: active ? "#0B3FCC" : "#3D434B", cursor:"pointer"
-                });
+                const swimTabStyle = (active) => ({ ...segStyle(active), flex: "0 0 auto", padding: "0 16px" });
 
                 return (
-                  <div style={{ paddingTop: 8, maxWidth: 600, margin: "0 auto" }}>
+                  <div style={{ padding: "16px 16px 60px", maxWidth: 640, margin: "0 auto" }}>
 
                     {/* Sub-nav (only shown in triathlon mode; swim mode uses top-level nav) */}
                     {appMode !== "swim" && (
@@ -10516,7 +10513,7 @@
                             if (hasWork) { setSwimConfirmNewMeet(true); return; }
                             setSwimMeet({ meetName:"", pool:"25y", events:[] });
                             setSwimLiveCode(null);
-                            setSwimView("setup");
+                            setSwimSetupStep(1); setSwimView("setup");
                           }}
                             style={{ background:"#EFEDE8", border:"2px solid #04613F", borderRadius:8, padding:"22px 24px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:18 }}>
                             <div style={{ fontSize:40, lineHeight:1 }}>🏊</div>
@@ -10603,35 +10600,50 @@
                       </div>
                     )}
 
-                    {/* ── SETUP ── */}
-                    {swimView === "setup" && (
-                      <div>
-                        {/* Meet header */}
-                        <div style={S.card}>
-                          <div style={S.label}>Meet Name</div>
-                          <input style={S.input} value={swimMeet.meetName}
-                            onChange={e => setSwimMeet(m => ({...m, meetName: e.target.value}))}
-                            placeholder="e.g. Summer Invitational 2025" />
-                          <div style={{...S.label, marginTop:12}}>Pool / Course</div>
-                          <div style={{ display:"flex", gap:8 }}>
-                            {["25y","25m","50m"].map(p => (
-                              <button key={p} onClick={() => setSwimMeet(m => ({...m, pool: p}))}
-                                style={{ padding:"6px 16px", borderRadius:4, fontSize:14, fontWeight:700, border:"2px solid #C9C5BC", background: swimMeet.pool === p ? "#EFEDE8" : "transparent", color: swimMeet.pool === p ? "#0B3FCC" : "#3D434B", cursor:"pointer" }}>
-                                {p}
-                              </button>
-                            ))}
-                          </div>
-                          <div style={{...S.label, marginTop:12}}>Lanes per Pool</div>
-                          <div style={{ display:"flex", gap:6 }}>
-                            {[4,6,8,10].map(n => (
-                              <button key={n} onClick={() => setSwimMeet(m => ({...m, lanes:n}))}
-                                style={{ padding:"6px 14px", borderRadius:4, fontSize:14, fontWeight:700, border:"2px solid #C9C5BC", background: (swimMeet.lanes||8) === n ? "#EFEDE8" : "transparent", color: (swimMeet.lanes||8) === n ? "#0B3FCC" : "#3D434B", cursor:"pointer" }}>
-                                {n}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
+                    {/* ── SETUP — the same five-step wizard as the triathlon ── */}
+                    {swimView === "setup" && (() => {
+                      const SWIM_STEPS = ["What kind of race?", "Pool & lanes", "Events & heats", "Who's swimming?", "Save & start"];
+                      const st = swimSetupStep;
+                      const nEntries = (swimMeet.meetEntries || []).length;
+                      const nEvents = swimMeet.events.length;
+                      const summaries = [
+                        { title: SWIM_STEPS[0], done: !!swimMeet.meetName, summary: `Swim meet · ${swimMeet.meetName || "no name yet"}` },
+                        { title: SWIM_STEPS[1], done: true, summary: `${swimMeet.pool || "25y"} · ${swimMeet.lanes || 8} lanes` },
+                        { title: SWIM_STEPS[2], done: nEvents > 0, summary: nEvents ? `${nEvents} event${nEvents !== 1 ? "s" : ""}` : "No events yet" },
+                        { title: SWIM_STEPS[3], done: nEntries > 0, summary: nEntries ? `${nEntries} swimmer${nEntries !== 1 ? "s" : ""}` : "Nobody entered yet" },
+                        { title: SWIM_STEPS[4], done: !!swimMeet._id, summary: swimMeet._id ? "Saved" : "Not saved yet" },
+                      ];
+                      const choice = (on) => ({ flex: 1, minHeight: 56, borderRadius: 6, fontWeight: 900, fontSize: 20, cursor: "pointer",
+                        background: on ? "#FFFFFF" : "transparent", color: on ? TM.swim : "#FFFFFF", border: "2px solid #FFFFFF",
+                        fontVariantNumeric: "tabular-nums" });
+                      const content = (
+                        <>
+                          {st === 1 && (
+                            <RaceKindStep kind="swim" name={swimMeet.meetName} nameId="swim-meet-name"
+                              onName={v => setSwimMeet(m => ({ ...m, meetName: v }))}
+                              onKind={k => { if (k !== "swim") startRaceOfKind(k, swimMeet.meetName); }}
+                              lockedHint="Picking a different kind starts a new race of that kind. This meet stays open." />
+                          )}
+                          {st === 2 && (
+                            <div style={{ marginLeft: -16, marginRight: -16, background: TM.swim, color: "#FFFFFF", padding: "20px 20px 24px" }}>
+                              <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase" }}>Pool / course</div>
+                              <div role="radiogroup" aria-label="Pool" style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                {["25y","25m","50m"].map(pl => (
+                                  <button key={pl} role="radio" aria-checked={swimMeet.pool === pl}
+                                    onClick={() => setSwimMeet(m => ({ ...m, pool: pl }))} style={choice(swimMeet.pool === pl)}>{pl}</button>
+                                ))}
+                              </div>
+                              <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginTop: 22 }}>Lanes</div>
+                              <div role="radiogroup" aria-label="Lanes" style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                {[4,6,8,10].map(n => (
+                                  <button key={n} role="radio" aria-checked={(swimMeet.lanes || 8) === n}
+                                    onClick={() => setSwimMeet(m => ({ ...m, lanes: n }))} style={choice((swimMeet.lanes || 8) === n)}>{n}</button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {st === 3 && (
+                            <>
                         {/* Import */}
                         <div style={S.card}>
                           <div style={S.label}>Import Meet File</div>
@@ -10824,6 +10836,10 @@
                           )}
                         </div>
 
+                            </>
+                          )}
+                          {st === 4 && (
+                            <>
                         {/* ── Meet Roster ── */}
                         <div style={S.card}>
                           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: swimRosterOpen || (swimMeet.meetEntries||[]).length > 0 ? 10 : 0 }}>
@@ -10957,21 +10973,49 @@
                           )}
                         </div>
 
-                        {/* Save meet to archive */}
-                        {swimMeet.events.length > 0 && (
-                          <div style={{ display:"flex", gap:8, marginTop:4 }}>
-                            <button style={{ ...btnStyle("#04613F"), padding:"8px 18px", fontSize:14 }}
-                              onClick={() => { saveCurentMeet(); alert("Meet saved!"); }}>
-                              💾 Save Meet
-                            </button>
-                            <button style={{ ...btnStyle("#8A5A00"), flex:1 }}
-                              onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>
-                              💾 Save Meet to Archive
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                            </>
+                          )}
+                          {st === 5 && (
+                            <div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                {summaries.slice(0, 4).map((x, i) => (
+                                  <div key={i} style={{ ...rowStyle(x.done ? TM.swim : TM.line) }}>
+                                    <div style={{ fontSize: 17, fontWeight: 800 }}>{x.title}</div>
+                                    <div style={TM_CAPTION}>{x.summary}</div>
+                                  </div>
+                                ))}
+                              </div>
+                              <div style={{ display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap" }}>
+                                <button style={{ ...btnStyle(TM.ink, true), flex: 1 }} disabled={nEvents === 0}
+                                  onClick={() => { saveCurentMeet(); alert("Meet saved!"); }}>Save meet</button>
+                                <button style={{ ...btnStyle(TM.ink, true), flex: 1 }} disabled={nEvents === 0}
+                                  onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>Save to archive</button>
+                              </div>
+                              {nEvents === 0 && <div style={{ ...TM_CAPTION, marginTop: 8 }}>Add at least one event (step 3) before saving.</div>}
+                            </div>
+                          )}
+                        </>
+                      );
+                      if (st === 0) {
+                        return (
+                          <WizardStepList heading="Meet setup" subheading={swimMeet.meetName || "Swim meet"} steps={summaries} onJump={setSwimSetupStep}>
+                            <button onClick={() => setSwimView("race")} disabled={nEvents === 0}
+                              style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24, opacity: nEvents === 0 ? 0.45 : 1 }}>Go to race →</button>
+                          </WizardStepList>
+                        );
+                      }
+                      return (
+                        <WizardFrame step={st} titles={SWIM_STEPS} title={SWIM_STEPS[st - 1]}
+                          onJump={setSwimSetupStep} onList={() => setSwimSetupStep(0)}
+                          onBack={st > 1 ? () => setSwimSetupStep(st - 1) : () => setView("myraces")}
+                          onNext={st === 5 ? () => setSwimView("race") : () => setSwimSetupStep(st + 1)}
+                          nextLabel={st === 5 ? "Go to race →" : "Next →"}
+                          nextDisabled={st === 5 && nEvents === 0}
+                          nextHint={st === 5 ? (nEvents ? `${nEvents} event${nEvents !== 1 ? "s" : ""} ready` : "Add an event first") : null}>
+                          {content}
+                        </WizardFrame>
+                      );
+                    })()}
 
                     {/* ── RACE ── */}
                     {swimView === "race" && (
@@ -10979,7 +11023,7 @@
                         {!activeEv || !activeHt ? (
                           <div style={{ textAlign:"center", padding:"40px 0" }}>
                             <div style={{ color:"#3D434B", marginBottom:16 }}>No heat selected. Go to Setup to start a heat.</div>
-                            <button style={btnStyle("#04613F")} onClick={() => setSwimView("setup")}>← Back to Setup</button>
+                            <button style={btnStyle("#04613F")} onClick={() => { setSwimSetupStep(0); setSwimView("setup"); }}>← Back to Setup</button>
                           </div>
                         ) : (
                           <div>
@@ -11138,7 +11182,7 @@
 
                             {/* Footer buttons */}
                             <div style={{ display:"flex", gap:10, marginTop:16 }}>
-                              <button onClick={() => { setSwimView("setup"); }}
+                              <button onClick={() => { setSwimSetupStep(0); setSwimView("setup"); }}
                                 style={{ ...btnStyle("#04613F", true), flex:1, fontSize:14 }}>
                                 ← Back to Setup
                               </button>
@@ -11563,11 +11607,11 @@
                           {swimMeet.meetName ? `"${swimMeet.meetName}"` : "This meet"} has unsaved changes. Save it before starting a new one?
                         </div>
                         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                          <button onClick={() => { saveCurentMeet(); setSwimConfirmNewMeet(false); setSwimMeet({ meetName:"", pool:"25y", events:[] }); setSwimLiveCode(null); setSwimView("setup"); }}
+                          <button onClick={() => { saveCurentMeet(); setSwimConfirmNewMeet(false); setSwimMeet({ meetName:"", pool:"25y", events:[] }); setSwimSetupStep(1); setSwimLiveCode(null); setSwimView("setup"); }}
                             style={{ ...btnStyle("#8A5A00"), padding:"11px", fontSize:14 }}>
                             💾 Save &amp; New Meet
                           </button>
-                          <button onClick={() => { setSwimConfirmNewMeet(false); setSwimMeet({ meetName:"", pool:"25y", events:[] }); setSwimLiveCode(null); setSwimView("setup"); }}
+                          <button onClick={() => { setSwimConfirmNewMeet(false); setSwimMeet({ meetName:"", pool:"25y", events:[] }); setSwimSetupStep(1); setSwimLiveCode(null); setSwimView("setup"); }}
                             style={{ ...btnStyle("#B3001B", true), padding:"11px", fontSize:14 }}>
                             Discard &amp; New Meet
                           </button>
@@ -11997,9 +12041,9 @@
             {/* ══ BIKE LIVE FEED ══════════════════════════════════════════════ */}
             {view === "bike" && (() => {
               const S = {
-                card:  { background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 },
-                label: { fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#8A5A00", marginBottom:6 },
-                input: { background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" },
+                card:  { background:"#FFFFFF", border:`2px solid ${TM.line}`, borderRadius:6, padding:"16px", marginBottom:12 },
+                label: { ...TM_LABEL },
+                input: { background:"#FFFFFF", border:`2px solid ${TM.line}`, borderRadius:6, padding:"10px 14px", color:TM.ink, outline:"none", width:"100%", boxSizing:"border-box" },
                 row:   { display:"flex", gap:8, alignItems:"center" },
               };
               const M_PER_MI = 1609.344;
@@ -12034,7 +12078,7 @@
               );
 
               return (
-                <div>
+                <div style={{ padding: "16px 16px 60px", maxWidth: 640, margin: "0 auto" }}>
                   {/* ─── RIDES (home) ─────────────────────────────────────────── */}
                   {bikeView === "home" && (
                     <div>
