@@ -3659,15 +3659,42 @@
         }
         function pauseClock()  { setClockRunning(false); }
         function resumeClock() { setClockRunning(true); }
-        function resetClock()  { setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0); }
+        // The live race keeps its own copy of the clock, and the sync effects only
+        // push while the clock is started — so a reset has to write it explicitly,
+        // or watchers keep the old time and a reload brings it straight back.
+        function resetClock() {
+          setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0);
+          if (liveRaceCode) {
+            rtdb.ref("liveRaces/" + liveRaceCode)
+              .update({ clockMs: 0, clockRunning: false, clockStarted: false, updatedAt: Date.now() })
+              .catch(console.error);
+          }
+        }
 
+        // Clears every time but keeps the roster as it is — names, bibs, emails,
+        // courses and sign-up links — so a test run can be followed by another.
         function resetTimers() {
           archiveSessionRef.current = null;
-          setAthletes(a => a.map(ath => ({ ...freshAthlete(ath.name, ath.id), gender: ath.gender || "Male", ageGroup: ath.ageGroup || ageGroups[0] || "9-10", dob: ath.dob || "", courseId: ath.courseId || courses[0]?.id || null })));
+          const blank = Array(SEGMENTS.length).fill(null);
+          setAthletes(a => a.map(ath => ({ ...ath, splits: blank.slice(), startOffset: null, started: false, finished: false })));
           resetClock();
+          if (liveRaceCode) {
+            // Clear the published times too, plus each phone's GPS distance and lap
+            // count, which the athlete app would otherwise resume from.
+            const updates = { updatedAt: Date.now() };
+            athletes.forEach((_, i) => {
+              updates[`athletes/${i}/splits`] = null;
+              updates[`athletes/${i}/startOffset`] = null;
+              updates[`athletes/${i}/started`] = false;
+              updates[`athletes/${i}/finished`] = false;
+              updates[`athletes/${i}/gps`] = null;
+            });
+            rtdb.ref("liveRaces/" + liveRaceCode).update(updates).catch(console.error);
+          }
+          athleteTrackRef.current = {};
+          setAthleteGps({});
           setResetConfirm(false);
           setEditTarget(null);
-          setView("setup");
         }
 
         function persistRaces(races) {
@@ -7070,15 +7097,20 @@
                       : <button onClick={resumeClock} style={btnStyle("#04613F")}>Resume</button>
                   }
                   <button onClick={resetClock} title="Put the clock back to zero — athlete times are untouched"
-                    style={btnStyle("#3D434B", true)}>Clock to Zero</button>
+                    style={btnStyle(TM.ink, true)}>Clock to zero</button>
                   {!resetConfirm
-                    ? <button onClick={() => setResetConfirm(true)} title="Wipe every recorded split but keep the roster"
-                        style={btnStyle("#04613F", true)}>Clear All Times</button>
+                    ? <button onClick={() => setResetConfirm(true)} title="Clear every time and the clock; keep the roster"
+                        style={btnStyle(TM.live, true)}>Reset all times</button>
                     : (
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <span style={{ fontSize: 14, color: "#04613F" }}>Keep names, clear all times?</span>
-                        <button onClick={resetTimers} style={{ ...btnStyle("#04613F"), padding: "6px 12px", fontSize: 14 }}>Yes</button>
-                        <button onClick={() => setResetConfirm(false)} style={{ ...btnStyle("#3D434B", true), padding: "6px 12px", fontSize: 14 }}>No</button>
+                      <div role="alertdialog" aria-label="Reset all times" style={{ ...rowStyle(TM.live), width: "100%", textAlign: "left" }}>
+                        <div style={{ fontSize: 17, fontWeight: 800 }}>Clear every time and put the clock to zero?</div>
+                        <div style={TM_CAPTION}>
+                          Names, bibs and emails stay.{liveRaceCode ? " Watchers and athletes' phones will see the times clear too." : ""}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          <button onClick={resetTimers} style={{ ...btnStyle(TM.live), flex: 1 }}>Yes, reset</button>
+                          <button onClick={() => setResetConfirm(false)} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Keep times</button>
+                        </div>
                       </div>
                     )
                   }
