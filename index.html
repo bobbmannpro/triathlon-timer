@@ -1123,6 +1123,30 @@
         return last !== null ? last : null;
       }
 
+      // Firebase doesn't store empty lists, and can hand a list back as an object,
+      // so a race saved with no athletes comes back with no "athletes" at all.
+      // Everything that reads saved races and meets goes through these first.
+      function asList(x) {
+        if (Array.isArray(x)) return x.filter(v => v != null);
+        return (x && typeof x === "object") ? Object.values(x).filter(v => v != null) : [];
+      }
+      function normSavedRaces(list) {
+        return asList(list).map(r => {
+          const courses = asList(r.courses), ageGroups = asList(r.ageGroups);
+          return { ...r,
+            athletes: asList(r.athletes).map(a => ({ ...a, name: a.name || "" })),
+            courses: courses.length ? courses : undefined,
+            ageGroups: ageGroups.length ? ageGroups : undefined,
+            waypoints: r.waypoints ? asList(r.waypoints) : undefined,
+            oldCodes: asList(r.oldCodes) };
+        });
+      }
+      function normSavedMeets(list) {
+        return asList(list).map(m => ({ ...m,
+          events: asList(m.events).map(ev => ({ ...ev, heats: asList(ev.heats).map(h => ({ ...h, lanes: asList(h.lanes) })) })),
+          meetEntries: asList(m.meetEntries) }));
+      }
+
       function freshAthlete(name = "", id = Date.now(), gender = "Male", ageGroup = "9-10", courseId = null) {
         const parts = name.trim().split(" ");
         const firstName = parts[0] || "";
@@ -1716,9 +1740,10 @@
         }, []);
 
         // Saved race presets (persisted to localStorage + RTDB)
-        const [savedRaces, setSavedRaces] = useState(() => {
-          try { return JSON.parse(localStorage.getItem("tri-saved-races") || "[]"); } catch { return []; }
+        const [savedRaces, setSavedRacesRaw] = useState(() => {
+          try { return normSavedRaces(JSON.parse(localStorage.getItem("tri-saved-races") || "[]")); } catch { return []; }
         });
+        const setSavedRaces = (v) => setSavedRacesRaw(prev => normSavedRaces(typeof v === "function" ? v(prev) : v));
         const [saveRaceName, setSaveRaceName] = useState("");
         const [deleteConfirm, setDeleteConfirm] = useState(null);
         const [showSaveBeforeReg, setShowSaveBeforeReg] = useState(false);
@@ -2332,9 +2357,10 @@
         const [swimArchive, setSwimArchive] = useState(() => {
           try { return JSON.parse(localStorage.getItem("swim-archive") || "[]"); } catch { return []; }
         });
-        const [swimSavedMeets, setSwimSavedMeets] = useState(() => {
-          try { return JSON.parse(localStorage.getItem("swim-saved-meets") || "[]"); } catch { return []; }
+        const [swimSavedMeets, setSwimSavedMeetsRaw] = useState(() => {
+          try { return normSavedMeets(JSON.parse(localStorage.getItem("swim-saved-meets") || "[]")); } catch { return []; }
         });
+        const setSwimSavedMeets = (v) => setSwimSavedMeetsRaw(prev => normSavedMeets(typeof v === "function" ? v(prev) : v));
         const [swimHomeSection, setSwimHomeSection] = useState(null);
         const [swimDeleteMeetConfirm, setSwimDeleteMeetConfirm] = useState(null);
         const [swimShowSaveBefore, setSwimShowSaveBefore] = useState(false);
@@ -3128,7 +3154,7 @@
                 if (data.races && data.races.length > 0) {
                   setSavedRaces(data.races); localStorage.setItem("tri-saved-races", JSON.stringify(data.races));
                 } else {
-                  try { const c = localStorage.getItem("tri-saved-races"); if (c) { const r = JSON.parse(c); if (r.length > 0) { setSavedRaces(r); rtdb.ref("users/" + user.uid + "/races").set(r).catch(console.error); } } } catch(_) {}
+                  try { const c = localStorage.getItem("tri-saved-races"); if (c) { const r = normSavedRaces(JSON.parse(c)); if (r.length > 0) { setSavedRaces(r); rtdb.ref("users/" + user.uid + "/races").set(r).catch(console.error); } } } catch(_) {}
                 }
 
                 // Athletes: RTDB → localStorage fallback, then push local up to RTDB if missing
@@ -3318,7 +3344,7 @@
           if (registrationCode && !liveRaceCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error); unlistRace(registrationCode);
           if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/status").set("closed").catch(console.error); unlistRace(liveRaceCode);
           setAthletes([freshAthlete()]);
-          resetClock();
+          clearClockLocal();
           setRegistrationCode(null);
           setRegistrationOpen(false);
           setLiveRaceCode(null);
@@ -3724,6 +3750,10 @@
         // The live race keeps its own copy of the clock, and the sync effects only
         // push while the clock is started — so a reset has to write it explicitly,
         // or watchers keep the old time and a reload brings it straight back.
+        // Just this screen's clock — for opening or starting a race, where writing
+        // zero to a live race would wipe the clock everyone's watching.
+        function clearClockLocal() { setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0); }
+
         function resetClock() {
           setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0);
           if (liveRaceCode) {
@@ -3820,6 +3850,9 @@
           mergeAthletesToLibrary(athletes);
         }
         async function loadRace(race) {
+          // Opening a different race lets go of whichever race was live, so its
+          // clock and roster can't be overwritten by this one.
+          if (liveRaceCode && liveRaceCode !== race.code) setLiveRaceCode(null);
           setLoadedRaceId(race.id);
           if (race.code) setRegistrationCode(race.code); else setRegistrationCode(null);
           setCustomRaceCode(race.code || race.plannedCode || friendlyCode());
@@ -3845,8 +3878,9 @@
           const loadedAgeGroups = race.ageGroups || DEFAULT_AGE_GROUPS;
           setCourses(loadedCourses);
           setAgeGroups(loadedAgeGroups);
-          setAthletes(race.athletes.map((a, i) => {
-            const base = freshAthlete(a.name, i + 1);
+          const savedAthletes_ = asList(race.athletes);
+          setAthletes((savedAthletes_.length ? savedAthletes_ : [{ name: "" }]).map((a, i) => {
+            const base = freshAthlete(a.name || "", i + 1);
             return {
               ...base,
               firstName: a.firstName !== undefined ? a.firstName : base.firstName,
@@ -3892,14 +3926,14 @@
                     finished: a.finished || false
                   }));
                   if (liveAthletes.length > 0) setAthletes(liveAthletes);
-                  setView("race");
+                  setSetupStep(0); setView("setup");
                   return;
                 }
               }
             } catch(e) { console.error(e); }
           }
 
-          resetClock();
+          clearClockLocal();
           setSetupStep(0); setView("setup");
         }
 
@@ -4206,7 +4240,7 @@
           if (registrationCode && !liveRaceCode) rtdb.ref("liveRaces/" + registrationCode + "/status").set("closed").catch(console.error); unlistRace(registrationCode);
           if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/status").set("closed").catch(console.error); unlistRace(liveRaceCode);
           setAthletes([freshAthlete()]);
-          resetClock();
+          clearClockLocal();
           setCourses([{ id: 1, name: "Sprint", swimYards: 100, bikeMiles: 6, runMiles: 1.5, bikeType: "gps" }]);
           setWaypoints(DEFAULT_WAYPOINTS);
           setRaceRoutes({ swim: [], bike: [], run: [] });
@@ -7363,14 +7397,14 @@
                 const openTri = (race) => { selectMode("triathlon"); loadRace(race); };
                 const openSwim = (meet) => {
                   selectMode("swim");
-                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id, code: meet.code || friendlyCode() });
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode() });
                   setSwimLiveCode(null); setSwimHomeSection(null); setSwimSetupStep(0);
                   setView("swim"); setSwimView("setup");
                 };
                 const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); setView("bike"); setBikeView("setup"); };
                 const saved = [
                   ...savedRaces.map(r => ({ key: "t" + r.id, kind: "triathlon", name: r.name || "Untitled race",
-                    meta: `${r.athletes.length} athlete${r.athletes.length !== 1 ? "s" : ""} · saved ${r.savedAt || ""}`,
+                    meta: `${asList(r.athletes).length} athlete${asList(r.athletes).length !== 1 ? "s" : ""} · saved ${r.savedAt || ""}`,
                     open: () => openTri(r), del: () => deleteRace(r.id) })),
                   ...swimSavedMeets.map(m => ({ key: "s" + m.id, kind: "swim", name: m.meetName || "Untitled meet",
                     meta: `${(m.events || []).length} event${(m.events || []).length !== 1 ? "s" : ""} · ${m.pool || ""}`,
@@ -10855,7 +10889,7 @@
                   setSwimLiveCode(code);
                 }
                 function loadSwimMeet(meet) {
-                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, events: meet.events, _id: meet.id, code: meet.code || friendlyCode() });
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode() });
                   setSwimLiveCode(null);
                   setSwimSetupStep(0);
                   setSwimView("setup");
@@ -11156,7 +11190,7 @@
                                 <div key={meet.id} style={{ background:"#EFEDE8", borderRadius:6, padding:"10px 12px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
                                   <div style={{ minWidth:0 }}>
                                     <div style={{ fontWeight:700, fontSize:14, color:"#0B0D10" }}>{meet.meetName}</div>
-                                    <div style={{ fontSize:14, color:"#3D434B" }}>{meet.pool} · {meet.events.length} events · {meet.savedAt}</div>
+                                    <div style={{ fontSize:14, color:"#3D434B" }}>{meet.pool} · {asList(meet.events).length} events · {meet.savedAt}</div>
                                   </div>
                                   <div style={{ display:"flex", gap:6, flexShrink:0 }}>
                                     <button onClick={() => loadSwimMeet(meet)} style={{ ...btnStyle("#8A5A00"), padding:"5px 14px", fontSize:14 }}>Load</button>
