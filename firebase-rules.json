@@ -22,6 +22,14 @@
         "clockMs": {
           ".read": "root.child('liveRaces').child($code).child('status').val() === 'live'"
         },
+        "lapTaps": {
+          "$idx": {
+            "$tap": {
+              ".write": "auth != null && root.child('liveRaces').child($code).child('status').val() === 'live' && ((!data.exists() && newData.child('by').val() === auth.uid) || (data.exists() && !newData.exists() && data.child('by').val() === auth.uid))",
+              ".validate": "newData.hasChildren(['c', 'by']) && newData.child('c').isNumber()"
+            }
+          }
+        },
         "athletes": {
           "$idx": {
             "gps": {
