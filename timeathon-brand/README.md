@@ -1,3 +1,5 @@
+> **Superseded:** the app now uses the "Sunlight" palette (white ground, ink text, cobalt/orange/green disciplines). See `css/theme.css` for the current tokens; the icons in `icons/` and `assets/` are already updated. The navy/cyan palette described below is retired.
+
 # Timeathon — Brand Package
 
 Drop-in logo, icon, and theme assets for the Timeathon app

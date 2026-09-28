@@ -71,7 +71,13 @@
         font-size: 16px !important; min-height: 46px;
       }
       input[type="number"] { font-size: 28px !important; font-weight: 800 !important;
-                             font-variant-numeric: tabular-nums; min-height: 46px; padding-top: 4px !important; padding-bottom: 4px !important; }
+                             font-variant-numeric: tabular-nums; min-height: 46px; padding-top: 4px !important; padding-bottom: 4px !important;
+                             /* Three 28px digits always fit, whatever width an inline style asks for. */
+                             min-width: 78px; appearance: textfield; -moz-appearance: textfield; }
+      /* Desktop spin arrows eat ~15px of a narrow box and are too small to tap
+         with wet hands anyway — everyone types the number. */
+      input[type="number"]::-webkit-inner-spin-button,
+      input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
       input[type="checkbox"], input[type="radio"] { min-height: 0; width: 22px; height: 22px;
                                                     accent-color: var(--tm-ink); }
       input[type="range"], input[type="file"], input[type="color"] { min-height: 0; accent-color: var(--tm-ink); }
@@ -8218,13 +8224,13 @@
                             setManualAthletes(prev => prev.map(a => a.id === ma.id ? { ...a, firstName: fn, name: `${fn} ${a.lastName}`.trim() } : a));
                             setManualResults(null);
                           }} placeholder="First"
-                            style={{ flex: 1, minWidth: 0, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 8px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
+                            style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 8px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
                           <input value={ma.lastName} onChange={e => {
                             const ln = e.target.value;
                             setManualAthletes(prev => prev.map(a => a.id === ma.id ? { ...a, lastName: ln, name: `${a.firstName} ${ln}`.trim() } : a));
                             setManualResults(null);
                           }} placeholder="Last"
-                            style={{ flex: 1, minWidth: 0, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 8px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
+                            style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 8px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
                           <button onClick={() => removeManualAth(ma.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
                         </div>
                         <div style={{ display: "flex", gap: 8, marginLeft: 38, flexWrap: "wrap", marginBottom: 6 }}>
@@ -8261,7 +8267,7 @@
                                     <label style={{ fontSize: 14, color: col, letterSpacing: 1, fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>{seg}</label>
                                     <input value={ma.segs[si]} onChange={e => updateManualSeg(ma.id, si, e.target.value)} placeholder={splitPlaceholder}
                                       title="Segment split time (MM:SS)"
-                                      style={{ background: "#EFEDE8", border: `2px solid ${segInvalid ? "#B3001B" : col + "44"}`, borderRadius: 4, padding: "5px 8px", color: "#0B0D10", fontSize: 14, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
+                                      style={{ background: "#FFFFFF", border: `2px solid ${segInvalid ? "#B3001B" : col + "44"}`, borderRadius: 4, padding: "5px 8px", color: "#0B0D10", fontSize: 14, width: 68, outline: "none", textAlign: "center", fontFamily: "monospace" }} />
                                     <input value={(ma.totals||[])[si] || ""} onChange={e => {
                                       const val = e.target.value;
                                       setManualAthletes(prev => prev.map(a => a.id === ma.id ? { ...a, totals: (a.totals || ["","","","",""]).map((t, i) => i === si ? val : t) } : a));
@@ -8658,10 +8664,10 @@
                       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                         <input value={regProfile.firstName} onChange={e => setRegProfile(p => ({ ...p, firstName: e.target.value }))}
                           placeholder="First name"
-                          style={{ flex: 1, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
+                          style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
                         <input value={regProfile.lastName} onChange={e => setRegProfile(p => ({ ...p, lastName: e.target.value }))}
                           placeholder="Last name"
-                          style={{ flex: 1, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
+                          style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
                       </div>
                       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
                         <select value={regProfile.gender} onChange={e => setRegProfile(p => ({ ...p, gender: e.target.value }))}
@@ -8682,7 +8688,7 @@
                           const dob = e.target.value;
                           const matched = resolveAgeGroup(dob, regRaceData.ageGroups || ageGroups);
                           setRegProfile(p => ({ ...p, dob, ageGroup: matched || p.ageGroup }));
-                        }} style={{ width: "100%", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none", colorScheme: "light", boxSizing: "border-box" }} />
+                        }} style={{ width: "100%", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none", colorScheme: "light", boxSizing: "border-box" }} />
                       </div>
                       {(regRaceData.courses || []).length > 1 && (
                         <div style={{ marginBottom: 8 }}>
@@ -9467,7 +9473,7 @@
                         <input value={spectatorCode} onChange={e => setSpectatorCode(normCode(e.target.value))}
                           onKeyDown={e => e.key === "Enter" && watchRace(spectatorCode)}
                           placeholder="RACE CODE" maxLength={12}
-                          style={{ width: "100%", boxSizing: "border-box", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
+                          style={{ width: "100%", boxSizing: "border-box", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
                         <button onClick={() => watchRace(spectatorCode)} disabled={liveRaceLoading}
                           style={{ width: "100%", background: "#0B3FCC", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#FFFFFF", cursor: "pointer", letterSpacing: 1 }}>
                           {liveRaceLoading ? "Connecting…" : "Watch Race"}
@@ -9488,7 +9494,7 @@
                         <input value={photoCodeInput} onChange={e => setPhotoCodeInput(normCode(e.target.value))}
                           onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                           placeholder="PHOTO CODE"
-                          style={{ width: "100%", boxSizing: "border-box", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
+                          style={{ width: "100%", boxSizing: "border-box", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
                         <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                           style={{ width: "100%", background: "#0B3FCC", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#FFFFFF", cursor: "pointer", letterSpacing: 1 }}>
                           View Photos
@@ -10112,17 +10118,17 @@
                               <>
                                 <input type="number" value={s.a} min={0} max={s.b - 1}
                                   onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
-                                  style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
+                                  style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                                 <span style={{ color: "#3D434B", fontSize: 14 }}>–</span>
                                 <input type="number" value={s.b} min={s.a + 1} max={199}
                                   onChange={e => update(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
-                                  style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
+                                  style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                               </>
                             ) : (
                               <>
                                 <input type="number" value={s.a} min={0} max={199}
                                   onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
-                                  style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
+                                  style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                                 <span style={{ fontSize: 14, color: "#3D434B" }}>{s.type === "under" ? "and under" : "and over"}</span>
                               </>
                             )}
@@ -10408,7 +10414,7 @@
                                                  { ...w, action: "split",  segIdx: parseInt(v.replace("seg_","")) }
                               ));
                             }}
-                            style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "2px 6px", fontSize: 14, color: "#0B0D10", outline: "none", cursor: "pointer", flexShrink: 0 }}>
+                            style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "2px 6px", fontSize: 14, color: "#0B0D10", outline: "none", cursor: "pointer", flexShrink: 0 }}>
                             <option value="start">Starts clock</option>
                             <option value="marker">Map only</option>
                             {SEGMENTS.map((seg, si) => <option key={si} value={`seg_${si}`}>Logs {seg}</option>)}
@@ -10432,7 +10438,7 @@
                             <span style={{ fontSize: 14, color: "#3D434B" }}>±</span>
                             <input type="number" min="5" max="500" value={wp.radiusM}
                               onChange={e => setWaypoints(wps => wps.map((w, i) => i === wi ? { ...w, radiusM: +e.target.value } : w))}
-                              style={{ width: 52, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 6px", color: "#0B0D10", fontSize: 14, outline: "none", textAlign: "center" }} />
+                              style={{ width: 52, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 6px", color: "#0B0D10", fontSize: 14, outline: "none", textAlign: "center" }} />
                             <span style={{ fontSize: 14, color: "#3D434B" }}>m</span>
                           </div>
                           {wp.lat != null

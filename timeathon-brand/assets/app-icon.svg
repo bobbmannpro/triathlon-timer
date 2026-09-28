@@ -1,26 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0A1628"/>
-      <stop offset="100%" stop-color="#0D2A4E"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00C6FF"/>
-      <stop offset="100%" stop-color="#00E5CC"/>
-    </linearGradient>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="12" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-  </defs>
-
-  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
-
-  <g transform="translate(512,512) scale(9)" filter="url(#glow)">
-    <path d="M-28 -34 L6 0" fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
-    <path d="M-28 0 L6 0"   fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
-    <path d="M-28 34 L6 0"  fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round"/>
-    <path d="M6 0 L40 0"    fill="none" stroke="url(#accent)" stroke-width="9" stroke-linecap="round"/>
-    <circle cx="6" cy="0" r="7.5" fill="#0A1628" stroke="url(#accent)" stroke-width="4"/>
-  </g>
+  <!-- Sunlight app icon: white ground, discipline lines, ink finish post.
+       Full bleed with the mark inside the maskable safe zone. -->
+  <rect width="1024" height="1024" fill="#FFFFFF"/>
+  <path d="M239.4 239.4 L512.0 512.0" fill="none" stroke="#0B3FCC" stroke-width="70.5" stroke-linecap="round"/>
+  <path d="M239.4 512.0 L512.0 512.0" fill="none" stroke="#B44A00" stroke-width="70.5" stroke-linecap="round"/>
+  <path d="M239.4 784.6 L512.0 512.0" fill="none" stroke="#04613F" stroke-width="70.5" stroke-linecap="round"/>
+  <path d="M512.0 512.0 L784.6 512.0" fill="none" stroke="#0B0D10" stroke-width="89.3" stroke-linecap="round"/>
+  <circle cx="512.0" cy="512.0" r="63.9" fill="#FFFFFF" stroke="#0B0D10" stroke-width="41.4"/>
 </svg>

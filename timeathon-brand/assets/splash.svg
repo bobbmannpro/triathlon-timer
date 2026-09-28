@@ -1,60 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1290 2796" width="1290" height="2796">
-  <defs>
-    <radialGradient id="bg" cx="50%" cy="42%" r="75%">
-      <stop offset="0%" stop-color="#0D2A4E"/>
-      <stop offset="100%" stop-color="#0A1628"/>
-    </radialGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#00C6FF"/>
-      <stop offset="100%" stop-color="#00E5CC"/>
-    </linearGradient>
-    <linearGradient id="word" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="72%" stop-color="#FFFFFF"/>
-      <stop offset="100%" stop-color="#00E5CC"/>
-    </linearGradient>
-    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="10" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-  </defs>
-
-  <rect width="1290" height="2796" fill="url(#bg)"/>
-
-  <!-- faint lane lines -->
-  <g opacity="0.05" stroke="#00E5CC" stroke-width="2">
-    <line x1="0" y1="1120" x2="1290" y2="1120"/>
-    <line x1="0" y1="1240" x2="1290" y2="1240"/>
-    <line x1="0" y1="1560" x2="1290" y2="1560"/>
-    <line x1="0" y1="1680" x2="1290" y2="1680"/>
-  </g>
-
-  <!-- mark -->
-  <g transform="translate(645,1180) scale(14)" filter="url(#glow)">
-    <path d="M-28 -34 L6 0" fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
-    <path d="M-28 0 L6 0"   fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
-    <path d="M-28 34 L6 0"  fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round"/>
-    <path d="M6 0 L40 0"    fill="none" stroke="url(#accent)" stroke-width="9" stroke-linecap="round"/>
-    <circle cx="6" cy="0" r="7.5" fill="#0A1628" stroke="url(#accent)" stroke-width="4"/>
-  </g>
-
-  <!-- wordmark -->
-  <text x="645" y="1560" text-anchor="middle"
-        font-family="'Arial Black','Franklin Gothic Heavy',Impact,sans-serif"
-        font-size="150" font-weight="900" letter-spacing="-6"
-        fill="url(#word)">TIMEATHON</text>
-
-  <rect x="345" y="1595" width="600" height="7" rx="3.5" fill="url(#accent)" opacity="0.85"/>
-
-  <text x="645" y="1660" text-anchor="middle"
-        font-family="Arial,Helvetica,sans-serif"
-        font-size="30" letter-spacing="7"
-        fill="#00E5CC" opacity="0.7">TRIATHLON Â· SWIM MEET Â· BIKE ROUTE</text>
-
-  <!-- loading dots -->
-  <g transform="translate(645,2360)" fill="#00E5CC">
-    <circle cx="-40" cy="0" r="9" opacity="0.35"/>
-    <circle cx="0" cy="0" r="9" opacity="0.65"/>
-    <circle cx="40" cy="0" r="9" opacity="1"/>
-  </g>
+  <rect width="1290" height="2796" fill="#FFFFFF"/>
+  <path d="M407.2 942.2 L645.0 1180.0" fill="none" stroke="#0B3FCC" stroke-width="61.5" stroke-linecap="round"/>
+  <path d="M407.2 1180.0 L645.0 1180.0" fill="none" stroke="#B44A00" stroke-width="61.5" stroke-linecap="round"/>
+  <path d="M407.2 1417.8 L645.0 1180.0" fill="none" stroke="#04613F" stroke-width="61.5" stroke-linecap="round"/>
+  <path d="M645.0 1180.0 L882.8 1180.0" fill="none" stroke="#0B0D10" stroke-width="77.9" stroke-linecap="round"/>
+  <circle cx="645.0" cy="1180.0" r="55.8" fill="#FFFFFF" stroke="#0B0D10" stroke-width="36.1"/>
+  <text x="645" y="1560" text-anchor="middle" font-family="Archivo,'Arial Black',Arial,sans-serif" font-size="150" font-weight="900" letter-spacing="-4" fill="#0B0D10">TIMEATHON</text>
+  <rect x="345" y="1600" width="200" height="22" fill="#0B3FCC"/><rect x="545" y="1600" width="200" height="22" fill="#B44A00"/><rect x="745" y="1600" width="200" height="22" fill="#04613F"/>
+  <text x="645" y="1700" text-anchor="middle" font-family="Archivo,Arial,sans-serif" font-size="48" font-weight="800" letter-spacing="6" fill="#3D434B">SWIM · BIKE · RUN</text>
 </svg>
