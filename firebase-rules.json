@@ -22,6 +22,12 @@
         "clockMs": {
           ".read": "root.child('liveRaces').child($code).child('status').val() === 'live'"
         },
+        "registrations": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && (root.child('liveRaces').child($code).child('status').val() === 'registration' || root.child('liveRaces').child($code).child('status').val() === 'live')",
+            ".validate": "newData.child('uid').val() === $uid"
+          }
+        },
         "lapTaps": {
           "$idx": {
             "$tap": {

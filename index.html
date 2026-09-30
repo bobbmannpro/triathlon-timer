@@ -1218,6 +1218,34 @@
           meetEntries: asList(m.meetEntries) }));
       }
 
+      // The roster as the race publishes it: who's racing, no times, no emails.
+      function rosterPayload(list) {
+        return list.map(a => ({
+          id: a.id, uid: a.uid || null, name: a.name || "", firstName: a.firstName || "", lastName: a.lastName || "",
+          gender: a.gender || "", ageGroup: a.ageGroup || "", courseId: a.courseId ?? null, dob: a.dob || null,
+          raceNumber: a.raceNumber ?? null,
+        }));
+      }
+      // Everyone in a race as an athlete's phone should show it: the host's
+      // published roster, plus anyone who has just signed up and hasn't been
+      // picked up by the host's screen yet (it may be closed). Order is stable:
+      // the roster first, then sign-ups by when they joined.
+      function rosterWithSignups(race) {
+        const base = [];
+        const raw = race && race.athletes;
+        if (Array.isArray(raw)) raw.forEach(a => { if (a) base.push(a); });
+        else if (raw && typeof raw === "object") Object.keys(raw).sort((x, y) => +x - +y).forEach(k => raw[k] && base.push(raw[k]));
+        const have = new Set(base.map(a => a.uid).filter(Boolean));
+        const regs = Object.values((race && race.registrations) || {})
+          .filter(r => r && r.uid && !have.has(r.uid))
+          .sort((x, y) => (x.joinedAt || 0) - (y.joinedAt || 0))
+          .map(r => ({ uid: r.uid, id: r.uid, name: r.name || `${r.firstName || ""} ${r.lastName || ""}`.trim(),
+                       firstName: r.firstName, lastName: r.lastName, gender: r.gender, ageGroup: r.ageGroup,
+                       courseId: r.courseId ?? null, raceNumber: null, started: false, finished: false, startOffset: null }));
+        return base.concat(regs).map(a => ({ ...a,
+          splits: Array.from({ length: SEGMENTS.length }, (_, i) => (a.splits && a.splits[i] != null) ? a.splits[i] : null) }));
+      }
+
       function freshAthlete(name = "", id = Date.now(), gender = "Male", ageGroup = "9-10", courseId = null) {
         const parts = name.trim().split(" ");
         const firstName = parts[0] || "";
@@ -2992,6 +3020,17 @@
           return { state: "lost", label: `Lost · ${ago}`, color: "#B3001B", ageMs: age, gps: g };
         }
 
+        // While sign-ups are open (and before going live) the published roster
+        // follows the host's: adds, removals, renames, bibs.
+        useEffect(() => {
+          // Only the host's own screen ever has sign-ups open.
+          if (!registrationOpen || !registrationCode || liveRaceCode) return;
+          const t = setTimeout(() => {
+            rtdb.ref("liveRaces/" + registrationCode + "/athletes").set(rosterPayload(athletes)).catch(console.error);
+          }, 800);
+          return () => clearTimeout(t);
+        }, [registrationOpen, registrationCode, liveRaceCode, athletes]);
+
         // Host-side bike finish — ends the bike leg when the rider's distance reaches
         // the course target: from the trainer, or from their phone's GPS miles.
         useEffect(() => {
@@ -3017,6 +3056,23 @@
             logSplit(i, 2);
           });
         }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps]);
+
+        // The roster can be rebuilt (host goes live, adds or removes people), which
+        // moves athletes around. A phone signed in as an athlete who's on the list
+        // follows their own entry by account; GPS restarts if it was writing to
+        // the old position.
+        const gpsTrackIdxRef = useRef(null);
+        useEffect(() => {
+          if (!joinRace || !currentUser || !joinLiveData) return;
+          const idx = rosterWithSignups(joinLiveData).findIndex(a => a.uid === currentUser.uid);
+          if (idx >= 0 && idx !== joinAthIdx) setJoinAthIdx(idx);
+        }, [joinLiveData, currentUser]);
+        useEffect(() => {
+          if (gpsWatchRef.current !== null && joinAthIdx !== null && gpsTrackIdxRef.current !== null && gpsTrackIdxRef.current !== joinAthIdx) {
+            stopGpsTracking();
+            setTimeout(() => startGpsTracking(), 0);
+          }
+        }, [joinAthIdx]);
 
         // Athlete live race data listener — subscribes to Firebase when athlete joins a race
         useEffect(() => {
@@ -3202,7 +3258,7 @@
         // Auto-trigger T2 split when trainer distance reaches the bike target
         useEffect(() => {
           if (!joinRace) return;
-          const myAth = joinRace.athletes?.[joinAthIdx];
+          const myAth = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx];
           const myCourse = (joinRace.courses || []).find(c => c.id === myAth?.courseId) || (joinRace.courses || [])[0];
           const liveCourse = (joinLiveData?.courses || []).find(c => c.id === myAth?.courseId) || (joinLiveData?.courses || [])[0];
           const coursebikeType = liveCourse?.bikeType || myCourse?.bikeType || "gps";
@@ -3492,13 +3548,24 @@
             setRegAthleteCount(entries.length);
             setAthletes(prev => {
               const existingUids = new Set(prev.map(a => a.uid).filter(Boolean));
-              const toAdd = entries.filter(r => !existingUids.has(r.uid)).map(r => ({
-                ...freshAthlete(`${r.firstName} ${r.lastName}`.trim(), r.uid, r.gender, r.ageGroup),
-                uid: r.uid,
-                dob: r.dob || "",
-                courseId: r.courseId || courses[0]?.id || null
-              }));
-              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+              const norm = (x) => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
+              let next = prev, changed = false;
+              let bib = Math.max(0, ...prev.map(a => a.raceNumber || 0));
+              entries.filter(r => r && r.uid && !existingUids.has(r.uid))
+                .sort((x, y) => (x.joinedAt || 0) - (y.joinedAt || 0))
+                .forEach(r => {
+                  const full = `${r.firstName || ""} ${r.lastName || ""}`.trim();
+                  // Already on the roster by name (the host typed them in)? Claim that entry.
+                  const at = next.findIndex(a => !a.uid && norm(athleteName(a) || a.name) === norm(full));
+                  if (at >= 0) {
+                    next = next.map((a, k) => k === at ? { ...a, uid: r.uid, dob: a.dob || r.dob || "", courseId: r.courseId || a.courseId } : a);
+                  } else {
+                    next = [...next, { ...freshAthlete(full, r.uid, r.gender, r.ageGroup), uid: r.uid, dob: r.dob || "",
+                                       courseId: r.courseId || courses[0]?.id || null, raceNumber: ++bib }];
+                  }
+                  changed = true;
+                });
+              return changed ? next : prev;
             });
           };
           ref.on("value", fn, err => console.error("reg listener:", err));
@@ -3518,6 +3585,9 @@
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes,
             updatedAt: Date.now(),
+            // The roster goes out with sign-ups, so people who register see
+            // everyone — not just themselves.
+            athletes: rosterPayload(athletes),
             registrations: {}
           };
           try {
@@ -3597,25 +3667,9 @@
             rtdb.ref("users/" + uid + "/joinedRaces/" + code).set(joined).catch(console.error);
             // Always go to the dashboard — even if race isn't live yet, the Firebase
             // listener will update in real-time when the host publishes/starts.
-            const athListSnap = await rtdb.ref("liveRaces/" + code + "/athletes").once("value");
-            const currentAths = athListSnap.val() || [];
-            let athIdx = currentAths.findIndex(a => a.uid === uid);
-            if (athIdx === -1) {
-              athIdx = currentAths.length;
-              const bibTx = await rtdb.ref("liveRaces/" + code + "/nextBib").transaction(cur => (cur || 0) + 1);
-              const raceNumber = bibTx.snapshot.val();
-              await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).set({
-                uid, id: uid, name: registration.name,
-                firstName: registration.firstName, lastName: registration.lastName,
-                gender: registration.gender, ageGroup,
-                dob: registration.dob, courseId: registration.courseId,
-                raceNumber,
-                splits: Array(SEGMENTS.length).fill(null),
-                started: false, finished: false, startOffset: null, joinedAt: registration.joinedAt
-              });
-            } else {
-              await rtdb.ref("liveRaces/" + code + "/athletes/" + athIdx).update({ uid, courseId: registration.courseId });
-            }
+            // The athlete list is the host's to write (the database only lets the
+            // race owner change it). Signing up is the registration above; the
+            // phone shows the roster plus sign-ups and finds this athlete by account.
             const raceSnap = await rtdb.ref("liveRaces/" + code).once("value");
             const raceData = raceSnap.val();
             if (raceData) {
@@ -3628,7 +3682,8 @@
               }
               bikeSegTriggeredRef.current = false;
               setJoinRace({ ...raceData, code });
-              setJoinAthIdx(athIdx);
+              const athIdx = rosterWithSignups(raceData).findIndex(a => a.uid === uid);
+              setJoinAthIdx(athIdx >= 0 ? athIdx : null);
               setJoinGpsActive(false);
               setJoinNextSeg(0);
             }
@@ -4645,13 +4700,14 @@
 
         useEffect(() => {
           if (!joinRace || !currentUser || joinAthIdx !== null) return;
-          const myIdx = (joinRace.athletes || []).findIndex(a => a.uid === currentUser.uid);
+          const myIdx = rosterWithSignups(joinLiveData || joinRace).findIndex(a => a.uid === currentUser.uid);
           if (myIdx >= 0) setJoinAthIdx(myIdx);
         }, [joinRace, currentUser]);
 
         function startGpsTracking() {
           if (!navigator.geolocation) { setJoinGpsStatus("Geolocation not supported on this device."); return; }
           if (joinAthIdx === null) { setJoinGpsStatus("Select your name first."); return; }
+          gpsTrackIdxRef.current = joinAthIdx;
           const allWps = (joinRace.waypoints || waypoints).filter(wp => wp.lat !== null && wp.lng !== null && wp.enabled !== false);
           setJoinGpsActive(true);
           setJoinGpsStatus("Acquiring GPS signal…");
@@ -4761,7 +4817,7 @@
                   if (joinAthMarkerRef.current) {
                     joinAthMarkerRef.current.setLatLng(lpos);
                   } else {
-                    const myName = joinRace.athletes?.[joinAthIdx]?.name || "You";
+                    const myName = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx]?.name || "You";
                     joinAthMarkerRef.current = L.circleMarker(lpos, { radius: 12, color: segCol, fillColor: segCol, fillOpacity: 0.9, weight: 3 })
                       .bindTooltip(myName, { permanent: true, direction: "top", offset: [0, -14], className: "leaflet-ath-label" })
                       .addTo(map);
@@ -4784,7 +4840,7 @@
               if (haversineM(lat, lng, wp.lat, wp.lng) >= wp.radiusM) return;
               // Skip T2 (bike→run transition) GPS trigger when using a trainer — handled by distance
               if (wp.action === "split" && wp.segIdx === 2) {
-                const myAth = joinRace.athletes?.[joinAthIdx];
+                const myAth = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx];
                 const myCourse = (joinRace.courses || []).find(c => c.id === myAth?.courseId) || (joinRace.courses || [])[0];
                 if ((myCourse?.bikeType || "gps") !== "gps") return;
               }
@@ -4836,7 +4892,7 @@
           setWatchTokenLoading(true);
           const token = Math.random().toString(36).slice(2, 6).toUpperCase() +
                         Math.random().toString(36).slice(2, 6).toUpperCase();
-          const ath = joinRace.athletes[joinAthIdx];
+          const ath = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx];
           const athleteName = ath ? (ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || "") : "";
           try {
             await rtdb.ref(`watchTokens/${token}`).set({
@@ -8664,10 +8720,10 @@
                       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                         <input value={regProfile.firstName} onChange={e => setRegProfile(p => ({ ...p, firstName: e.target.value }))}
                           placeholder="First name"
-                          style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
+                          style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
                         <input value={regProfile.lastName} onChange={e => setRegProfile(p => ({ ...p, lastName: e.target.value }))}
                           placeholder="Last name"
-                          style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
+                          style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
                       </div>
                       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
                         <select value={regProfile.gender} onChange={e => setRegProfile(p => ({ ...p, gender: e.target.value }))}
@@ -8731,13 +8787,13 @@
                         </div>
                       )}
                       {regError && <div style={{ fontSize: 14, color: "#B3001B", marginBottom: 8 }}>{regError}</div>}
+                      <label style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "10px 0 14px", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
+                        <input type="checkbox" checked={regEmailOptIn} onChange={e => setRegEmailOptIn(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
+                        <span>Email me the watch link and my results{currentUser?.email ? ` at ${currentUser.email}` : ""}. Only the race host sees this address.</span>
+                      </label>
                       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                         <button onClick={() => { setRegistrationStep("code"); setRegError(""); setRegRaceData(null); }}
                           style={{ ...btnStyle("#3D434B", true), padding: "10px 18px", fontSize: 14 }}>Back</button>
-                        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "4px 0 14px", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
-                          <input type="checkbox" checked={regEmailOptIn} onChange={e => setRegEmailOptIn(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
-                          <span>Email me the watch link and my results{currentUser?.email ? ` at ${currentUser.email}` : ""}. Only the race host sees this address.</span>
-                        </label>
                         <button onClick={() => registerForRace(regRaceData.code, regProfile, regCourseId)}
                           disabled={regWorking || !regProfile.firstName.trim() || !regProfile.lastName.trim()}
                           style={{ ...btnStyle("#04613F"), flex: 1, padding: "12px", fontSize: 14, letterSpacing: 1, opacity: (regWorking || !regProfile.firstName.trim() || !regProfile.lastName.trim()) ? 0.5 : 1 }}>
@@ -8755,7 +8811,7 @@
                             {joinLiveData?.raceName || joinRace.raceName || joinRace.publisherName + "'s Race"}
                           </div>
                           <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1 }}>
-                            {joinRace.publisherName} · CODE: {joinRace.code} · {(joinLiveData?.athletes || joinRace.athletes || []).length} athletes
+                            {joinRace.publisherName} · CODE: {joinRace.code} · {rosterWithSignups(joinLiveData || joinRace).length} athletes
                             {joinLiveData && !joinLiveData.clockStarted && <span style={{ color: "#8A5A00", marginLeft: 8 }}>● WAITING TO START</span>}
                             {joinLiveData?.clockRunning && <span style={{ color: "#04613F", marginLeft: 8 }}>● LIVE</span>}
                           </div>
@@ -8773,7 +8829,7 @@
                             </div>
                           )}
                           <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 10 }}>SELECT YOUR NAME</div>
-                          {(joinRace.athletes || []).map((ath, idx) => (
+                          {rosterWithSignups(joinLiveData || joinRace).map((ath, idx) => (
                             <button key={idx} onClick={() => setJoinAthIdx(idx)}
                               style={{ display: "block", width: "100%", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, padding: "12px 14px", color: "#0B0D10", fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
                               {ath.name} <span style={{ fontSize: 14, color: "#3D434B", fontWeight: 400 }}>{ath.gender} · {ath.ageGroup}</span>
@@ -8807,7 +8863,7 @@
                             </div>
                             {(() => { const hrDev = btDevices.find(d => d.readings.heartRate != null); return hrDev ? <span style={{ fontSize: 14, color: "#04613F", fontWeight: 700, flexShrink: 0 }}>❤️ {hrDev.readings.heartRate}</span> : null; })()}
                             <div style={{ fontSize: 14, color: "#3D434B" }}>
-                              {joinRace.athletes[joinAthIdx]?.name}
+                              {rosterWithSignups(joinLiveData || joinRace)[joinAthIdx]?.name}
                               <button onClick={() => setJoinAthIdx(null)} style={{ fontSize: 14, color: "#3D434B", background: "none", border: "none", cursor: "pointer", padding: "0 0 0 6px" }}>change</button>
                             </div>
                           </div>
@@ -8841,7 +8897,7 @@
                           )}
                           {/* GPS-miles bike leg: a workout-watch screen on the rider's phone. */}
                           {(() => {
-                            const liveAth = joinLiveData?.athletes?.[joinAthIdx] || joinRace.athletes?.[joinAthIdx];
+                            const liveAth = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx];
                             const cList = (joinLiveData?.courses || joinRace.courses || []);
                             const myCourse = cList.find(c => c.id === liveAth?.courseId) || cList[0];
                             if ((myCourse?.bikeType || "gps") !== "distance") return null;
@@ -8906,7 +8962,7 @@
                           {(() => {
                             const trainer = btDevices.find(d => d.connected && (d.readings.trainerDistMi != null || d.readings.speed != null || d.readings.cadence != null || d.readings.power != null));
                             if (!trainer) return null;
-                            const myAth = joinRace.athletes?.[joinAthIdx];
+                            const myAth = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx];
                             const myCourse = (joinRace.courses || []).find(c => c.id === myAth?.courseId) || (joinRace.courses || [])[0];
                             const coursebikeType = myCourse?.bikeType || "gps";
                             const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
@@ -9068,7 +9124,7 @@
 
                           {/* Race roster */}
                           <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", marginBottom: 10 }}>RACE ROSTER</div>
-                          {(joinLiveData?.athletes || joinRace.athletes || []).map((ath, idx) => {
+                          {rosterWithSignups(joinLiveData || joinRace).map((ath, idx) => {
                             const isMe = idx === joinAthIdx;
                             const clock = joinLiveClockMs;
                             const chipMs = ath.started && ath.startOffset != null ? clock - ath.startOffset : null;
