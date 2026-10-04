@@ -398,6 +398,14 @@
         }
         return null;
       }
+      // For display: before the start, the first lap-counted leg, so hosts see
+      // the counter (and what it's waiting for) as soon as the race is set up.
+      function lapLegToShow(a, course) {
+        if (!a || a.finished) return null;
+        if (a.started) return currentLapLeg(a, course);
+        for (const [seg] of LAP_LEGS) if (legLapPlan(course, seg)) return seg;
+        return null;
+      }
       const LEG_COLOUR = { 0: TM.swim, 2: TM.bike, 4: TM.run };
       const LEG_NAME = { 0: "Swim", 2: "Bike", 4: "Run" };
 
@@ -3153,6 +3161,13 @@
         useEffect(() => {
           if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/autoSplits").set(autoSplits).catch(console.error);
         }, [autoSplits, liveRaceCode]);
+        // Turning laps on (or changing distances) after going live reaches
+        // parents' and athletes' phones straight away.
+        useEffect(() => {
+          if (!liveRaceCode) return;
+          const t = setTimeout(() => rtdb.ref("liveRaces/" + liveRaceCode).update({ courses, units }).catch(console.error), 600);
+          return () => clearTimeout(t);
+        }, [courses, units, liveRaceCode]);
 
         // Lap-counted legs (swim, bike or run) end by themselves on the last lap;
         // the last run lap finishes the race.
@@ -8186,7 +8201,7 @@
                           </div>
                         )}
                         {shown.map(({ a, i, course }) => {
-                          const seg = currentLapLeg(a, course);
+                          const seg = a.started ? currentLapLeg(a, course) : null;
                           if (seg == null) return (
                             <div key={i} style={{ ...rowStyle(), display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                               <span style={{ fontSize: 18, fontWeight: 900 }}>{nameOf(a)}</span>
@@ -11095,9 +11110,10 @@
                         {/* Lap-counted leg (swim, bike or run): the host can count here too. */}
                         {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
-                          const seg = currentLapLeg(ath, athCourse);
+                          const seg = lapLegToShow(ath, athCourse);
                           if (seg == null) return null;
                           const plan = legLapPlan(athCourse, seg);
+                          const canCount = !!liveRaceCode && ath.started;
                           const need = plan.need;
                           const n = legLaps(lapTaps[i], ath, seg, athCourse);
                           const col = LEG_COLOUR[seg];
@@ -11119,12 +11135,17 @@
                                   <div style={{ height: "100%", width: `${pct}%`, background: col }} />
                                 </div>
                                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                                  <button onClick={() => tapLap(liveRaceCode, i, clockMsRef.current, athleteName(ath) || ath.name)} disabled={!liveRaceCode}
-                                    style={{ ...btnStyle(TM.ink), background: col, borderColor: col, flex: 1, opacity: liveRaceCode ? 1 : 0.5 }}>+1 lap</button>
+                                  <button onClick={() => tapLap(liveRaceCode, i, clockMsRef.current, athleteName(ath) || ath.name)} disabled={!canCount}
+                                    style={{ ...btnStyle(TM.ink), background: col, borderColor: col, flex: 1, opacity: canCount ? 1 : 0.5 }}>+1 lap</button>
                                   <button onClick={() => undoLatestLap(i)} disabled={!n} style={{ ...btnStyle(TM.ink, true), opacity: n ? 1 : 0.5 }}>Undo</button>
                                   <button onClick={() => setView("lapcount")} style={{ ...btnStyle(TM.ink, true), padding: "0 12px" }}>Full screen</button>
                                 </div>
-                                {!liveRaceCode && <div style={{ ...TM_CAPTION, marginTop: 6 }}>Share live results first — laps are counted on the live race.</div>}
+                                {!canCount && (
+                                  <div style={{ fontSize: 15, fontWeight: 700, marginTop: 8 }}>
+                                    {!liveRaceCode ? "To count: tap Share Live Results above, then start the race."
+                                      : "Counting starts when this athlete starts (Start Race / Send Off)."}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           );
