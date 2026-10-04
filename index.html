@@ -370,7 +370,7 @@
         const gapFor = (sec, dflt) => Math.max(3, parseFloat(sec) || dflt) * 1000;
         const plan = (total, lap, gapMs) => {
           const t = parseFloat(total) || 0, l = parseFloat(lap) || 0;
-          return { need: t > 0 && l > 0 ? Math.max(1, Math.round(t / l)) : 0, gap: gapMs };
+          return { need: t > 0 && l > 0 ? Math.max(1, Math.round(t / l)) : 0, gap: gapMs, lap: l, total: t };
         };
         if (seg === 0 && course.swimByLaps) return plan(course.swimYards, course.swimLap, gapFor(course.swimMinLapSec, 15));
         if (seg === 2 && course.bikeType === "laps") return plan(course.bikeMiles, course.lapMi, gapFor(course.minLapSec, 20));
@@ -400,6 +400,56 @@
       }
       const LEG_COLOUR = { 0: TM.swim, 2: TM.bike, 4: TM.run };
       const LEG_NAME = { 0: "Swim", 2: "Bike", 4: "Run" };
+
+
+      // Lap length, set three ways: quick picks (a 25/50/100 pool, a ¼/½/1 mile
+      // loop), the length itself, or how many laps make one mile (or km) —
+      // "I count circles, and 7 circles is a mile". All on a discipline block.
+      function LapLengthFields({ idBase, value, onChange, short, chips = [], perLabel = null, col }) {
+        const v = parseFloat(value) || 0;
+        const perUnit = v > 0 ? +(1 / v).toFixed(2) : "";
+        const lbl = { display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 };
+        const box = { width: 120, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px", color: TM.ink, textAlign: "center", outline: "none" };
+        const fmt = (c) => c === 0.25 ? "¼" : c === 0.5 ? "½" : String(c);
+        return (
+          <div>
+            {chips.length > 0 && (
+              <div role="radiogroup" aria-label="Lap length" style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                {chips.map(c => (
+                  <button key={c} type="button" role="radio" aria-checked={v === c} onClick={() => onChange(c)}
+                    style={{ flex: 1, minHeight: 46, borderRadius: 6, fontWeight: 900, fontSize: 18, cursor: "pointer",
+                             background: v === c ? "#FFFFFF" : "transparent", color: v === c ? col : "#FFFFFF", border: "2px solid #FFFFFF" }}>
+                    {fmt(c)} {short}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div>
+                <label htmlFor={idBase + "-len"} style={lbl}>One lap is</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input id={idBase + "-len"} type="number" min="0.01" step="any" value={value ?? ""}
+                    onChange={e => onChange(e.target.value === "" ? null : Number(e.target.value))} style={box} />
+                  <span style={{ fontWeight: 800, fontSize: 17 }}>{short}</span>
+                </div>
+              </div>
+              {perLabel && (
+                <div>
+                  <label htmlFor={idBase + "-per"} style={lbl}>{perLabel}</label>
+                  <input id={idBase + "-per"} type="number" min="0.1" step="any" value={perUnit}
+                    onChange={e => { const n = Number(e.target.value); onChange(n > 0 ? 1 / n : null); }} style={box} />
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+      const UNIT_SHORT = { yards: "yd", meters: "m", miles: "mi", km: "km" };
+      // "250 yd", "2.75 mi": whole numbers for the pool, two decimals on the road.
+      function fmtLegDist(x, short) {
+        if (x == null) return "";
+        return (short === "yd" || short === "m") ? `${Math.round(x)} ${short}` : `${(+x).toFixed(2).replace(/\.?0+$/, "") || "0"} ${short}`;
+      }
 
       // ── Pocket mode ──────────────────────────────────────────────────────────
       // A web page can't use GPS with the screen off, so instead the screen stays
@@ -3642,6 +3692,7 @@
             // The roster goes out with sign-ups, so people who register see
             // everyone — not just themselves.
             athletes: rosterPayload(athletes),
+            units,
             registrations: {}
           };
           try {
@@ -3778,7 +3829,7 @@
             raceName: certConfig.eventName || "Race",
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
-            courses,
+            courses, units,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes
           };
@@ -3803,7 +3854,8 @@
             clockMs, clockRunning,
             updatedAt: Date.now(),
             waypoints: waypoints.filter(wp => wp.lat !== null),
-            raceRoutes
+            raceRoutes,
+            units, courses,
           };
           athletes.forEach((ath, i) => {
             updates[`athletes/${i}/id`]          = ath.id;
@@ -7293,7 +7345,7 @@
         // The race a lap counter is looking at: the host's own, or the one watched.
         function lapRaceData() {
           if (isHost && liveRaceCode) {
-            return { code: liveRaceCode, athletes, courses, clock: () => clockMsRef.current, name: raceTitle };
+            return { code: liveRaceCode, athletes, courses, units, clock: () => clockMsRef.current, name: raceTitle };
           }
           const src = (liveRace && liveRace.code === lapCountCode) ? liveRace
                     : (joinLiveData && joinLiveData.code === lapCountCode) ? joinLiveData : null;
@@ -7301,7 +7353,8 @@
           const clockNow = () => (src.clockMs || 0) + (src.clockRunning ? Math.max(0, Date.now() - (src.updatedAt || Date.now())) : 0);
           const aths = indexedAthletes(src.athletes).map(a => a && ({ ...a,
             splits: Array.from({ length: SEGMENTS.length }, (_, k) => (a.splits && a.splits[k] != null) ? a.splits[k] : null) }));
-          return { code: lapCountCode, athletes: aths, courses: asList(src.courses), clock: clockNow, name: src.raceName };
+          return { code: lapCountCode, athletes: aths, courses: asList(src.courses), clock: clockNow, name: src.raceName,
+                   units: src.units || { swim: "yards", bike: "miles", run: "miles" } };
         }
         function courseFor(race, a) { return race.courses.find(c => c.id === a.courseId) || race.courses[0]; }
         function lapsFor(race, i) {
@@ -8106,13 +8159,17 @@
                               <span style={TM_CAPTION}>{statusOf(a, course)}</span>
                             </div>
                           );
-                          const n = legLaps(lapTaps[i], a, seg, course), need = legLapPlan(course, seg).need;
+                          const plan = legLapPlan(course, seg);
+                          const n = legLaps(lapTaps[i], a, seg, course), need = plan.need;
                           const justTapped = flash && !flash.error && flash.idx === i;
                           const big = shown.length === 1;
+                          const legUnit = UNIT_SHORT[(race.units || {})[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || (seg === 0 ? "yd" : "mi");
+                          const pct = need > 0 ? Math.min(100, (n / need) * 100) : 0;
+                          const distLine = plan.lap > 0 ? `${fmtLegDist(Math.min(n * plan.lap, plan.total || Infinity), legUnit)} of ${fmtLegDist(plan.total, legUnit)}` : "";
                           return (
                             <button key={i} onClick={() => tapLap(race.code, i, race.clock(), nameOf(a))}
                               aria-label={`Count a ${LEG_NAME[seg]} lap for ${nameOf(a)}`}
-                              style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", minHeight: big ? 220 : 96,
+                              style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, width: "100%", minHeight: big ? 220 : 96,
                                        padding: big ? "22px 20px" : "12px 16px", flexDirection: big ? "column" : "row",
                                        background: justTapped ? TM.ink : LEG_COLOUR[seg], color: "#FFFFFF", border: "none", borderRadius: 6,
                                        textAlign: big ? "center" : "left", cursor: "pointer", touchAction: "manipulation" }}>
@@ -8126,6 +8183,14 @@
                                 {a.raceNumber != null && <span style={{ display: "block", fontSize: 15, fontWeight: 700 }}>Bib #{a.raceNumber}</span>}
                               </span>
                               <span style={{ fontSize: big ? 36 : 30, fontWeight: 900, order: 3 }}>+1</span>
+                              {distLine && (
+                                <span style={{ order: 4, flexBasis: "100%", width: "100%", display: "block" }}>
+                                  <span style={{ display: "block", fontSize: big ? 20 : 15, fontWeight: 800 }}>{distLine}</span>
+                                  <span aria-hidden="true" style={{ display: "block", height: big ? 14 : 8, background: "rgba(255,255,255,0.35)", marginTop: 6 }}>
+                                    <span style={{ display: "block", height: "100%", width: `${pct}%`, background: "#FFFFFF" }} />
+                                  </span>
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -10185,7 +10250,7 @@
                                     {[[false, "Splits only"], [true, "Count laps"]].map(([v, lbl]) => (
                                       <button key={lbl} role="radio" aria-checked={on === v} onClick={() => {
                                           updateCourse(course.id, seg + "ByLaps", v);
-                                          if (v && course[lapKey] == null) updateCourse(course.id, lapKey, seg === "swim" ? 25 : 0.25);
+                                          if (v && course[lapKey] == null) updateCourse(course.id, lapKey, seg === "swim" ? 25 : 1);
                                         }}
                                         style={{ flex: 1, minHeight: 46, borderRadius: 6, fontWeight: 800, fontSize: 16, cursor: "pointer",
                                                  background: on === v ? "#FFFFFF" : "transparent", color: on === v ? col : "#FFFFFF", border: "2px solid #FFFFFF" }}>{lbl}</button>
@@ -10193,18 +10258,14 @@
                                   </div>
                                   {on && (
                                     <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-                                      <div>
-                                        <label htmlFor={`${lapKey}-${course.id}`} style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>One lap is</label>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                          <input id={`${lapKey}-${course.id}`} type="number" min="0.01" step={seg === "swim" ? "1" : "0.01"} value={course[lapKey] ?? ""}
-                                            placeholder={seg === "swim" ? "25" : "0.25"}
-                                            onChange={e => updateCourse(course.id, lapKey, e.target.value === "" ? null : Number(e.target.value))}
-                                            style={{ width: 120, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px", color: TM.ink, textAlign: "center", outline: "none" }} />
-                                          <span style={{ fontWeight: 800, fontSize: 17 }}>{short}</span>
-                                        </div>
+                                      <div style={{ flexBasis: "100%" }}>
+                                        <LapLengthFields idBase={`${lapKey}-${course.id}`} value={course[lapKey]} short={short} col={col}
+                                          chips={seg === "swim" ? [25, 50, 100] : [0.25, 0.5, 1]}
+                                          perLabel={seg === "run" ? `Laps per ${short}` : null}
+                                          onChange={val => updateCourse(course.id, lapKey, val)} />
                                       </div>
                                       <div style={{ fontSize: 22, fontWeight: 900, paddingBottom: 8 }}>
-                                        {plan && plan.need ? `= ${plan.need} laps` : "→ enter a lap length"}
+                                        {plan && plan.need ? `= ${plan.need} laps of ${fmtLegDist(plan.lap, short)}` : "→ pick a lap length"}
                                       </div>
                                       <div style={{ flexBasis: "100%" }}>
                                         <label htmlFor={`${gapKey}-${course.id}`} style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>Fastest possible lap</label>
@@ -10243,17 +10304,13 @@
                                 </div>
                                 {(course.bikeType || "gps") === "laps" && (
                                   <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-                                    <div>
-                                      <label htmlFor={`lap-${course.id}`} style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>One lap is</label>
-                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                        <input id={`lap-${course.id}`} type="number" min="0.01" step="0.01" value={course.lapMi ?? ""} placeholder="0.25"
-                                          onChange={e => updateCourse(course.id, "lapMi", e.target.value === "" ? null : Number(e.target.value))}
-                                          style={{ width: 120, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px", color: TM.ink, textAlign: "center", outline: "none" }} />
-                                        <span style={{ fontWeight: 800, fontSize: 17 }}>{short}</span>
-                                      </div>
+                                    <div style={{ flexBasis: "100%" }}>
+                                      <LapLengthFields idBase={`lap-${course.id}`} value={course.lapMi} short={short} col={col}
+                                        perLabel={`Circles per ${short}`}
+                                        onChange={val => updateCourse(course.id, "lapMi", val)} />
                                     </div>
                                     <div style={{ fontSize: 22, fontWeight: 900, paddingBottom: 8 }}>
-                                      {lapsNeeded(course) ? `= ${lapsNeeded(course)} laps` : "→ enter a lap length"}
+                                      {lapsNeeded(course) ? `= ${lapsNeeded(course)} circles` : "→ enter circles per mile"}
                                     </div>
                                     <div style={{ flexBasis: "100%" }}>
                                       <label htmlFor={`lapgap-${course.id}`} style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>Fastest possible lap</label>
@@ -11006,9 +11063,11 @@
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
                           const seg = currentLapLeg(ath, athCourse);
                           if (seg == null) return null;
-                          const need = legLapPlan(athCourse, seg).need;
+                          const plan = legLapPlan(athCourse, seg);
+                          const need = plan.need;
                           const n = legLaps(lapTaps[i], ath, seg, athCourse);
                           const col = LEG_COLOUR[seg];
+                          const legUnit = UNIT_SHORT[units[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || "mi";
                           const pct = need > 0 ? Math.min(100, (n / need) * 100) : 0;
                           return (
                             <div style={{ padding: "0 14px 12px" }}>
@@ -11017,6 +11076,11 @@
                                   <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: col }}>{LEG_NAME[seg].toUpperCase()} · LAPS</span>
                                   <span style={{ ...TM_NUM, fontSize: 24, letterSpacing: -0.5 }}>{n} <span style={{ fontSize: 15, fontWeight: 800 }}>/ {need || "?"}</span></span>
                                 </div>
+                                {plan.lap > 0 && (
+                                  <div style={{ fontSize: 16, fontWeight: 800, marginTop: 4 }}>
+                                    {fmtLegDist(Math.min(n * plan.lap, plan.total || Infinity), legUnit)} of {fmtLegDist(plan.total, legUnit)}
+                                  </div>
+                                )}
                                 <div aria-hidden="true" style={{ height: 8, background: TM.line, marginTop: 8 }}>
                                   <div style={{ height: "100%", width: `${pct}%`, background: col }} />
                                 </div>
