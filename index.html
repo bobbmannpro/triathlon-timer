@@ -349,13 +349,21 @@
         return lap > 0 && total > 0 ? Math.max(1, Math.round(total / lap)) : 0;
       }
       function lapGapMs(course) { return Math.max(3, parseFloat(course && course.minLapSec) || 20) * 1000; }
+      // A lap is a group of taps from DIFFERENT people within the fastest-lap
+      // time of each other — two people counting the same lap. A second tap from
+      // the same person is always a new lap (a mis-tap is what − is for).
       function countLaps(taps, fromC, toC, gapMs) {
-        const cs = Object.values(taps || {})
-          .map(t => t && t.c).filter(c => typeof c === "number" && c >= (fromC || 0) && (toC == null || c <= toC))
-          .sort((a, b) => a - b);
-        let n = 0, last = -Infinity;
-        cs.forEach(c => { if (c - last >= gapMs) { n++; last = c; } });
-        return n;
+        const ts = Object.values(taps || {})
+          .filter(t => t && typeof t.c === "number" && t.c >= (fromC || 0) && (toC == null || t.c <= toC))
+          .sort((a, b) => a.c - b.c);
+        const laps = [];
+        ts.forEach(t => {
+          const who = t.by || "?";
+          const last = laps[laps.length - 1];
+          if (last && t.c - last.c < gapMs && !last.who.has(who)) last.who.add(who);
+          else laps.push({ c: t.c, who: new Set([who]) });
+        });
+        return laps.length;
       }
 
 
@@ -1975,6 +1983,8 @@
         const [newRaceKind, setNewRaceKind] = useState("triathlon");
         const [newRaceName, setNewRaceName] = useState("");
         const [newRaceCode, setNewRaceCode] = useState("");
+        const [saveAsOpen, setSaveAsOpen] = useState(false);
+        const [saveAsName, setSaveAsName] = useState("");
         // Lap taps for the race being counted: { athleteIdx: { tapId: { c, by, t } } }.
         // Declared early because the host's bike-finish effect reads it.
         const [lapTaps, setLapTaps] = useState({});
@@ -2793,6 +2803,11 @@
         const clockRef     = useRef(null);
         const startTimeRef = useRef(null);
         const offsetRef    = useRef(0);
+        // The race clock as of this render, for code that runs outside one: lap
+        // taps and the 2-second live sync. (It was referenced but never defined,
+        // so every lap tap threw and the live clock sync silently failed.)
+        const clockMsRef   = useRef(0);
+        clockMsRef.current = clockMs;
 
         useEffect(() => {
           if (clockRunning) {
@@ -3746,22 +3761,31 @@
           } catch(e) { console.error("openRegistration:", e); }
         }
 
+        // An older code (from a past sign-up or live session) forwards to the new one.
+        function forwardOldCode(oldCode, newCode) {
+          if (!oldCode || oldCode === newCode || !currentUser) return;
+          rtdb.ref("liveRaces/" + oldCode).once("value").then(sn => {
+            const v = sn.val();
+            if (v && v.publishedBy === currentUser.uid && v.status !== "moved") {
+              return rtdb.ref("liveRaces/" + oldCode).set({ status: "moved", movedTo: newCode, publishedBy: currentUser.uid, raceName: v.raceName || "", updatedAt: Date.now() });
+            }
+          }).catch(() => {});
+        }
+
         async function openRegistration() {
           if (!currentUser) return;
           if (!loadedRaceId) { setShowSaveBeforeReg(true); return; }
-          // Reuse existing code or generate a new one and lock it in
-          const code = registrationCode || generateRaceCode();
-          if (!registrationCode) {
-            // Persist the code into the saved race so it never changes
-            persistRaces(savedRaces.map(r => r.id === loadedRaceId ? { ...r, code } : r));
-          }
+          // The code chosen in step 1, saved with the race so it sticks.
+          const code = customRaceCode || registrationCode || generateRaceCode();
+          forwardOldCode(registrationCode, code);
+          persistRaces(savedRaces.map(r => r.id === loadedRaceId ? { ...r, code, plannedCode: code } : r));
           await _doOpenRegistration(code);
         }
 
         async function saveAndOpenRegistration(nameVal) {
           if (!currentUser) return;
           const name = nameVal.trim() || `Race ${savedRaces.length + 1}`;
-          const code = registrationCode || generateRaceCode();
+          const code = customRaceCode || registrationCode || generateRaceCode();
           const id = Date.now();
           const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null , email: a.email || "" }));
           const entry = { id, name, code, plannedCode: code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes };
@@ -4150,46 +4174,59 @@
           if (toAdd.length > 0 || changed) persistSavedAthletes([...withEmails, ...toAdd]);
         }
 
-        function saveRace() {
-          const name = saveRaceName.trim() || `Race ${savedRaces.length + 1}`;
-          const id = Date.now();
-          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null , email: a.email || "" }));
-          const entry = {
-            id, name,
-            code: registrationCode || null,
+        // Everything on the setup screens, as a saved race stores it.
+        function raceSnapshot() {
+          return {
+            ageGroups, courses, units, certConfig, waypoints, raceRoutes,
+            listed: raceListed, oldCodes: oldRaceCodes, autoSplits,
             plannedCode: customRaceCode || null,
-            listed: raceListed,
-            oldCodes: oldRaceCodes,
-            autoSplits,
-            savedAt: new Date().toLocaleDateString(),
-            ageGroups, courses, units,
-            certConfig,
-            waypoints,
-            raceRoutes,
-            athletes: raceAthletes,
+            athletes: athletes.map(a => ({
+              name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup,
+              dob: a.dob || "", courseId: a.courseId || null, email: a.email || "",
+              raceNumber: a.raceNumber ?? null, uid: a.uid || null,
+            })),
           };
+        }
+        const [savedFlash, setSavedFlash] = useState(null);   // "✓ Saved" confirmation
+
+        // Save as a new race (also the first save). Leaves the name on screen and
+        // makes the new copy the race being edited.
+        function saveRace(nameOverride) {
+          const name = (nameOverride || saveRaceName || "").trim() || `Race ${savedRaces.length + 1}`;
+          const id = Date.now();
+          const entry = { id, name, code: null, savedAt: new Date().toLocaleDateString(), ...raceSnapshot() };
           persistRaces([...savedRaces, entry]);
           mergeAthletesToLibrary(athletes);
           setLoadedRaceId(id);
-          setSaveRaceName("");
+          setSaveRaceName(name);
+          setSavedFlash({ text: `Saved as a new race: ${name}`, at: Date.now() });
         }
 
+        // Save every change to the race being edited: name, code, roster (bibs
+        // included), distances, laps, age groups, certificate, map, Auto/Manual.
         function updateSavedRace() {
           if (!loadedRaceId) return;
-          const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId , email: a.email || "" }));
-          const updated = savedRaces.map(r => r.id === loadedRaceId
-            ? { ...r, ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes, plannedCode: customRaceCode || r.plannedCode || null, listed: raceListed, oldCodes: oldRaceCodes, savedAt: new Date().toLocaleString() }
-            : r);
+          const updated = savedRaces.map(r => r.id === loadedRaceId ? {
+            ...r, ...raceSnapshot(),
+            name: (saveRaceName || "").trim() || r.name,
+            // The code parents already have, if sign-ups are open or it's live;
+            // otherwise the stored one stays for finding an earlier live session.
+            code: liveRaceCode || (registrationOpen ? registrationCode : r.code) || null,
+            savedAt: new Date().toLocaleString(),
+          } : r);
           persistRaces(updated);
           mergeAthletesToLibrary(athletes);
+          setSavedFlash({ text: "Saved all changes", at: Date.now() });
         }
+
         async function loadRace(race) {
           // Opening a different race lets go of whichever race was live, so its
           // clock and roster can't be overwritten by this one.
           if (liveRaceCode && liveRaceCode !== race.code) setLiveRaceCode(null);
           setLoadedRaceId(race.id);
           if (race.code) setRegistrationCode(race.code); else setRegistrationCode(null);
-          setCustomRaceCode(race.code || race.plannedCode || friendlyCode());
+          setCustomRaceCode(race.plannedCode || race.code || friendlyCode());
+          setSaveRaceName(race.name || "");
           setRaceListed(race.listed !== false);
           setAutoSplits(race.autoSplits !== false);
           setOldRaceCodes(race.oldCodes || []);
@@ -7168,7 +7205,9 @@
           return true;
         }
 
-        const triCodeLocked = !!(registrationCode || liveRaceCode);
+        // Locked only while sign-ups are open or the race is live — a code from
+        // a past session can be replaced (the old one forwards when it's next used).
+        const triCodeLocked = !!(registrationOpen || liveRaceCode);
         const bikeCodeLocked = !!(bikeDraft && bikeFeedList.some(f => f.code === bikeDraft.code));
         const swimCodeLocked = !!(swimLiveCode || (swimMeet.code && swimSavedMeets.some(m => m.id === swimMeet._id && m.code === swimMeet.code && m.live)));
         const codeToCheck =
@@ -10034,12 +10073,46 @@
                 const placedPins = waypoints.filter(w => w.lat != null).length;
                 const u = { yards: "yd", meters: "m", miles: "mi", km: "km" };
                 const summaries = [
-                  { title: TRI_STEPS[0], done: !!(saveRaceName || certConfig.eventName), summary: `Triathlon · ${saveRaceName || certConfig.eventName || "no name yet"} · code ${registrationCode || liveRaceCode || customRaceCode || "—"}` },
+                  { title: TRI_STEPS[0], done: !!(saveRaceName || certConfig.eventName), summary: `Triathlon · ${saveRaceName || certConfig.eventName || "no name yet"} · code ${liveRaceCode || (registrationOpen ? registrationCode : customRaceCode) || "—"}` },
                   { title: TRI_STEPS[1], done: athletes.length > 0, summary: `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""}${registrationOpen ? ` · sign-up open (${registrationCode})` : ""}` },
                   { title: TRI_STEPS[2], done: courses.length > 0, summary: courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} · ${c.bikeMiles}${u[units.bike]} · ${c.runMiles}${u[units.run]}`).join(" | ") || "No distances yet" },
                   { title: TRI_STEPS[3], done: ageGroups.length > 0, summary: `${ageGroups.length} age group${ageGroups.length !== 1 ? "s" : ""} · ${certConfig.eventName || "no event name"}` },
                   { title: TRI_STEPS[4], done: placedPins > 0, summary: placedPins ? `${placedPins} pin${placedPins !== 1 ? "s" : ""} placed` : "Optional — skipped" },
                 ];
+                const loadedRace = savedRaces.find(r => r.id === loadedRaceId);
+                const flashOn = savedFlash && Date.now() - savedFlash.at < 6000;
+                const saveControls = (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {loadedRace ? (<>
+                      <button onClick={updateSavedRace} style={{ ...btnStyle(TM.ink), width: "100%" }}>
+                        Save changes to “{(saveRaceName || loadedRace.name || "this race").trim()}”
+                      </button>
+                      {!saveAsOpen ? (
+                        <button onClick={() => { setSaveAsOpen(true); setSaveAsName(`${(saveRaceName || loadedRace.name || "Race").trim()} (copy)`); }}
+                          style={{ ...btnStyle(TM.ink, true), width: "100%" }}>Save as a new race…</button>
+                      ) : (
+                        <div style={{ ...rowStyle(TM.ink) }}>
+                          <label htmlFor="save-as-name" style={TM_LABEL}>New race name</label>
+                          <input id="save-as-name" value={saveAsName} onChange={e => setSaveAsName(e.target.value)}
+                            style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 14px", color: TM.ink, outline: "none" }} />
+                          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <button onClick={() => { saveRace(saveAsName); setSaveAsOpen(false); }} style={{ ...btnStyle(TM.ink), flex: 1 }}>Save new race</button>
+                            <button onClick={() => setSaveAsOpen(false)} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Cancel</button>
+                          </div>
+                          <div style={{ ...TM_CAPTION, marginTop: 6 }}>Keeps “{loadedRace.name}” as it was and carries on with the new copy.</div>
+                        </div>
+                      )}
+                    </>) : (<>
+                      <label htmlFor="save-name" style={TM_LABEL}>Race name</label>
+                      <input id="save-name" value={saveRaceName} onChange={e => setRaceName(e.target.value)} placeholder="e.g. Youth Fall 2026"
+                        style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 14px", color: TM.ink, outline: "none" }} />
+                      <button onClick={() => saveRace()} style={{ ...btnStyle(TM.ink), width: "100%" }}>Save race</button>
+                    </>)}
+                    {flashOn && (
+                      <div role="status" style={{ ...rowStyle(TM.run), fontSize: 16, fontWeight: 800 }}>✓ {savedFlash.text}</div>
+                    )}
+                  </div>
+                );
                 const readyHint = athletes.length === 0 ? "Add at least one athlete first" : `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""} ready`;
                 const body = (
                   <>
@@ -10836,38 +10909,7 @@
                         ? "Not saved yet"
                         : `Not saved yet · ${savedRaces.length} saved race${savedRaces.length !== 1 ? "s" : ""} on Home`}>
 
-                    {/* Save current setup */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <input
-                        value={saveRaceName}
-                        onChange={e => setSaveRaceName(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && saveRace()}
-                        placeholder="Race name (e.g. Spring 2026)"
-                        style={{ width: "100%", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none" }}
-                      />
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button onClick={saveRace} style={{ ...btnStyle("#04613F"), flex: 1, padding: "10px", fontSize: 14 }}>
-                          Save Setup
-                        </button>
-                        {loadedRaceId && (
-                          <button onClick={updateSavedRace} style={{ ...btnStyle("#8A5A00"), flex: 1, padding: "10px", fontSize: 14 }}>
-                            Update Race
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {savedRaces.length > 0 ? (
-                      <button onClick={() => { setView("myraces"); setHomeSection("races"); }}
-                        style={{ background: "none", border: "none", color: "#3D434B", fontSize: 14, cursor: "pointer",
-                                 padding: "10px 0 0", textAlign: "left", textDecoration: "underline" }}>
-                        Open a different saved race &#8594;
-                      </button>
-                    ) : (
-                      <div style={{ fontSize: 14, color: "#3D434B", marginTop: 10 }}>
-                        Saving keeps your athletes, distances and pins so you can run this race again next season.
-                      </div>
-                    )}
+                    {saveControls}
                   </SetupSection>
 
                   </>
@@ -10877,6 +10919,7 @@
                     <WizardStepList heading="Race setup" subheading={saveRaceName || certConfig.eventName || "Triathlon"}
                       steps={summaries} onJump={setSetupStep}>
                       {body}
+                      <div style={{ marginTop: 22 }}>{saveControls}</div>
                       <button onClick={goToRace} disabled={athletes.length === 0}
                         style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24, opacity: athletes.length === 0 ? 0.45 : 1 }}>
                         Go to race →
@@ -10905,7 +10948,7 @@
                     nextHint={last ? readyHint : null}>
                     {setupStep === 1 && (
                       <RaceKindStep kind="triathlon" name={saveRaceName} onName={setRaceName}
-                        code={registrationCode || liveRaceCode || customRaceCode} onCode={setCustomRaceCode}
+                        code={liveRaceCode || (registrationOpen ? registrationCode : customRaceCode)} onCode={setCustomRaceCode}
                         codeStatus={codeStatus} codeLocked={triCodeLocked} onChangeLocked={changeRaceCode}
                         listed={raceListed} onListed={setRaceListed}
                         onKind={k => { if (k !== "triathlon") startRaceOfKind(k, saveRaceName); }}
@@ -10961,10 +11004,14 @@
                           <button disabled={livePublishing} onClick={async () => {
                             setLivePublishError("");
                             setLivePublishing(true);
-                            const code = registrationCode || generateRaceCode();
+                            const code = (registrationOpen && registrationCode) || customRaceCode || registrationCode || generateRaceCode();
                             const ok = await publishLiveRace(code);
                             setLivePublishing(false);
-                            if (ok === true) { setLiveRaceCode(code); }
+                            if (ok === true) {
+                              setLiveRaceCode(code);
+                              forwardOldCode(registrationCode, code);
+                              if (loadedRaceId) persistRaces(savedRaces.map(r => r.id === loadedRaceId ? { ...r, code, plannedCode: code } : r));
+                            }
                             else { setLivePublishError(String(ok || "Could not go live.")); }
                           }} style={{ ...btnStyle("#8A5A00", true), padding: "5px 14px", fontSize: 14, letterSpacing: 1, opacity: livePublishing ? 0.6 : 1 }}>
                             {livePublishing ? "Publishing…" : "📡 Share Live Results"}
