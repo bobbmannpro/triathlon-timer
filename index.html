@@ -431,6 +431,78 @@
         const nx = a.splits.findIndex(x => x == null);
         return [0, 2, 4].includes(nx) ? nx : null;
       }
+      // ── Lap splits ───────────────────────────────────────────────────────────
+      // The race-clock time of each counted lap (the first tap of each lap group,
+      // grouped exactly as countLaps groups them).
+      function lapMarks(taps, fromC, toC, gapMs) {
+        const ts = Object.values(taps || {})
+          .filter(t => t && typeof t.c === "number" && t.c >= (fromC || 0) && (toC == null || t.c <= toC))
+          .sort((a, b) => a.c - b.c);
+        const laps = [];
+        ts.forEach(t => {
+          const who = t.by || "?", last = laps[laps.length - 1];
+          if (last && t.c - last.c < gapMs && !last.who.has(who)) last.who.add(who);
+          else laps.push({ c: t.c, who: new Set([who]) });
+        });
+        return laps.map(l => l.c);
+      }
+      // Splits for one leg. Swim and run: one per lap ("Length"/"Lap"). Bike with a
+      // lap length: one per mile (or km) — the time a mile falls inside a lap is
+      // shared out in proportion — with mph (km/h) per mile and an average.
+      function legSplits(taps, a, seg, course, unitShort) {
+        if (!a) return null;
+        const p = legCountPlan(course, seg);
+        const w = legWindow(a, seg, p.gap);
+        const start = seg === 0 ? a.startOffset : a.splits[seg - 1];
+        if (!w || start == null) return null;
+        const marks = lapMarks(taps, w[0], w[1], p.gap);
+        if (!marks.length) return null;
+        if (seg === 2 && p.lap > 0) {
+          const per = unitShort === "km" ? "Km" : "Mile", speed = unitShort === "km" ? "km/h" : "mph";
+          const items = [];
+          let prevT = start, prevD = 0, mileT = start, mile = 1;
+          marks.forEach(t => {
+            const d = prevD + p.lap;
+            while (d >= mile - 1e-9) {
+              const tm = prevT + ((mile - prevD) / (d - prevD)) * (t - prevT);
+              const ms = tm - mileT;
+              items.push({ label: `${per} ${mile}`, ms, extra: ms > 0 ? `${(3600000 / ms).toFixed(1)} ${speed}` : "" });
+              mileT = tm; mile++;
+            }
+            prevT = t; prevD = d;
+          });
+          const dist = marks.length * p.lap, el = marks[marks.length - 1] - start;
+          return { items, avg: el > 0 ? `Average ${(dist / (el / 3600000)).toFixed(1)} ${speed}` : "" };
+        }
+        let prev = start;
+        const items = marks.map((t, k) => { const it = { label: `${seg === 0 ? "Length" : "Lap"} ${k + 1}`, ms: t - prev }; prev = t; return it; });
+        return { items, avg: "" };
+      }
+      // m:ss for splits (h:mm:ss past an hour).
+      function fmtSplit(ms) {
+        if (ms == null || ms < 0) return "—";
+        const t = Math.round(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+        return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+      }
+      // A row of split chips, wrapping; the newest last.
+      function SplitChips({ splits, colour, onDark = false }) {
+        if (!splits || !splits.items.length) return null;
+        return (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {splits.items.map((it, k) => (
+                <span key={k} style={{ display: "inline-flex", gap: 6, alignItems: "baseline", padding: "4px 8px", borderRadius: 4,
+                  background: onDark ? "rgba(255,255,255,0.18)" : TM.bgAlt, color: onDark ? "#FFFFFF" : TM.ink,
+                  borderLeft: `4px solid ${onDark ? "#FFFFFF" : colour}`, fontSize: 14, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                  <span>{it.label}</span><span style={{ fontWeight: 900 }}>{fmtSplit(it.ms)}</span>
+                  {it.extra && <span style={{ fontWeight: 600 }}>{it.extra}</span>}
+                </span>
+              ))}
+            </div>
+            {splits.avg && <div style={{ fontSize: 15, fontWeight: 800, marginTop: 6, color: onDark ? "#FFFFFF" : TM.ink }}>{splits.avg}</div>}
+          </div>
+        );
+      }
       const LEG_COLOUR = { 0: TM.swim, 2: TM.bike, 4: TM.run };
       const LEG_NAME = { 0: "Swim", 2: "Bike", 4: "Run" };
 
@@ -8330,6 +8402,26 @@
                       </div>
                     )}
 
+                    {!(mode === "one" && (picked.length === 0 || lapPicking)) && shown.length === 1 && (() => {
+                      const { a, i, course } = shown[0];
+                      const legs = LAP_LEGS.map(([seg]) => {
+                        if (a.splits[seg] == null) return null;
+                        const unit = UNIT_SHORT[(race.units || {})[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || (seg === 0 ? "yd" : "mi");
+                        const sp = legSplits(lapTaps[i], a, seg, course, unit);
+                        return sp && sp.items.length ? { seg, sp } : null;
+                      }).filter(Boolean);
+                      if (!legs.length) return null;
+                      return (
+                        <div style={{ order: 99, marginTop: 4 }}>
+                          {legs.map(({ seg, sp }) => (
+                            <div key={seg} style={{ ...rowStyle(LEG_COLOUR[seg]), marginTop: 10 }}>
+                              <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: LEG_COLOUR[seg] }}>{LEG_NAME[seg].toUpperCase()} SPLITS</div>
+                              <SplitChips splits={sp} colour={LEG_COLOUR[seg]} />
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {!(mode === "one" && (picked.length === 0 || lapPicking)) && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
                         {shown.length === 0 && (
@@ -8361,7 +8453,7 @@
                                        touchAction: "manipulation" }}>−</button>
                             <button onClick={() => tapLap(race.code, i, race.clock(), nameOf(a))}
                               aria-label={`Count a ${LEG_NAME[seg]} lap for ${nameOf(a)}`}
-                              style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, flex: 1, minWidth: 0, minHeight: big ? 220 : 96,
+                              style={{ display: "flex", flexWrap: big ? "nowrap" : "wrap", alignItems: "center", gap: big ? 10 : 14, flex: 1, minWidth: 0, minHeight: big ? 220 : 96,
                                        padding: big ? "22px 20px" : "12px 16px", flexDirection: big ? "column" : "row",
                                        background: justTapped ? TM.ink : LEG_COLOUR[seg], color: "#FFFFFF", border: "none", borderRadius: 6,
                                        textAlign: big ? "center" : "left", cursor: "pointer", touchAction: "manipulation" }}>
@@ -8376,11 +8468,16 @@
                               </span>
                               <span style={{ fontSize: big ? 36 : 30, fontWeight: 900, order: 3 }}>+1</span>
                               {distLine && (
-                                <span style={{ order: 4, flexBasis: "100%", width: "100%", display: "block" }}>
+                                <span style={{ order: 4, flexBasis: big ? "auto" : "100%", width: "100%", alignSelf: "stretch", display: "block" }}>
                                   <span style={{ display: "block", fontSize: big ? 20 : 15, fontWeight: 800 }}>{distLine}</span>
                                   <span aria-hidden="true" style={{ display: "block", height: big ? 14 : 8, background: "rgba(255,255,255,0.35)", marginTop: 6 }}>
                                     <span style={{ display: "block", height: "100%", width: `${pct}%`, background: "#FFFFFF" }} />
                                   </span>
+                                </span>
+                              )}
+                              {big && (
+                                <span style={{ order: 5, flexBasis: "auto", width: "100%", alignSelf: "stretch", display: "block", textAlign: "left" }}>
+                                  <SplitChips splits={legSplits(lapTaps[i], a, seg, course, legUnit)} colour={LEG_COLOUR[seg]} onDark />
                                 </span>
                               )}
                             </button>
@@ -11242,6 +11339,7 @@
                                 </div>
                                 {side("Add a lap", () => tapLap(liveRaceCode, i, clockMsRef.current, athleteName(ath) || ath.name), !canCount, true)}
                               </div>
+                              <SplitChips splits={ath.started ? legSplits(lapTaps[i], ath, seg, athCourse, legUnit) : null} colour={col} />
                               {!canCount && (
                                 <div style={{ fontSize: 15, fontWeight: 700, marginTop: 8, textAlign: "center" }}>
                                   {!liveRaceCode ? "To count laps: tap Share Live Results, then start the race." : "Counting starts when they start."}
@@ -11252,6 +11350,28 @@
                                   Set a lap length for the {LEG_NAME[seg].toLowerCase()} in setup step 3 to see distance and finish the leg automatically.
                                 </div>
                               )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Splits of legs already finished (swim lengths, bike miles, run laps). */}
+                        {(() => {
+                          const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
+                          const legs = LAP_LEGS.map(([seg]) => {
+                            if (ath.splits[seg] == null) return null;
+                            const unit = UNIT_SHORT[units[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || "mi";
+                            const sp = legSplits(lapTaps[i], ath, seg, athCourse, unit);
+                            return sp && sp.items.length ? { seg, sp } : null;
+                          }).filter(Boolean);
+                          if (!legs.length) return null;
+                          return (
+                            <div style={{ padding: "8px 14px 10px", borderBottom: `2px solid ${TM.line}`, background: "#FFFFFF" }}>
+                              {legs.map(({ seg, sp }) => (
+                                <div key={seg} style={{ marginTop: 4 }}>
+                                  <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: LEG_COLOUR[seg] }}>{LEG_NAME[seg].toUpperCase()} SPLITS</div>
+                                  <SplitChips splits={sp} colour={LEG_COLOUR[seg]} />
+                                </div>
+                              ))}
                             </div>
                           );
                         })()}
