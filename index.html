@@ -1798,7 +1798,7 @@
               if (!container || !document.body.contains(container)) return;
               const athletes = snap.val() || [];
               athletes.forEach((ath, idx) => {
-                if (!ath || !ath.gps) return;
+                if (!ath || !ath.gps || ath.gps.lat == null || ath.gps.lng == null) return;
                 const pos = [ath.gps.lat, ath.gps.lng];
                 const markerId = ath.id || idx;
                 const curSeg = (ath.splits || []).findIndex(s => s === null);
@@ -1860,7 +1860,7 @@
           if (!el || leafletMapRef.current) return;
           const wps = (liveRace.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
           const athletes = liveRace.athletes || [];
-          const firstGps = athletes.find && athletes.find(a => a && a.gps);
+          const firstGps = athletes.find && athletes.find(a => a && a.gps && a.gps.lat != null && a.gps.lng != null);
           const center = wps[0] ? [wps[0].lat, wps[0].lng]
             : firstGps ? [firstGps.gps.lat, firstGps.gps.lng]
             : [37.7749, -122.4194];
@@ -1898,7 +1898,7 @@
             });
           } catch(_) {}
           athletes.forEach && athletes.forEach((ath, idx) => {
-            if (!ath || !ath.gps) return;
+            if (!ath || !ath.gps || ath.gps.lat == null || ath.gps.lng == null) return;
             const pos = [ath.gps.lat, ath.gps.lng];
             const markerId = ath.id || idx;
             const curSeg = (ath.splits || []).findIndex(s => s === null);
@@ -1953,6 +1953,10 @@
         // Lap taps for the race being counted: { athleteIdx: { tapId: { c, by, t } } }.
         // Declared early because the host's bike-finish effect reads it.
         const [lapTaps, setLapTaps] = useState({});
+        // Auto: legs end by themselves on the last lap or at the GPS-miles /
+        // trainer distance. Manual: counts keep adding up, but only the host's
+        // own tap ends a leg. Switchable mid-race from the Race screen.
+        const [autoSplits, setAutoSplits] = useState(true);
         const [emailKind, setEmailKind] = useState("watch");     // watch | results | custom
         const [emailSkip, setEmailSkip] = useState({});           // athlete id → left off this email
         const [emailSubject, setEmailSubject] = useState("");
@@ -3127,7 +3131,7 @@
         // Host-side bike finish — ends the bike leg when the rider's distance reaches
         // the course target: from the trainer, or from their phone's GPS miles.
         useEffect(() => {
-          if (!liveRaceCode) return;
+          if (!liveRaceCode || !autoSplits) return;
           athletes.forEach((ath, i) => {
             if (!ath.started || ath.finished) return;
             if (ath.splits[1] === null || ath.splits[2] !== null) return; // bike not started, or already done
@@ -3144,12 +3148,16 @@
             if (distMi == null || distMi < targetMi) return;
             logSplit(i, 2);
           });
-        }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps]);
+        }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps, autoSplits]);
+
+        useEffect(() => {
+          if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/autoSplits").set(autoSplits).catch(console.error);
+        }, [autoSplits, liveRaceCode]);
 
         // Lap-counted legs (swim, bike or run) end by themselves on the last lap;
         // the last run lap finishes the race.
         useEffect(() => {
-          if (!liveRaceCode) return;
+          if (!liveRaceCode || !autoSplits) return;
           athletes.forEach((ath, i) => {
             const course = courses.find(c => c.id === ath.courseId) || courses[0];
             const seg = currentLapLeg(ath, course);
@@ -3157,7 +3165,7 @@
             const plan = legLapPlan(course, seg);
             if (plan.need > 0 && legLaps(lapTaps[i], ath, seg, course) >= plan.need) logSplit(i, seg);
           });
-        }, [lapTaps, athletes, courses, liveRaceCode]);
+        }, [lapTaps, athletes, courses, liveRaceCode, autoSplits]);
 
         // The roster can be rebuilt (host goes live, adds or removes people), which
         // moves athletes around. A phone signed in as an athlete who's on the list
@@ -3330,7 +3338,7 @@
               if (!container || !document.body.contains(container)) return;
               const athletes = snap.val() || [];
               athletes.forEach((ath, idx) => {
-                if (idx === joinAthIdx || !ath || !ath.gps) return;
+                if (idx === joinAthIdx || !ath || !ath.gps || ath.gps.lat == null || ath.gps.lng == null) return;
                 const pos = [ath.gps.lat, ath.gps.lng];
                 const markerId = `ath-${idx}`;
                 const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
@@ -3365,6 +3373,7 @@
           const liveCourse = (joinLiveData?.courses || []).find(c => c.id === myAth?.courseId) || (joinLiveData?.courses || [])[0];
           const coursebikeType = liveCourse?.bikeType || myCourse?.bikeType || "gps";
           if (coursebikeType === "gps" || coursebikeType === "laps") return;
+          if (joinLiveData && joinLiveData.autoSplits === false) return;   // host switched to Manual
           const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
           const bikeStarted = splits[1] != null;
           const bikeEnded = splits[2] != null;
@@ -3507,6 +3516,7 @@
                           setClockStarted(true);
                           setClockRunning(ld.clockRunning || false);
                           setLiveRaceCode(code);
+                          setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
                           setRaceInitialized(true);
                           setView("race");
                         } else {
@@ -3829,7 +3839,7 @@
             raceName: certConfig.eventName || "Race",
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
-            courses, units,
+            courses, units, autoSplits,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes
           };
@@ -3855,7 +3865,7 @@
             updatedAt: Date.now(),
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes,
-            units, courses,
+            units, courses, autoSplits,
           };
           athletes.forEach((ath, i) => {
             updates[`athletes/${i}/id`]          = ath.id;
@@ -4118,6 +4128,7 @@
             plannedCode: customRaceCode || null,
             listed: raceListed,
             oldCodes: oldRaceCodes,
+            autoSplits,
             savedAt: new Date().toLocaleDateString(),
             ageGroups, courses, units,
             certConfig,
@@ -4148,6 +4159,7 @@
           if (race.code) setRegistrationCode(race.code); else setRegistrationCode(null);
           setCustomRaceCode(race.code || race.plannedCode || friendlyCode());
           setRaceListed(race.listed !== false);
+          setAutoSplits(race.autoSplits !== false);
           setOldRaceCodes(race.oldCodes || []);
           setRegistrationOpen(false);
           stopRegListener();
@@ -4203,6 +4215,7 @@
                   setClockStarted(true);
                   setClockRunning(ld.clockRunning || false);
                   setLiveRaceCode(race.code);
+                  setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
                   // Prefer live athlete state (has splits/started/finished) over saved race state
                   const segs = ld.segments || SEGMENTS;
                   const liveAthletes = (ld.athletes || []).map(a => ({
@@ -4903,7 +4916,7 @@
             const lapMi = (lapWp && lapWp.lapMi > 0 && laps != null) ? +(laps * lapWp.lapMi).toFixed(3) : null;
 
             rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`)
-              .set({ lat, lng, heading, speed,
+              .update({ lat, lng, heading, speed,
                      distanceMi: +totalDistMi.toFixed(3),
                      accuracy: accM != null ? Math.round(accM) : null,
                      laps, lapMi, rejected,
@@ -7320,11 +7333,19 @@
         const [lapFlash, setLapFlash] = useState(null);          // last tap on this phone, for Undo
         const [pocketOn, setPocketOn] = useState(false);
         const lapCode = isHost && liveRaceCode ? liveRaceCode : lapCountCode;
+        // Lap taps are stored under each athlete's gps node — the database rules
+        // already let anyone write there while a race is live, so counting works
+        // without a rules change. Gathered here as { athleteIdx: { tapId: tap } }.
         useEffect(() => {
           if (!lapCode) { setLapTaps({}); return; }
-          const ref = rtdb.ref("liveRaces/" + lapCode + "/lapTaps");
-          const fn = snap => setLapTaps(snap.val() || {});
-          ref.on("value", fn, err => console.warn("lapTaps not readable:", err && err.code));
+          const ref = rtdb.ref("liveRaces/" + lapCode + "/athletes");
+          const fn = snap => {
+            const raw = snap.val() || [];
+            const out = {};
+            Object.keys(raw).forEach(k => { const t = raw[k] && raw[k].gps && raw[k].gps.lapTaps; if (t) out[k] = t; });
+            setLapTaps(out);
+          };
+          ref.on("value", fn, err => console.warn("lap taps not readable:", err && err.code));
           return () => ref.off("value", fn);
         }, [lapCode]);
         useEffect(() => {
@@ -7362,25 +7383,22 @@
           return countLaps(lapTaps[i], a.splits[1], a.splits[2], lapGapMs(courseFor(race, a)));
         }
         async function tapLap(code, idx, cNow, name) {
-          if (!auth.currentUser) {
-            const ok = await ensureViewerAuth();
-            if (!ok) { setLapFlash({ idx, error: "Counting laps needs an account here — sign in, or ask the organiser to switch on anonymous sign-in." }); return; }
-          }
-          const ref = rtdb.ref(`liveRaces/${code}/lapTaps/${idx}`).push();
-          ref.set({ c: Math.round(cNow), by: auth.currentUser.uid, t: Date.now() })
+          if (!auth.currentUser) await ensureViewerAuth();
+          const ref = rtdb.ref(`liveRaces/${code}/athletes/${idx}/gps/lapTaps`).push();
+          ref.set({ c: Math.round(cNow), by: (auth.currentUser && auth.currentUser.uid) || "guest", t: Date.now() })
             .catch(() => setLapFlash({ idx, error: "That lap didn't save — check your signal and tap again." }));
           try { navigator.vibrate && navigator.vibrate(40); } catch(_) {}
           setLapFlash({ idx, id: ref.key, name, at: Date.now() });
         }
         function undoLap(code, idx, id) {
-          rtdb.ref(`liveRaces/${code}/lapTaps/${idx}/${id}`).remove().catch(() => {});
+          rtdb.ref(`liveRaces/${code}/athletes/${idx}/gps/lapTaps/${id}`).remove().catch(() => {});
           setLapFlash(null);
         }
         // The host can take back the most recent tap for a rider, whoever made it.
         function undoLatestLap(idx) {
           const taps = lapTaps[idx] || {};
           const last = Object.keys(taps).sort((x, y) => (taps[y].c || 0) - (taps[x].c || 0))[0];
-          if (last && liveRaceCode) rtdb.ref(`liveRaces/${liveRaceCode}/lapTaps/${idx}/${last}`).remove().catch(() => {});
+          if (last && liveRaceCode) rtdb.ref(`liveRaces/${liveRaceCode}/athletes/${idx}/gps/lapTaps/${last}`).remove().catch(() => {});
         }
         useEffect(() => { if (pocketOn && !joinGpsActive && !bikeRiding) setPocketOn(false); }, [pocketOn, joinGpsActive, bikeRiding]);
 
@@ -7766,6 +7784,22 @@
                     )
                   }
                 </div>
+                {(courses || []).some(c => courseHasLaps(c) || ["distance", "trainer", "spin"].includes(c.bikeType)) && (
+                  <div style={{ marginTop: 14, textAlign: "left" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ ...TM_LABEL, marginBottom: 0 }}>Leg finishes</span>
+                      <div role="radiogroup" aria-label="Leg finishes" style={{ display: "flex", gap: 6, flex: 1, minWidth: 200 }}>
+                        <button role="radio" aria-checked={autoSplits} onClick={() => setAutoSplits(true)} style={segStyle(autoSplits)}>Auto</button>
+                        <button role="radio" aria-checked={!autoSplits} onClick={() => setAutoSplits(false)} style={segStyle(!autoSplits)}>Manual</button>
+                      </div>
+                    </div>
+                    <div style={{ ...TM_CAPTION, marginTop: 6 }}>
+                      {autoSplits
+                        ? "Each leg ends by itself on its last lap or at its distance."
+                        : "Laps and miles still count, but a leg only ends when you tap it below."}
+                    </div>
+                  </div>
+                )}
               </div>}
 
               {/* ── MY RACES (host landing) ── */}
