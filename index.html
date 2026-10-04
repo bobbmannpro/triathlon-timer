@@ -3545,17 +3545,32 @@
                         const ld = liveSnap.val();
                         if (ld.status === "live" && ld.publishedBy === user.uid) {
                           const segs = ld.segments || SEGMENTS;
-                          const restoredAthletes = (ld.athletes || []).map(a => ({
-                            ...freshAthlete(a.name, a.id, a.gender, a.ageGroup),
-                            uid: a.uid || null,
-                            courseId: a.courseId ?? null,
-                            startOffset: a.startOffset ?? null,
-                            splits: Array.from({ length: segs.length }, (_, i) => a.splits?.[i] ?? null),
-                            started: a.started || false,
-                            finished: a.finished || false
-                          }));
+                          // The race this live session came from, for its saved settings and emails.
+                          const savedMatch = savedRaceForCode(code);
+                          const savedByName = new Map(((savedMatch && savedMatch.athletes) || []).map(a => [String(a.name || "").trim().toLowerCase(), a]));
+                          const restoredAthletes = (ld.athletes || []).map(a => {
+                            const sv = savedByName.get(String(a.name || "").trim().toLowerCase()) || {};
+                            return {
+                              ...freshAthlete(a.name, a.id, a.gender, a.ageGroup),
+                              firstName: a.firstName || sv.firstName || "", lastName: a.lastName || sv.lastName || "",
+                              uid: a.uid || sv.uid || null,
+                              courseId: a.courseId ?? null,
+                              dob: a.dob || sv.dob || "",
+                              email: sv.email || "",
+                              raceNumber: a.raceNumber ?? sv.raceNumber ?? null,
+                              startOffset: a.startOffset ?? null,
+                              splits: Array.from({ length: segs.length }, (_, i) => a.splits?.[i] ?? null),
+                              started: a.started || false,
+                              finished: a.finished || false
+                            };
+                          });
                           setAthletes(restoredAthletes);
-                          if (ld.courses && ld.courses.length > 0) setCourses(ld.courses);
+                          // What the host last saved wins; the live race is brought up to date from it.
+                          if (savedMatch) applySavedRaceSettings(savedMatch);
+                          else if (ld.courses && ld.courses.length > 0) setCourses(ld.courses);
+                          if (savedMatch && savedMatch.plannedCode && savedMatch.plannedCode !== code) {
+                            setTimeout(() => moveLiveRaceCode(code, savedMatch.plannedCode, savedMatch.id), 0);
+                          }
                           const elapsed = ld.clockRunning ? (Date.now() - (ld.updatedAt || Date.now())) : 0;
                           const restoredClockMs = (ld.clockMs || 0) + elapsed;
                           offsetRef.current = restoredClockMs;
@@ -4149,7 +4164,15 @@
         function persistRaces(races) {
           setSavedRaces(races);
           localStorage.setItem("tri-saved-races", JSON.stringify(races));
-          if (currentUser) rtdb.ref("users/" + currentUser.uid + "/races").set(races).catch(console.error);
+          // A JSON round trip drops undefined fields, which Firebase would
+          // otherwise reject outright — silently losing the save on refresh.
+          const clean = JSON.parse(JSON.stringify(races));
+          if (currentUser) {
+            try {
+              rtdb.ref("users/" + currentUser.uid + "/races").set(clean)
+                .catch(e => { console.error(e); setSavedFlash({ text: "Saved on this phone, but not to your account — check your connection.", at: Date.now(), error: true }); });
+            } catch (e) { console.error(e); setSavedFlash({ text: "Saved on this phone, but not to your account.", at: Date.now(), error: true }); }
+          }
         }
 
         function mergeAthletesToLibrary(raceAthletes) {
@@ -4172,6 +4195,52 @@
             return la;
           });
           if (toAdd.length > 0 || changed) persistSavedAthletes([...withEmails, ...toAdd]);
+        }
+
+        // A saved race's settings onto the screens, without touching the live
+        // roster or clock — used when a live race reopens after a refresh.
+        function applySavedRaceSettings(race, { keepCourses = false } = {}) {
+          if (!race) return;
+          setLoadedRaceId(race.id);
+          setSaveRaceName(race.name || "");
+          setCustomRaceCode(race.plannedCode || race.code || friendlyCode());
+          setRaceListed(race.listed !== false);
+          setOldRaceCodes(race.oldCodes || []);
+          if (race.units) setUnits(race.units);
+          if (race.certConfig) setCertConfig(race.certConfig);
+          if (race.ageGroups) setAgeGroups(race.ageGroups);
+          if (race.waypoints) setWaypoints(race.waypoints.map(wp => ({ ...wp, lat: wp.lat ?? null, lng: wp.lng ?? null })));
+          if (race.raceRoutes) setRaceRoutes(race.raceRoutes);
+          if (!keepCourses && race.courses && race.courses.length) setCourses(race.courses);
+        }
+        function savedRaceForCode(code) {
+          let list = savedRaces;
+          try { const ls = normSavedRaces(JSON.parse(localStorage.getItem("tri-saved-races") || "[]")); if (ls.length) list = ls; } catch(_) {}
+          return list.find(r => r.code === code || r.plannedCode === code || (r.oldCodes || []).includes(code)) || null;
+        }
+        // The host saved a new code for a race that's live under an old one:
+        // copy the live race to the new code and leave a forwarding note behind.
+        async function moveLiveRaceCode(oldCode, newCode, raceId) {
+          if (!oldCode || !newCode || oldCode === newCode || !auth.currentUser) return false;
+          if (!(await codeIsFree(newCode))) return false;
+          const data = await rtdb.ref("liveRaces/" + oldCode).once("value").then(sn => sn.val()).catch(() => null);
+          if (!data || data.publishedBy !== auth.currentUser.uid) return false;
+          try {
+            await rtdb.ref("liveRaces/" + newCode).set({ ...data, code: newCode, previousCodes: [...(data.previousCodes || []), oldCode], updatedAt: Date.now() });
+            await rtdb.ref("liveRaces/" + oldCode).set({ status: "moved", movedTo: newCode, publishedBy: auth.currentUser.uid, raceName: data.raceName || "", updatedAt: Date.now() });
+          } catch (e) { console.warn("moveLiveRaceCode:", e && e.message); return false; }
+          unlistRace(oldCode);
+          setLiveRaceCode(newCode);
+          setRegistrationCode(newCode);
+          setOldRaceCodes(o => [...new Set([...o, oldCode])]);
+          setSavedRaces(list => list.map(r => r.id === raceId ? { ...r, code: newCode, plannedCode: newCode, oldCodes: [...new Set([...(r.oldCodes || []), oldCode])] } : r));
+          try {
+            const ls = normSavedRaces(JSON.parse(localStorage.getItem("tri-saved-races") || "[]"))
+              .map(r => r.id === raceId ? { ...r, code: newCode, plannedCode: newCode, oldCodes: [...new Set([...(r.oldCodes || []), oldCode])] } : r);
+            localStorage.setItem("tri-saved-races", JSON.stringify(ls));
+            rtdb.ref("users/" + auth.currentUser.uid + "/races").set(JSON.parse(JSON.stringify(ls))).catch(console.error);
+          } catch(_) {}
+          return true;
         }
 
         // Everything on the setup screens, as a saved race stores it.
@@ -4287,8 +4356,10 @@
                   setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
                   // Prefer live athlete state (has splits/started/finished) over saved race state
                   const segs = ld.segments || SEGMENTS;
+                  const byName = new Map(asList(race.athletes).map(a => [String(a.name || "").trim().toLowerCase(), a]));
                   const liveAthletes = (ld.athletes || []).map(a => ({
                     ...freshAthlete(a.name, a.id, a.gender, a.ageGroup),
+                    email: (byName.get(String(a.name || "").trim().toLowerCase()) || {}).email || "",
                     uid: a.uid || null,
                     courseId: a.courseId ?? null,
                     dob: a.dob || "",
@@ -4299,6 +4370,9 @@
                     finished: a.finished || false
                   }));
                   if (liveAthletes.length > 0) setAthletes(liveAthletes);
+                  if (race.plannedCode && race.plannedCode !== race.code) {
+                    setTimeout(() => moveLiveRaceCode(race.code, race.plannedCode, race.id), 0);
+                  }
                   setSetupStep(0); setView("setup");
                   return;
                 }
@@ -7196,7 +7270,7 @@
         async function codeIsFree(code) {
           const c = normCode(code);
           if (codeProblem(c)) return false;
-          const me = currentUser && currentUser.uid;
+          const me = auth.currentUser && auth.currentUser.uid;
           const get = (path) => rtdb.ref(path).once("value").then(s => s.val()).catch(() => null);
           const [tri, swim, bike] = await Promise.all([get("liveRaces/" + c), get("swimLive/" + c), get("bikeFeeds/" + c + "/meta")]);
           if (tri && tri.publishedBy !== me) return false;
@@ -7234,15 +7308,15 @@
         // never athletes or emails, and only for races the host chose to list.
         // It's publicly readable so the list works before anyone signs in.
         function listRace(code, kind, fields) {
-          if (!code || !currentUser) return;
+          if (!code || !auth.currentUser) return;
           rtdb.ref("raceDirectory/" + code).set({
-            kind, hostUid: currentUser.uid,
+            kind, hostUid: auth.currentUser.uid,
             hostName: userProfile?.displayName || [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(" ") || "",
             updatedAt: Date.now(), ...fields,
           }).catch(e => console.warn("raceDirectory not writable yet (publish the rule):", e && e.code));
         }
         function unlistRace(code) {
-          if (code && currentUser) rtdb.ref("raceDirectory/" + code).remove().catch(() => {});
+          if (code && auth.currentUser) rtdb.ref("raceDirectory/" + code).remove().catch(() => {});
         }
 
         // The open triathlon is listed while sign-ups are open or it's live, and
