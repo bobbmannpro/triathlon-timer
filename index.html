@@ -317,23 +317,25 @@
 
 
       // ── Race codes people can say out loud ───────────────────────────────────
-      // A word and a number ("OTTER42") is easy to read off a start sheet or shout
-      // across a pool deck. Words avoid look-alike letters' worst cases and are
-      // all kid-safe. Hosts can type their own instead (e.g. TIGERS24).
-      const FRIENDLY_WORDS = ["OTTER","TIGER","SHARK","EAGLE","ROCKET","COMET","FALCON","PANDA","DOLPHIN","BEAR",
-        "WOLF","HAWK","LION","ORCA","BISON","RAVEN","MOOSE","KOALA","LLAMA","ZEBRA","GECKO","PUMA","STAR","WAVE",
-        "SPLASH","SPRINT","TURBO","BLAZE","STORM","THUNDER","MAPLE","CEDAR","RIVER","LAKE","SUMMIT","CANYON",
-        "PEBBLE","MANGO","LEMON","CHERRY","COCONUT","PEPPER","MARBLE","BANJO","ROBIN","FINCH","HERON","SALMON"];
+      // Four characters at most, so a code is quick to type on a phone and fits
+      // anywhere it's shown: a short word and a digit ("FOX7") or a 4-letter word
+      // ("WOLF"). All kid-safe; no 0 or 1, which read like O and I.
+      const CODE_MAX = 4;
+      const FRIENDLY_WORDS3 = ["FOX","OWL","CUB","BEE","ANT","ELK","YAK","EMU","BAT","RAM","HEN","JAY","COD","EEL","KOI",
+        "APE","DOG","CAT","PIG","COW","SUN","SKY","ICE","GEM","ACE","JET","ZAP","POP","FUN","ZIP","SEA","BAY","OAK","FIN"];
+      const FRIENDLY_WORDS4 = ["WOLF","HAWK","LION","ORCA","PUMA","STAR","WAVE","BEAR","LAKE","FROG","DUCK","SEAL","KITE",
+        "MOON","SWIM","BIKE","RACE","ZOOM","DASH","GOAL","LEAP","TIDE","REEF","DOVE","LYNX","TUNA","CRAB","MOTH","WREN"];
       function friendlyCode() {
-        const w = FRIENDLY_WORDS[Math.floor(Math.random() * FRIENDLY_WORDS.length)];
-        return w + String(10 + Math.floor(Math.random() * 90));
+        const pick = (a) => a[Math.floor(Math.random() * a.length)];
+        return Math.random() < 0.6 ? pick(FRIENDLY_WORDS3) + String(2 + Math.floor(Math.random() * 8)) : pick(FRIENDLY_WORDS4);
       }
       // What people type is forgiving: "tigers 24", "Tigers-24" and "TIGERS24"
       // are the same code.
       function normCode(s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12); }
       function codeProblem(c) {
         if (!c) return "Enter a code.";
-        if (c.length < 4) return "At least 4 letters or numbers.";
+        if (c.length < 3) return "At least 3 letters or numbers.";
+        if (c.length > CODE_MAX) return "Codes are 4 letters or numbers at most — tap New idea or type a shorter one.";
         return null;
       }
 
@@ -783,7 +785,7 @@
                 <label htmlFor={nameId + "-code"} style={TM_LABEL}>Race code — what parents type to watch</label>
                 <div style={{ display: "flex", gap: 8 }}>
                   <input id={nameId + "-code"} value={code || ""} disabled={codeLocked} autoCapitalize="characters" autoComplete="off"
-                    onChange={e => onCode(normCode(e.target.value))} placeholder="TIGERS24"
+                    onChange={e => onCode(normCode(e.target.value).slice(0, CODE_MAX))} placeholder="FOX7"
                     style={{ flex: 1, minWidth: 0, background: codeLocked ? TM.bgAlt : "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
                              padding: "4px 14px", color: TM.ink, fontSize: 28, fontWeight: 900, letterSpacing: 2, outline: "none" }} />
                   {!codeLocked && (
@@ -797,7 +799,7 @@
                     : codeStatus === "invalid" ? "✕ " + (codeProblem(code) || "")
                     : codeStatus === "free" ? "✓ Available"
                     : codeStatus === "checking" ? "Checking…"
-                    : "A word and a number is easiest to say out loud. Letters and numbers only."}
+                    : "Up to 4 letters or numbers, like FOX7 or WOLF."}
                 </div>
                 {codeLocked && onChangeLocked && !changing && (
                   <button type="button" onClick={() => { setChanging(true); setDraft(friendlyCode()); setChangeErr(""); }}
@@ -808,7 +810,7 @@
                     <label htmlFor={nameId + "-newcode"} style={TM_LABEL}>New code</label>
                     <div style={{ display: "flex", gap: 8 }}>
                       <input id={nameId + "-newcode"} value={draft} autoCapitalize="characters" autoComplete="off"
-                        onChange={e => { setDraft(normCode(e.target.value)); setChangeErr(""); }}
+                        onChange={e => { setDraft(normCode(e.target.value).slice(0, CODE_MAX)); setChangeErr(""); }}
                         style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
                                  padding: "4px 14px", color: TM.ink, fontSize: 28, fontWeight: 900, letterSpacing: 2, outline: "none" }} />
                       <button type="button" onClick={() => setDraft(friendlyCode())} style={{ ...btnStyle(TM.ink, true), padding: "0 14px" }}>New idea</button>
@@ -7345,7 +7347,7 @@
         // code box doesn't know which kind it's looking for.
         async function codeIsFree(code) {
           const c = normCode(code);
-          if (codeProblem(c)) return false;
+          if (c.length < 3) return false;
           const me = auth.currentUser && auth.currentUser.uid;
           const get = (path) => rtdb.ref(path).once("value").then(s => s.val()).catch(() => null);
           const [tri, swim, bike] = await Promise.all([get("liveRaces/" + c), get("swimLive/" + c), get("bikeFeeds/" + c + "/meta")]);
@@ -8508,7 +8510,7 @@
                     <label htmlFor="spectate-code" style={{ ...TM_LABEL, color: "#FFFFFF" }}>Race code</label>
                     <input id="spectate-code" value={spectateCode} autoCapitalize="characters" autoComplete="off"
                       onChange={e => { setSpectateCode(normCode(e.target.value)); setSpectateError(""); }}
-                      placeholder="ABC123"
+                      placeholder="FOX7"
                       style={{ width: "100%", background: "#FFFFFF", border: "none", borderRadius: 6, padding: "6px 14px",
                                color: TM.ink, fontSize: 34, fontWeight: 900, letterSpacing: 4, textAlign: "center",
                                minHeight: 64, outline: "none" }} />
@@ -9143,7 +9145,7 @@
                       <div style={{ display: "flex", gap: 8 }}>
                         <input value={joinCode} onChange={e => { setJoinCode(normCode(e.target.value)); setRegError(""); }}
                           onKeyDown={e => e.key === "Enter" && joinRaceByCode()}
-                          placeholder="e.g. ABC123" maxLength={12}
+                          placeholder="e.g. FOX7" maxLength={12}
                           style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "6px 14px", color: TM.ink, fontSize: 24, fontWeight: 900, fontFamily: "var(--tm-font)", letterSpacing: 2, outline: "none", textAlign: "center" }} />
                         <button onClick={() => joinRaceByCode()} disabled={regWorking} style={{ ...btnStyle("#04613F"), padding: "12px 20px", fontSize: 14, opacity: regWorking ? 0.6 : 1 }}>{regWorking ? "…" : "Find Race"}</button>
                       </div>
@@ -13448,7 +13450,7 @@
                             onChange={e => setSwimLaneCode(normCode(e.target.value))}
                             onKeyDown={e => e.key === "Enter" && joinLaneTimer()}
                             maxLength={12}
-                            placeholder="ABC123"
+                            placeholder="FOX7"
                             style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:16, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
                         </div>
@@ -13634,7 +13636,7 @@
                             onChange={e => setSwimWatchCode(normCode(e.target.value))}
                             onKeyDown={e => e.key === "Enter" && joinSwimWatch()}
                             maxLength={12}
-                            placeholder="ABC123"
+                            placeholder="FOX7"
                             style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"10px 14px", color:"#0B0D10", fontSize:18, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
                         </div>
@@ -13830,7 +13832,7 @@
                         </div>
                         <div style={S.row}>
                           <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
-                            placeholder="ABC123" maxLength={12}
+                            placeholder="FOX7" maxLength={12}
                             style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           <button onClick={() => { if ((bikeWatchCode||"").trim().length >= 4) setBikeView("feed"); }}
                             style={{ ...btnStyle("#8A5A00"), whiteSpace:"nowrap" }}>Follow</button>
@@ -14435,7 +14437,7 @@
                         <div style={S.label}>Publishing to</div>
                         <div style={S.row}>
                           <input value={bikeRideCode || ""} onChange={e => setBikeRideCode(normCode(e.target.value))}
-                            placeholder="ABC123" maxLength={12} disabled={bikeRiding}
+                            placeholder="FOX7" maxLength={12} disabled={bikeRiding}
                             style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center", opacity: bikeRiding ? 0.6 : 1 }} />
                         </div>
                         {bikeFeedList.length > 0 && !bikeRiding && (
@@ -14677,7 +14679,7 @@
                           <div style={S.label}>Follow a ride</div>
                           <div style={S.row}>
                             <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
-                              placeholder="ABC123" maxLength={12}
+                              placeholder="FOX7" maxLength={12}
                               style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           </div>
                         </div>
@@ -14739,7 +14741,7 @@
                               <div style={S.label}>Follow another rider</div>
                               <div style={S.row}>
                                 <input value={bikeAddCode} onChange={e => setBikeAddCode(normCode(e.target.value))}
-                                  placeholder="ABC123" maxLength={12}
+                                  placeholder="FOX7" maxLength={12}
                                   style={{ ...S.input, fontFamily:"monospace", fontSize:16, letterSpacing:1.2, textAlign:"center" }} />
                                 <button onClick={() => {
                                   const c = (bikeAddCode || "").trim().toUpperCase();
