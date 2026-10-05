@@ -11194,12 +11194,17 @@
                       ) : (
                         <div style={{ ...rowStyle(TM.live), display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "6px 10px", textTransform: "none", letterSpacing: 0 }}>
                           <span style={{ background: TM.live, color: "#FFFFFF", fontWeight: 900, fontSize: 14, letterSpacing: 1.2, padding: "3px 8px", borderRadius: 4 }}>● LIVE</span>
-                          <span style={{ ...TM_NUM, fontSize: 22, letterSpacing: 0.5, color: TM.ink, flex: 1, minWidth: 0 }} title="Anyone with this code can follow along">{liveRaceCode}</span>
+                          {/* The code never shrinks below its own width: a long one gets a smaller
+                              font, and if it still can't fit, the buttons wrap underneath. */}
+                          <span style={{ ...TM_NUM, fontSize: String(liveRaceCode).length > 8 ? 18 : 22, letterSpacing: 0.5, color: TM.ink, flex: "1 0 auto", whiteSpace: "nowrap" }} title="Anyone with this code can follow along">{liveRaceCode}</span>
+                          <span style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
                           <button onClick={() => { setEmailKind("watch"); setView("email"); }} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>✉ Email</button>
                           {/* Stopping deletes the live race for everyone watching — ask first. */}
                           {!stopLiveConfirm ? (
                             <button onClick={() => setStopLiveConfirm(true)} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>Stop</button>
-                          ) : (
+                          ) : null}
+                          </span>
+                          {stopLiveConfirm && (
                             <div style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                               <span style={{ fontSize: 15, fontWeight: 800, flex: "1 1 160px" }}>Stop sharing? Parents and athletes lose the live race.</span>
                               <button onClick={() => { setStopLiveConfirm(false); if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } unlistRace(liveRaceCode); setLiveRaceCode(null); localStorage.removeItem("tri-active-live"); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
