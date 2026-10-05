@@ -350,7 +350,9 @@
         const total = parseFloat(course && course.bikeMiles) || 0;
         return lap > 0 && total > 0 ? Math.max(1, Math.round(total / lap)) : 0;
       }
-      function lapGapMs(course) { return Math.max(3, parseFloat(course && course.minLapSec) || 20) * 1000; }
+      // Every tap is a lap — no "fastest lap" window. (Taps were once merged when
+      // close together, which swallowed real laps.)
+      function lapGapMs() { return 0; }
       // A lap is a group of taps from DIFFERENT people within the fastest-lap
       // time of each other — two people counting the same lap. A second tap from
       // the same person is always a new lap (a mis-tap is what − is for).
@@ -377,7 +379,7 @@
       const LAP_LEGS = [[0, "Swim", "swim"], [2, "Bike", "bike"], [4, "Run", "run"]];
       function legLapPlan(course, seg) {
         if (!course) return null;
-        const gapFor = (sec, dflt) => Math.max(3, parseFloat(sec) || dflt) * 1000;
+        const gapFor = () => 0;   // every tap counts
         const plan = (total, lap, gapMs) => {
           const t = parseFloat(total) || 0, l = parseFloat(lap) || 0;
           return { need: t > 0 && l > 0 ? Math.max(1, Math.round(t / l)) : 0, gap: gapMs, lap: l, total: t };
@@ -391,7 +393,7 @@
       function legWindow(a, seg, gap) {
         const start = seg === 0 ? a.startOffset : a.splits[seg - 2];
         if (start == null) return null;
-        return [seg === 0 ? start : start + gap, a.splits[seg]];
+        return [seg === 0 ? start : start + Math.max(1, gap || 0), a.splits[seg]];
       }
       function legLaps(taps, a, seg, course) {
         const p = legLapPlan(course, seg);
@@ -420,7 +422,7 @@
       // lap length also gets distance, progress and an automatic finish; without
       // one it's a plain lap count.
       function legCountPlan(course, seg) {
-        return legLapPlan(course, seg) || { need: 0, gap: (seg === 0 ? 15 : seg === 2 ? 20 : 30) * 1000, lap: 0, total: 0 };
+        return legLapPlan(course, seg) || { need: 0, gap: 0, lap: 0, total: 0 };
       }
       function legCount(taps, a, seg, course) {
         const p = legCountPlan(course, seg);
@@ -7986,16 +7988,17 @@
                   so stepping back to Setup mid-race never hides the clock. It no
                   longer pins itself over Setup forms or finished Results. */}
               {(view === "race" || (clockStarted && ["setup", "results"].includes(view))) && <div ref={clockBannerRef} style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "10px 12px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
-                {/* One short row while it's pinned: clock, the button you need now, More. */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div className="tm-clock" style={{ fontSize: 42, fontWeight: 900, color: clockRunning ? TM.run : clockStarted ? TM.warn : TM.ink, lineHeight: 1, flex: 1, textAlign: "left", minWidth: 0 }}>
-                    {formatTime(clockMs)}
-                  </div>
+                {/* The clock gets the whole top row, as big as the screen allows;
+                    the button you need now and More sit underneath. */}
+                <div className="tm-clock" style={{ fontSize: "clamp(44px, 14vw, 76px)", fontWeight: 900, color: clockRunning ? TM.run : clockStarted ? TM.warn : TM.ink, lineHeight: 1, textAlign: "center", whiteSpace: "nowrap" }}>
+                  {formatTime(clockMs)}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
                   {!clockStarted
-                    ? <button onClick={startClock} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px", fontSize: 16 }}>Start clock</button>
+                    ? <button onClick={startClock} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px", fontSize: 16, flex: 1 }}>Start clock</button>
                     : clockRunning
-                      ? <button onClick={pauseClock} style={{ ...btnStyle(TM.warn), minHeight: 46, padding: "0 16px", fontSize: 16 }}>Pause</button>
-                      : <button onClick={resumeClock} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px", fontSize: 16 }}>Resume</button>}
+                      ? <button onClick={pauseClock} style={{ ...btnStyle(TM.warn), minHeight: 46, padding: "0 16px", fontSize: 16, flex: 1 }}>Pause</button>
+                      : <button onClick={resumeClock} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px", fontSize: 16, flex: 1 }}>Resume</button>}
                   <button onClick={() => { setClockMore(m => !m); setResetConfirm(false); }} aria-expanded={clockMore}
                     style={{ ...btnStyle(TM.ink, true), minHeight: 46, padding: "0 12px", fontSize: 16 }}>{clockMore ? "Less" : "More"}</button>
                 </div>
@@ -8374,7 +8377,7 @@
                     <div style={{ ...TM_CAPTION, fontSize: 16, marginTop: 8 }}>
                       {mode === "self"
                         ? "Tap each time you cross the lap line. Each leg ends by itself on its last lap."
-                        : "Tap each time they cross your line. If someone else is counting the same athlete, taps a few seconds apart count once — nothing doubles."}
+                        : "Tap each time they cross your line. If someone else is counting the same athlete, every tap adds a lap, so only one person should count each athlete."}
                     </div>
 
                     {mode === "host" && (
@@ -10592,17 +10595,8 @@
                                       <div style={{ fontSize: 22, fontWeight: 900, paddingBottom: 8 }}>
                                         {plan && plan.need ? `= ${plan.need} laps of ${fmtLegDist(plan.lap, short)}` : "→ pick a lap length"}
                                       </div>
-                                      <div style={{ flexBasis: "100%" }}>
-                                        <label htmlFor={`${gapKey}-${course.id}`} style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>Fastest possible lap</label>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                          <input id={`${gapKey}-${course.id}`} type="number" min="3" step="1" value={course[gapKey] ?? (seg === "swim" ? 15 : 30)}
-                                            onChange={e => updateCourse(course.id, gapKey, Number(e.target.value))}
-                                            style={{ width: 120, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px", color: TM.ink, textAlign: "center", outline: "none" }} />
-                                          <span style={{ fontWeight: 800, fontSize: 17 }}>seconds</span>
-                                        </div>
-                                        <div style={{ fontSize: 15, fontWeight: 600, marginTop: 6 }}>
-                                          The {seg} ends by itself on the last lap{seg === "run" ? ", which finishes the race" : ""}. Taps closer together than this count as one lap.
-                                        </div>
+                                      <div style={{ flexBasis: "100%", fontSize: 15, fontWeight: 600 }}>
+                                        The {seg} ends by itself on the last lap{seg === "run" ? ", which finishes the race" : ""}.
                                       </div>
                                     </div>
                                   )}
@@ -10636,16 +10630,6 @@
                                     </div>
                                     <div style={{ fontSize: 22, fontWeight: 900, paddingBottom: 8 }}>
                                       {lapsNeeded(course) ? `= ${lapsNeeded(course)} circles` : "→ enter circles per mile"}
-                                    </div>
-                                    <div style={{ flexBasis: "100%" }}>
-                                      <label htmlFor={`lapgap-${course.id}`} style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>Fastest possible lap</label>
-                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                        <input id={`lapgap-${course.id}`} type="number" min="3" step="1" value={course.minLapSec ?? 20}
-                                          onChange={e => updateCourse(course.id, "minLapSec", Number(e.target.value))}
-                                          style={{ width: 120, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px", color: TM.ink, textAlign: "center", outline: "none" }} />
-                                        <span style={{ fontWeight: 800, fontSize: 17 }}>seconds</span>
-                                      </div>
-                                      <div style={{ fontSize: 15, fontWeight: 600, marginTop: 6 }}>Taps closer together than this count as one lap, so two people counting the same rider don't double it.</div>
                                     </div>
                                   </div>
                                 )}
