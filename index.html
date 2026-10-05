@@ -2060,6 +2060,10 @@
         // Lap taps for the race being counted: { athleteIdx: { tapId: { c, by, t } } }.
         // Declared early because the host's bike-finish effect reads it.
         const [lapTaps, setLapTaps] = useState({});
+        // The race screen shows one athlete's lap counter at a time — tap a name.
+        const [lapOpen, setLapOpen] = useState(null);
+        const [clockMore, setClockMore] = useState(false);
+        const [stopLiveConfirm, setStopLiveConfirm] = useState(false);
         // Auto: legs end by themselves on the last lap or at the GPS-miles /
         // trainer distance. Manual: counts keep adding up, but only the host's
         // own tap ends a leg. Switchable mid-race from the Race screen.
@@ -7979,50 +7983,49 @@
               {/* STOPWATCH — the Race screen, plus anywhere else *while it's running*,
                   so stepping back to Setup mid-race never hides the clock. It no
                   longer pins itself over Setup forms or finished Results. */}
-              {(view === "race" || (clockStarted && ["setup", "results"].includes(view))) && <div ref={clockBannerRef} style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "14px 20px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
-                <div className="tm-clock" style={{ fontSize: 64, fontWeight: 900, color: clockRunning ? TM.run : clockStarted ? TM.warn : TM.ink, lineHeight: 1 }}>
-                  {formatTime(clockMs)}
-                </div>
-                <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 12, flexWrap: "wrap" }}>
+              {(view === "race" || (clockStarted && ["setup", "results"].includes(view))) && <div ref={clockBannerRef} style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "10px 12px", marginBottom: 16, textAlign: "center", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 6px 24px rgba(0,0,0,0.6)" }}>
+                {/* One short row while it's pinned: clock, the button you need now, More. */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div className="tm-clock" style={{ fontSize: 42, fontWeight: 900, color: clockRunning ? TM.run : clockStarted ? TM.warn : TM.ink, lineHeight: 1, flex: 1, textAlign: "left", minWidth: 0 }}>
+                    {formatTime(clockMs)}
+                  </div>
                   {!clockStarted
-                    ? <button onClick={startClock} style={btnStyle("#0B3FCC")}>Start Clock</button>
+                    ? <button onClick={startClock} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px", fontSize: 16 }}>Start clock</button>
                     : clockRunning
-                      ? <button onClick={pauseClock} style={btnStyle("#8A5A00")}>Pause</button>
-                      : <button onClick={resumeClock} style={btnStyle("#04613F")}>Resume</button>
-                  }
-                  <button onClick={resetClock} title="Put the clock back to zero — athlete times are untouched"
-                    style={btnStyle(TM.ink, true)}>Clock to zero</button>
-                  {!resetConfirm
-                    ? <button onClick={() => setResetConfirm(true)} title="Clear every time and the clock; keep the roster"
-                        style={btnStyle(TM.live, true)}>Reset all times</button>
-                    : (
-                      <div role="alertdialog" aria-label="Reset all times" style={{ ...rowStyle(TM.live), width: "100%", textAlign: "left" }}>
-                        <div style={{ fontSize: 17, fontWeight: 800 }}>Clear every time and put the clock to zero?</div>
-                        <div style={TM_CAPTION}>
-                          Names, bibs and emails stay.{liveRaceCode ? " Watchers and athletes' phones will see the times clear too." : ""}
-                        </div>
-                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                          <button onClick={resetTimers} style={{ ...btnStyle(TM.live), flex: 1 }}>Yes, reset</button>
-                          <button onClick={() => setResetConfirm(false)} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Keep times</button>
-                        </div>
-                      </div>
-                    )
-                  }
+                      ? <button onClick={pauseClock} style={{ ...btnStyle(TM.warn), minHeight: 46, padding: "0 16px", fontSize: 16 }}>Pause</button>
+                      : <button onClick={resumeClock} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px", fontSize: 16 }}>Resume</button>}
+                  <button onClick={() => { setClockMore(m => !m); setResetConfirm(false); }} aria-expanded={clockMore}
+                    style={{ ...btnStyle(TM.ink, true), minHeight: 46, padding: "0 12px", fontSize: 16 }}>{clockMore ? "Less" : "More"}</button>
                 </div>
-                {(courses || []).some(c => courseHasLaps(c) || ["distance", "trainer", "spin"].includes(c.bikeType)) && (
-                  <div style={{ marginTop: 14, textAlign: "left" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <span style={{ ...TM_LABEL, marginBottom: 0 }}>Leg finishes</span>
-                      <div role="radiogroup" aria-label="Leg finishes" style={{ display: "flex", gap: 6, flex: 1, minWidth: 200 }}>
-                        <button role="radio" aria-checked={autoSplits} onClick={() => setAutoSplits(true)} style={segStyle(autoSplits)}>Auto</button>
-                        <button role="radio" aria-checked={!autoSplits} onClick={() => setAutoSplits(false)} style={segStyle(!autoSplits)}>Manual</button>
+                {clockMore && (
+                  <div style={{ marginTop: 10, textAlign: "left" }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={resetClock} title="Put the clock back to zero — athlete times are untouched"
+                        style={{ ...btnStyle(TM.ink, true), minHeight: 44, padding: "0 12px", fontSize: 15, flex: 1 }}>Clock to zero</button>
+                      {!resetConfirm && (
+                        <button onClick={() => setResetConfirm(true)} title="Clear every time and the clock; keep the roster"
+                          style={{ ...btnStyle(TM.live, true), minHeight: 44, padding: "0 12px", fontSize: 15, flex: 1 }}>Reset all times</button>
+                      )}
+                    </div>
+                    {resetConfirm && (
+                      <div role="alertdialog" aria-label="Reset all times" style={{ ...rowStyle(TM.live), marginTop: 8 }}>
+                        <div style={{ fontSize: 16, fontWeight: 800 }}>Clear every time and put the clock to zero?</div>
+                        <div style={TM_CAPTION}>Names, bibs and emails stay.{liveRaceCode ? " Watchers and athletes' phones will see the times clear too." : ""}</div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button onClick={resetTimers} style={{ ...btnStyle(TM.live), minHeight: 44, flex: 1, fontSize: 15 }}>Yes, reset</button>
+                          <button onClick={() => setResetConfirm(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 44, flex: 1, fontSize: 15 }}>Keep times</button>
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ ...TM_CAPTION, marginTop: 6 }}>
-                      {autoSplits
-                        ? "Each leg ends by itself on its last lap or at its distance."
-                        : "Laps and miles still count, but a leg only ends when you tap it below."}
-                    </div>
+                    )}
+                    {(courses || []).some(c => courseHasLaps(c) || ["distance", "trainer", "spin"].includes(c.bikeType)) && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase" }}>Leg finishes</span>
+                        <div role="radiogroup" aria-label="Leg finishes" style={{ display: "flex", gap: 6, flex: 1, minWidth: 180 }}>
+                          <button role="radio" aria-checked={autoSplits} onClick={() => setAutoSplits(true)} style={{ ...segStyle(autoSplits), minHeight: 44, fontSize: 15 }}>Auto</button>
+                          <button role="radio" aria-checked={!autoSplits} onClick={() => setAutoSplits(false)} style={{ ...segStyle(!autoSplits), minHeight: 44, fontSize: 15 }}>Manual</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>}
@@ -11143,11 +11146,8 @@
                 <div>
                   {/* Moved off Setup: these are the taps you make on *this* screen,
                       so they belong where you're about to make them. */}
-                  <div style={{ marginBottom: 14, background: "#EFEDE8", borderLeft: "3px solid #0B3FCC", borderRadius: 4, padding: "10px 14px", fontSize: 14, color: "#3D434B" }}>
-                    {raceMode === "simultaneous"
-                      ? <>All athletes start the moment you press <strong style={{ color: "#8A5A00" }}>START RACE</strong>. Tap segments in order — <strong style={{ color: "#04613F" }}>Run</strong> ends their race. Use <strong style={{ color: "#04613F" }}>Edit Times</strong> to correct any mis-tap.</>
-                      : <>Tap <strong style={{ color: "#04613F" }}>Send Off</strong> per athlete at dive-in, or <strong style={{ color: "#8A5A00" }}>Send Off All</strong> for a mass start. Tap segments in order — <strong style={{ color: "#04613F" }}>Run</strong> ends their race. Use <strong style={{ color: "#04613F" }}>Edit Times</strong> to correct any mis-tap.</>
-                    }
+                  <div style={{ marginBottom: 10, fontSize: 14, fontWeight: 600, color: TM.inkMuted }}>
+                    {raceMode === "simultaneous" ? "Start Race starts everyone." : "Send off each athlete as they go."} Tap the next leg to log a split; tap a name for its lap counter.
                   </div>
                   {!clockStarted && (
                     <div style={{ background: "#EFEDE8", border: `2px solid ${raceMode === "simultaneous" ? "#8A5A00" : "#0B3FCC"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
@@ -11192,13 +11192,21 @@
                           {livePublishError && <div style={{ fontSize: 14, color: "#B3001B", marginTop: 6, maxWidth: 280, lineHeight: 1.4 }}>{livePublishError}</div>}
                         </div>
                       ) : (
-                        <div style={{ ...rowStyle(TM.live), display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, textTransform: "none", letterSpacing: 0 }}>
-                          <span style={{ background: TM.live, color: "#FFFFFF", fontWeight: 900, fontSize: 14, letterSpacing: 1.2, padding: "4px 10px", borderRadius: 4 }}>● LIVE</span>
-                          <span style={{ ...TM_NUM, fontSize: 30, letterSpacing: 1, color: TM.ink }}>{liveRaceCode}</span>
-                          <span style={{ ...TM_CAPTION, flex: "1 1 160px" }}>Anyone with this code can follow along.</span>
-                          <button onClick={() => { setEmailKind("watch"); setView("email"); }} style={{ ...btnStyle(TM.ink, true), padding: "0 14px", fontSize: 15 }}>✉ Email families</button>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRaceCode(null); localStorage.removeItem("tri-active-live"); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
-                            style={{ background: "none", border: "none", color: "#3D434B", cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>&times;</button>
+                        <div style={{ ...rowStyle(TM.live), display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "6px 10px", textTransform: "none", letterSpacing: 0 }}>
+                          <span style={{ background: TM.live, color: "#FFFFFF", fontWeight: 900, fontSize: 14, letterSpacing: 1.2, padding: "3px 8px", borderRadius: 4 }}>● LIVE</span>
+                          <span style={{ ...TM_NUM, fontSize: 22, letterSpacing: 0.5, color: TM.ink, flex: 1, minWidth: 0 }} title="Anyone with this code can follow along">{liveRaceCode}</span>
+                          <button onClick={() => { setEmailKind("watch"); setView("email"); }} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>✉ Email</button>
+                          {/* Stopping deletes the live race for everyone watching — ask first. */}
+                          {!stopLiveConfirm ? (
+                            <button onClick={() => setStopLiveConfirm(true)} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>Stop</button>
+                          ) : (
+                            <div style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 15, fontWeight: 800, flex: "1 1 160px" }}>Stop sharing? Parents and athletes lose the live race.</span>
+                              <button onClick={() => { setStopLiveConfirm(false); if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } unlistRace(liveRaceCode); setLiveRaceCode(null); localStorage.removeItem("tri-active-live"); rtdb.ref("liveRaces/" + liveRaceCode).remove().catch(console.error); }}
+                                style={{ ...btnStyle(TM.live), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Yes, stop</button>
+                              <button onClick={() => setStopLiveConfirm(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Keep live</button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -11253,15 +11261,18 @@
                         overflow: "hidden",
                       }}>
                         {/* Header: name, age, chip time, current leg time and Edit Times on one line. */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `2px solid ${TM.line}`, background: "#FFFFFF" }}>
-                          <span style={{ ...TM_NUM, fontSize: 24, letterSpacing: -0.5, color: done ? TM.run : TM.ink, minWidth: 22 }}>{i + 1}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: `2px solid ${TM.line}`, background: "#FFFFFF" }}>
+                          <span style={{ ...TM_NUM, fontSize: 18, letterSpacing: -0.5, color: done ? TM.run : TM.ink, minWidth: 18 }}>{i + 1}</span>
                           {/* The GPS thumbnail is for checking phones before the start; it goes once the race is on. */}
                           {!clockStarted && !ath.started && athleteUsesGps(ath) && gpsHealth(i).state !== "none" && (
                             <RaceGpsThumb route={raceRoutes.bike} track={athleteTrackRef.current[i]} color={gpsHealth(i).color} state={gpsHealth(i).state} />
                           )}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                              <span style={{ fontSize: 18, fontWeight: 900, color: TM.ink }}>{ath.name}</span>
+                          {/* Tapping the name opens this athlete's lap counter. */}
+                          <button onClick={() => setLapOpen(o => o === i ? null : i)} aria-expanded={lapOpen === i}
+                            title="Show the lap counter"
+                            style={{ flex: 1, minWidth: 0, minHeight: 44, background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: TM.ink, fontWeight: 500 }}>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 16, fontWeight: 900, color: TM.ink, textDecoration: lapOpen === i ? "underline" : "none" }}>{ath.name}</span>
                               {ath.raceNumber != null && <span style={{ fontSize: 14, fontWeight: 800, color: TM.inkMuted }}>#{ath.raceNumber}</span>}
                               <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>
                                 {ath.dob && calcAge(ath.dob) !== null ? `Age ${calcAge(ath.dob)}` : ath.ageGroup}
@@ -11271,27 +11282,42 @@
                               )}
                               {athleteHrData[i] && <span style={{ fontSize: 14, fontWeight: 800, color: TM.live }}>♥ {athleteHrData[i].bpm}</span>}
                             </div>
-                            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
-                              <span style={{ fontSize: 15, fontWeight: 700, color: TM.inkMuted }}>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 1, fontVariantNumeric: "tabular-nums" }}>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>
                                 Chip <span style={{ color: TM.ink, fontWeight: 900 }}>{ath.started ? formatElapsed(done ? totalChipTime(ath) : chipElapsed) : "—"}</span>
                               </span>
                               {!done && ath.started && liveSegMs !== null && next >= 0 && (
-                                <span style={{ fontSize: 15, fontWeight: 700, color: TM.inkMuted }}>
+                                <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>
                                   {SEGMENTS[next]} <span style={{ color: [0, 2, 4].includes(next) ? LEG_COLOUR[next] : TM.ink, fontWeight: 900 }}>{formatElapsed(liveSegMs)}</span>
                                 </span>
                               )}
                               {done && gt !== null && (
-                                <span style={{ fontSize: 15, fontWeight: 700, color: TM.inkMuted }}>Gun <span style={{ color: TM.ink, fontWeight: 900 }}>{formatElapsed(gt)}</span></span>
+                                <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>Gun <span style={{ color: TM.ink, fontWeight: 900 }}>{formatElapsed(gt)}</span></span>
                               )}
                             </div>
-                          </div>
+                          </button>
+                          {/* Laps so far on this leg — tap to count. */}
+                          {!done && ath.started && countLegNow(ath) != null && (() => {
+                            const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
+                            const seg = countLegNow(ath), plan = legCountPlan(athCourse, seg);
+                            const n = legCount(lapTaps[i], ath, seg, athCourse);
+                            return (
+                              <button onClick={() => setLapOpen(o => o === i ? null : i)} aria-expanded={lapOpen === i}
+                                aria-label={`${LEG_NAME[seg]} laps ${n}${plan.need ? " of " + plan.need : ""} — show counter`}
+                                style={{ minHeight: 40, minWidth: 54, padding: "0 8px", borderRadius: 6, cursor: "pointer", fontWeight: 900, fontSize: 15,
+                                         fontVariantNumeric: "tabular-nums", background: lapOpen === i ? LEG_COLOUR[seg] : "#FFFFFF",
+                                         color: lapOpen === i ? "#FFFFFF" : LEG_COLOUR[seg], border: `2px solid ${LEG_COLOUR[seg]}` }}>
+                                {n}{plan.need ? `/${plan.need}` : ""}
+                              </button>
+                            );
+                          })()}
                           {done && <span style={{ fontSize: 14, fontWeight: 900, color: TM.run, letterSpacing: 1 }}>DONE</span>}
                           {!ath.started && clockStarted && (
-                            <button onClick={() => sendOff(i)} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 14px" }}>Send off</button>
+                            <button onClick={() => sendOff(i)} style={{ ...btnStyle(TM.ink), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Send off</button>
                           )}
                           {ath.started && (
-                            <button onClick={() => openEdit(i)} style={{ ...btnStyle(TM.ink, !isEditing), padding: "0 12px", fontSize: 15 }}>
-                              {isEditing ? "Cancel" : "Edit times"}
+                            <button onClick={() => openEdit(i)} style={{ ...btnStyle(TM.ink, !isEditing), minHeight: 40, padding: "0 10px", fontSize: 15 }}>
+                              {isEditing ? "Cancel" : "Edit"}
                             </button>
                           )}
                         </div>
@@ -11300,6 +11326,7 @@
                             Swim, bike and run only — transitions have no counter. */}
                         {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
+                          if (lapOpen !== i) return null;
                           const seg = ath.started ? countLegNow(ath) : 0;
                           if (seg == null) return null;
                           const plan = legCountPlan(athCourse, seg);
@@ -11310,20 +11337,20 @@
                           const pct = plan.need > 0 ? Math.min(100, (n / plan.need) * 100) : 0;
                           const side = (label, onClick, disabled, filled) => (
                             <button onClick={onClick} disabled={disabled} aria-label={label}
-                              style={{ width: 72, minWidth: 72, minHeight: 88, borderRadius: 6, fontSize: 40, fontWeight: 900, lineHeight: 1,
+                              style={{ width: 60, minWidth: 60, minHeight: 60, borderRadius: 6, fontSize: 34, fontWeight: 900, lineHeight: 1,
                                        cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, touchAction: "manipulation",
                                        background: filled ? col : "#FFFFFF", color: filled ? "#FFFFFF" : col, border: `3px solid ${col}` }}>
                               {label === "Add a lap" ? "+" : "−"}
                             </button>
                           );
                           return (
-                            <div style={{ padding: "12px 14px", borderBottom: `2px solid ${TM.line}`, background: "#FFFFFF" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <div style={{ padding: "8px 10px", borderBottom: `2px solid ${TM.line}`, background: "#FFFFFF" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                 {side("Take off a lap", () => undoLatestLap(i), !canCount || n === 0, false)}
                                 <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
                                   <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: col }}>{LEG_NAME[seg].toUpperCase()} LAPS</div>
                                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 4 }}>
-                                    <span style={{ ...TM_NUM, fontSize: 48, lineHeight: 1, color: TM.ink }}>{n}</span>
+                                    <span style={{ ...TM_NUM, fontSize: 36, lineHeight: 1, color: TM.ink }}>{n}</span>
                                     {plan.need > 0 && <span style={{ fontSize: 18, fontWeight: 800, color: TM.inkMuted }}>/ {plan.need}</span>}
                                   </div>
                                   {plan.lap > 0 && (
@@ -11354,8 +11381,8 @@
                           );
                         })()}
 
-                        {/* Splits of legs already finished (swim lengths, bike miles, run laps). */}
-                        {(() => {
+                        {/* Splits of legs already finished — shown with the counter, or for finished athletes when opened. */}
+                        {lapOpen === i && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
                           const legs = LAP_LEGS.map(([seg]) => {
                             if (ath.splits[seg] == null) return null;
@@ -11378,7 +11405,7 @@
 
                         {/* Segment buttons */}
                         {ath.started && (
-                          <div style={{ padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          <div style={{ padding: "6px 8px", display: "grid", gridTemplateColumns: `repeat(${SEGMENTS.length}, minmax(0, 1fr))`, gap: 4 }}>
                             {SEGMENTS.map((seg, si) => {
                               const logged = ath.splits[si] !== null;
                               const isNext = si === next;
@@ -11386,13 +11413,18 @@
                               return (
                                 <button key={si} onClick={() => !logged && isNext && logSplit(i, si)}
                                   style={{
-                                    padding: "6px 12px", borderRadius: 4, border: "none",
+                                    minHeight: 44, padding: "2px 2px", borderRadius: 4, border: "none", minWidth: 0,
                                     cursor: logged ? "default" : isNext ? "pointer" : "not-allowed",
                                     background: logged ? `${segColors[si]}22` : isNext ? segColors[si] : "#EFEDE8",
                                     color: logged ? segColors[si] : isNext ? "#FFFFFF" : "#3D434B",
-                                    fontWeight: 700, fontSize: 14, letterSpacing: 0.5, transition: "all 0.15s",
+                                    fontWeight: 800, fontSize: 14, lineHeight: 1.1, transition: "all 0.15s",
+                                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                                    fontVariantNumeric: "tabular-nums", overflow: "hidden",
                                   }}>
-                                  {seg}{logged && dur !== null ? ` · ${formatElapsed(dur)}` : isNext && liveSegMs !== null ? ` · ${formatElapsed(liveSegMs)}` : ""}
+                                  <span>{seg}</span>
+                                  {(logged && dur !== null) || (isNext && liveSegMs !== null) ? (
+                                    <span style={{ fontSize: 14, fontWeight: 700 }}>{formatElapsed(logged ? dur : liveSegMs)}</span>
+                                  ) : null}
                                 </button>
                               );
                             })}
