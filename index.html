@@ -654,7 +654,7 @@
       // m:ss for splits (h:mm:ss past an hour).
       function fmtSplit(ms) {
         if (ms == null || ms < 0) return "—";
-        const t = Math.round(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+        const t = Math.floor(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
         return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
       }
       // ── Live standings ───────────────────────────────────────────────────────
@@ -2723,6 +2723,12 @@
           watchGpsListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
         }, [watchToken, joinRace, joinAthIdx]);
+
+        // Finished: stop tracking, so the phone isn't burning battery on GPS.
+        const joinMeFinished = !!(joinLiveData && joinAthIdx !== null && asList(joinLiveData.athletes)[joinAthIdx] && asList(joinLiveData.athletes)[joinAthIdx].finished);
+        useEffect(() => {
+          if (joinMeFinished && joinGpsActive) stopGpsTracking();
+        }, [joinMeFinished, joinGpsActive]);
 
         // Picking your name links this phone to that athlete; the host sees
         // "connected". A heartbeat every 30 s keeps it current.
@@ -5189,7 +5195,12 @@
 
         function addAthleteFromPicker(picked) {
           const base = freshAthlete(picked.name, Date.now(), picked.gender, picked.ageGroup);
-          setAthletes(a => { const nextBib = Math.max(0, ...a.map(x => x.raceNumber || 0)) + 1; return [...a, { ...base, dob: picked.dob || "", email: picked.email || "", courseId: courses[0]?.id || null, raceNumber: nextBib }]; });
+          setAthletes(a => {
+            // Anyone still without a bib gets the next one, in roster order, then the new athlete.
+            let next = Math.max(0, ...a.map(x => x.raceNumber || 0));
+            const numbered = a.map(x => x.raceNumber != null ? x : { ...x, raceNumber: ++next });
+            return [...numbered, { ...base, dob: picked.dob || "", email: picked.email || "", courseId: courses[0]?.id || null, raceNumber: next + 1 }];
+          });
           setShowAthletePicker(false);
           setAthletePickerSearch("");
         }
@@ -9791,6 +9802,26 @@
                         </div>
                       ) : (
                         <div>
+                          {/* Finished: time and place, right at the top. */}
+                          {joinMeFinished && (() => {
+                            const all = asList(joinLiveData.athletes);
+                            const me = all[joinAthIdx];
+                            const crs = asList(joinLiveData.courses);
+                            const feeds = ageGroupStandings(all, asList(joinLiveData.ageGroups), joinLiveClockMs,
+                              a => crs.find(c => c.id === a.courseId) || crs[0], a => a.gps && a.gps.lapTaps);
+                            const feed = feeds.find(f => f.rows.some(r => r.i === joinAthIdx));
+                            const place = feed ? feed.rows.findIndex(r => r.i === joinAthIdx) + 1 : null;
+                            const sp = me.splits || [];
+                            const chip = sp[SEGMENTS.length - 1] != null && me.startOffset != null ? sp[SEGMENTS.length - 1] - me.startOffset : null;
+                            const ord = (n) => n + (["th","st","nd","rd"][(n % 100 - 20) % 10] || ["th","st","nd","rd"][n % 100] || "th");
+                            return (
+                              <div style={{ ...rowStyle(TM.run), marginBottom: 12, textAlign: "center" }}>
+                                <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2, color: TM.run }}>🏁 FINISHED</div>
+                                <div className="tm-metric" style={{ fontSize: 48, letterSpacing: 0, color: TM.ink, lineHeight: 1.1 }}>{chip != null ? fmtSplit(chip) : "—"}</div>
+                                {place && <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{place <= 3 ? ["🥇","🥈","🥉"][place - 1] + " " : ""}{ord(place)} in {feed.label}</div>}
+                              </div>
+                            );
+                          })()}
                           {/* Race clock — always visible */}
                           <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 16px", marginBottom: 12, textAlign: "center", border: "2px solid #C9C5BC" }}>
                             <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B" }}>
@@ -9804,7 +9835,7 @@
                             )}
                           </div>
 
-                          {joinLiveData && joinLiveData.status === "live" && (
+                          {joinLiveData && joinLiveData.status === "live" && !joinMeFinished && (
                             <button onClick={() => { setLapCountCode(joinLiveData.code); setView("lapcount"); }}
                               style={{ ...btnStyle(TM.ink), width: "100%", marginBottom: 12 }}>Count my laps →</button>
                           )}
