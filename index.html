@@ -3175,6 +3175,7 @@
         const [swimExpandedAthletes, setSwimExpandedAthletes] = useState({});
         const swimFileInputRef = useRef(null);
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
+        const [swimSavedAt, setSwimSavedAt] = useState(null);
         const [swimResultsEvent, setSwimResultsEvent] = useState(null);
         const [swimResultsTab, setSwimResultsTab] = useState("results"); // "results" | "scores"
         const [swimAddEventOpen, setSwimAddEventOpen] = useState(false);
@@ -12946,6 +12947,7 @@
 
                 function seedOneEvent(eventNum) {
                   const numLanes = swimMeet.lanes || 8;
+                  setSwimExpandedEvents(x => ({ ...x, [eventNum]: true }));
                   setSwimMeet(m => ({
                     ...m,
                     events: m.events.map(ev => ev.eventNum === eventNum
@@ -12956,6 +12958,7 @@
 
                 function seedAllEvents() {
                   const numLanes = swimMeet.lanes || 8;
+                  setSwimExpandedEvents(Object.fromEntries(swimMeet.events.map(ev => [ev.eventNum, true])));
                   setSwimMeet(m => ({
                     ...m,
                     events: m.events.map(ev => ({ ...ev, heats: autoSeedEvent(ev, numLanes) }))
@@ -13294,7 +13297,14 @@
                     {swimView === "setup" && (() => {
                       const SWIM_STEPS = ["What kind of race?", "Pool & lanes", "Events & heats", "Who's swimming?", "Save & start"];
                       const st = swimSetupStep;
-                      const nEntries = (swimMeet.meetEntries || []).length;
+                      const nEntries = (() => {
+                        const names = new Set((swimMeet.meetEntries || []).map(e => (e.name || "").trim().toLowerCase()).filter(Boolean));
+                        swimMeet.events.forEach(ev => {
+                          (ev.entries || []).forEach(e => e.name && names.add(e.name.trim().toLowerCase()));
+                          ev.heats.forEach(h => h.lanes.forEach(l => l.name && names.add(l.name.trim().toLowerCase())));
+                        });
+                        return names.size;
+                      })();
                       const nEvents = swimMeet.events.length;
                       const summaries = [
                         { title: SWIM_STEPS[0], done: !!swimMeet.meetName, summary: `Swim meet · ${swimMeet.meetName || "no name yet"}` },
@@ -13424,7 +13434,7 @@
                                   {ev.entries && ev.entries.length > 0 && (
                                     <div style={{ padding:"6px 16px 8px", borderTop:"2px solid #C9C5BC" }}>
                                       <div style={{ fontSize:14, color:"#04613F", fontWeight:700, marginBottom:4 }}>
-                                        Entries ({ev.entries.length}) — click 🌱 Seed to assign heats/lanes
+                                        Entries ({ev.entries.length}) — {ev.heats.some(h => h.lanes.some(l => l.name)) ? "seeded above; tap 🌱 Seed again after adding swimmers" : "tap 🌱 Seed to put them in heats and lanes"}
                                       </div>
                                       {ev.entries.map((en, idx) => (
                                         <div key={idx} style={{ display:"flex", gap:8, fontSize:14, color:"#0B0D10", padding:"2px 0", alignItems:"center" }}>
@@ -13479,7 +13489,7 @@
 
                         {/* Add event manually */}
                         <div style={S.card}>
-                          <button onClick={() => setSwimAddEventOpen(o => !o)}
+                          <button onClick={() => { setSwimAddEventOpen(o => !o); setSwimNewEvent(f => ({ ...f, lanes: swimMeet.lanes || 8 })); }}
                             style={{ ...btnStyle("#04613F", true), fontSize:14, width:"100%" }}>
                             {swimAddEventOpen ? "✕ Cancel" : "+ Add Event Manually"}
                           </button>
@@ -13698,7 +13708,7 @@
                               </div>
                               <div style={{ display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap" }}>
                                 <button style={{ ...btnStyle(TM.ink, true), flex: 1 }} disabled={nEvents === 0}
-                                  onClick={() => { saveCurentMeet(); alert("Meet saved!"); }}>Save meet</button>
+                                  onClick={() => { saveCurentMeet(); setSwimSavedAt(Date.now()); }}>{swimSavedAt && Date.now() - swimSavedAt < 5000 ? "✓ Saved" : "Save meet"}</button>
                                 <button style={{ ...btnStyle(TM.ink, true), flex: 1 }} disabled={nEvents === 0}
                                   onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>Save to archive</button>
                               </div>
@@ -13732,9 +13742,34 @@
                     {swimView === "race" && (
                       <div>
                         {!activeEv || !activeHt ? (
-                          <div style={{ textAlign:"center", padding:"40px 0" }}>
-                            <div style={{ color:"#3D434B", marginBottom:16 }}>No heat selected. Go to Setup to start a heat.</div>
-                            <button style={btnStyle("#04613F")} onClick={() => { setSwimSetupStep(0); setSwimView("setup"); }}>← Back to Setup</button>
+                          <div>
+                            <h2 style={{ ...TM_H2, marginTop: 4 }}>Pick a heat to start</h2>
+                            {swimMeet.events.length === 0 && (
+                              <div style={{ ...rowStyle(), ...TM_CAPTION, marginTop: 10 }}>No events yet — add them in Setup.</div>
+                            )}
+                            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                              {swimMeet.events.map(ev => (
+                                <div key={ev.eventNum} style={{ ...rowStyle(TM.swim) }}>
+                                  <div style={{ fontSize: 16, fontWeight: 900 }}>Event {ev.eventNum} · {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</div>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                                    {ev.heats.map(h => {
+                                      const n = h.lanes.filter(l => l.name && !l.scratch).length;
+                                      const done = n > 0 && h.lanes.filter(l => l.name && !l.scratch).every(l => l.finalMs != null || l.dq);
+                                      return (
+                                        <button key={h.heatNum} onClick={() => { setSwimActiveEvent(ev.eventNum); setSwimActiveHeat(h.heatNum); }}
+                                          style={{ ...btnStyle(TM.ink, done), minHeight: 44, padding: "0 14px", fontSize: 15 }}>
+                                          {done ? "✓ " : "▶ "}Heat {h.heatNum} · {n} swimmer{n === 1 ? "" : "s"}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  {ev.heats.every(h => !h.lanes.some(l => l.name)) && (ev.entries || []).length > 0 && (
+                                    <div style={{ ...TM_CAPTION, marginTop: 6 }}>Not seeded yet — tap 🌱 Seed on this event in Setup.</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                            <button style={{ ...btnStyle("#04613F", true), marginTop: 16 }} onClick={() => { setSwimSetupStep(0); setSwimView("setup"); }}>← Back to Setup</button>
                           </div>
                         ) : (
                           <div>
