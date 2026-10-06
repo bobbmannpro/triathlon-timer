@@ -2720,7 +2720,12 @@
             : { seen: Date.now() }).catch(() => {});
           beat(true);
           const id = setInterval(() => beat(false), 30000);
-          return () => clearInterval(id);
+          // Switching to another name (or leaving) frees this one, if it's still ours.
+          const mine = auth.currentUser.uid;
+          return () => {
+            clearInterval(id);
+            ref.once("value").then(sn => { const v = sn.val(); if (v && v.uid === mine) ref.remove().catch(() => {}); }).catch(() => {});
+          };
         }, [joinRace?.code, joinAthIdx]);
 
         // Auto-start GPS immediately when athlete is identified — no consent gate
