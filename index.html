@@ -828,7 +828,12 @@
         const q = new URLSearchParams({ ...params, key: GOOGLE_KEY || firebaseConfig.apiKey, supportsAllDrives: "true" });
         const r = await fetch("https://www.googleapis.com/drive/v3/" + path + "?" + q.toString());
         let body = null; try { body = await r.json(); } catch (_) {}
-        if (!r.ok) throw new Error(driveErrorText(r.status, body));
+        if (!r.ok) {
+          const err = new Error(driveErrorText(r.status, body));
+          const m = (body && body.error && body.error.message) || "";
+          err.driveOff = /are blocked|API_KEY_SERVICE_BLOCKED|has not been used|is disabled|SERVICE_DISABLED|accessNotConfigured/i.test(m);
+          throw err;
+        }
         return body;
       }
       // The folder itself — confirms it's shared and gives its name.
@@ -5149,10 +5154,13 @@
           if (code.length < 6) { setAlbumMsg({ ok: false, text: "Photo codes need at least 6 letters or numbers — they open pictures of kids, so they must be hard to guess." }); return; }
           setAlbumBusy(true); setAlbumMsg(null);
           try {
-            const { id, folder, count } = await checkAlbumFolder(d.link);
+            let id = driveFolderIdFrom(d.link), folder = null, count = null;
+            if (!id) throw new Error("Paste the folder's share link from Google Drive (it has /folders/ in it).");
+            try { ({ id, folder, count } = await checkAlbumFolder(d.link)); }
+            catch (e) { if (!e.driveOff) throw e; }   // can't check yet — save, parents open it in Drive
             const existing = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val());
             if (existing && existing.ownerUid !== currentUser.uid) throw new Error("That code is already used for another album. Tap New code.");
-            const name = (d.name || "").trim() || folder.name;
+            const name = (d.name || "").trim() || (folder && folder.name) || "Race photos";
             await rtdb.ref("photoAlbums/" + code).set({ name, raceName: name, folderId: id, ownerUid: currentUser.uid, updatedAt: Date.now() });
             if (d.editing && d.editing !== code) {
               await rtdb.ref("photoAlbums/" + d.editing).remove().catch(() => {});
@@ -5163,7 +5171,9 @@
             setHostAlbums(a => { const n = { ...a }; if (d.editing && d.editing !== code) delete n[d.editing]; n[code] = entry; return n; });
             if (d.raceId) persistArchiveUpdate(savedArchive.map(r => r.id === d.raceId ? { ...r, photoCode: code } : r));
             setAlbumDraft(null);
-            setAlbumMsg({ ok: true, text: `Saved “${name}” — ${count} photo${count === 1 ? "" : "s"} right now. Share code ${code}; new photos you add to the folder show up by themselves.` });
+            setAlbumMsg({ ok: true, text: count == null
+              ? `Saved “${name}” — share code ${code}. Parents who type it get a button to open the photos in Google Drive. Make sure the folder is shared “Anyone with the link · Viewer”.`
+              : `Saved “${name}” — ${count} photo${count === 1 ? "" : "s"} right now. Share code ${code}; new photos you add to the folder show up by themselves.` });
           } catch (e) {
             setAlbumMsg({ ok: false, text: e.message || "Couldn't save the album." });
           }
@@ -5200,7 +5210,14 @@
             }
             var data = snap.val();
             if (data.folderId) {
-              const photos = await drivePhotos(data.folderId);
+              let photos;
+              try { photos = await drivePhotos(data.folderId); }
+              catch (e) {
+                if (!e.driveOff) throw e;
+                setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos: [], drive: true,
+                  driveLink: "https://drive.google.com/drive/folders/" + data.folderId, lightboxIdx: null, loading: false, error: null });
+                return;
+              }
               setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos, drive: true, lightboxIdx: null, loading: false, error: null });
               return;
             }
@@ -12735,7 +12752,7 @@
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#0B3FCC", letterSpacing: 1 }}>&#128247; {viewPhotoAlbum.raceName || viewPhotoAlbum.code}</div>
                   <div style={{ fontSize: 14, color: "#3D434B" }}>
-                    {viewPhotoAlbum.loading ? "Loading…" : viewPhotoAlbum.error ? "Not found" : `${viewPhotoAlbum.photos.length} photo${viewPhotoAlbum.photos.length !== 1 ? "s" : ""} · Code: ${viewPhotoAlbum.code}`}
+                    {viewPhotoAlbum.loading ? "Loading…" : viewPhotoAlbum.error ? "Not found" : viewPhotoAlbum.driveLink ? `Code: ${viewPhotoAlbum.code}` : `${viewPhotoAlbum.photos.length} photo${viewPhotoAlbum.photos.length !== 1 ? "s" : ""} · Code: ${viewPhotoAlbum.code}`}
                   </div>
                 </div>
                 <button onClick={() => setViewPhotoAlbum(null)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 28, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>&times;</button>
@@ -12750,6 +12767,14 @@
                     <div style={{ fontSize: 44 }}>&#128269;</div>
                     <div style={{ color: "#B3001B", fontSize: 14, textAlign: "center", maxWidth: 320 }}>{viewPhotoAlbum.error}</div>
                     <button onClick={() => setViewPhotoAlbum(null)} style={{ ...btnStyle("#3D434B", true), padding: "8px 22px", fontSize: 14 }}>Close</button>
+                  </div>
+                ) : viewPhotoAlbum.driveLink ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "40px 16px", textAlign: "center" }}>
+                    <div style={{ fontSize: 44 }}>📷</div>
+                    <div style={{ fontSize: 17, fontWeight: 800 }}>The photos are in Google Drive</div>
+                    <a href={viewPhotoAlbum.driveLink} target="_blank" rel="noopener noreferrer"
+                      style={{ ...btnStyle(TM.ink), display: "inline-flex", alignItems: "center", textDecoration: "none", padding: "0 22px" }}>Open the photos →</a>
+                    <div style={{ ...TM_CAPTION, maxWidth: 320 }}>Tap a photo there, then ⋮ → Download to save it to your phone.</div>
                   </div>
                 ) : viewPhotoAlbum.photos.length === 0 ? (
                   <div style={{ textAlign: "center", color: "#3D434B", padding: 40, fontSize: 14 }}>No photos in this album.</div>
