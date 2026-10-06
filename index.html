@@ -4000,9 +4000,10 @@
                   }
                 } catch(_) {}
 
-                // Restore athlete's joined race session after refresh
+                // Restore athlete's joined race session after refresh — not while
+                // this phone is set to Spectator, or it would hide the race being watched.
                 try {
-                  const joinRaw = localStorage.getItem("tri-active-join");
+                  const joinRaw = localStorage.getItem("tm-role") === "spectator" ? null : localStorage.getItem("tri-active-join");
                   if (joinRaw) {
                     const { code, athIdx } = JSON.parse(joinRaw);
                     if (code) {
