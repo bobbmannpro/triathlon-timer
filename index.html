@@ -2034,6 +2034,97 @@
         };
       }
 
+      // ── Hy-Tek meet events (.hyv) ─────────────────────────────────────────────
+      // The "Meet Events" file Meet Manager sends out (inside a .zip, next to an
+      // .ev3): one header line, then one line per event, ";"-separated:
+      //   header: name;start;end;age-up date;course (Y/S/L);facility;;software;version;CN;check
+      //   event:  number (may be "9A");F;F/M/X;I/R;min age;max age;distance;stroke 1-5;…
+      // Stroke 1 Free, 2 Back, 3 Breast, 4 Fly, 5 IM (on a relay, 1 = free relay,
+      // 5 = medley relay). Min age 0 means "& under"; max age 0 means "& over"
+      // (0 and 0 = open).
+      // Events keep Hy-Tek's label ("9A") for display; eventNum stays a plain
+      // 1, 2, 3… in file order, because it's used in keys and sorting.
+      const HY_STROKES = { 1: "Freestyle", 2: "Backstroke", 3: "Breaststroke", 4: "Butterfly", 5: "IM" };
+      function hyAgeLabel(min, max) {
+        if (!(min > 0) && !(max > 0 && max < 99)) return "Open";
+        if (!(min > 0)) return `${max} & Under`;
+        if (!(max > 0) || max >= 99) return `${min} & Over`;
+        return min === max ? String(min) : `${min}-${max}`;
+      }
+      function ageRangeOf(label) {
+        const t = String(label || "").toLowerCase();
+        let m;
+        if ((m = t.match(/(\d+)\s*(&|and)\s*under/))) return [0, +m[1]];
+        if ((m = t.match(/(\d+)\s*(&|and)\s*(over|up)/))) return [+m[1], 109];
+        if ((m = t.match(/(\d+)\s*-\s*(\d+)/))) return [+m[1], +m[2]];
+        if ((m = t.match(/^\s*(\d+)\s*$/))) return [+m[1], +m[1]];
+        return [0, 109];
+      }
+      function evLabel(ev) { return ev ? (ev.eventLabel || String(ev.eventNum)) : ""; }
+      function parseHyv(text) {
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (!lines.length) throw new Error("That file is empty.");
+        const h = lines[0].split(";");
+        const usDate = d => { const m = String(d || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? `${m[3]}-${m[1]}-${m[2]}` : ""; };
+        const course = { Y: "25y", S: "25m", L: "50m" }[(h[4] || "").trim().toUpperCase()] || "25y";
+        const events = [];
+        for (const line of lines.slice(1)) {
+          const c = line.split(";");
+          const label = (c[0] || "").trim();
+          if (!/^\d+[A-Za-z]?$/.test(label)) continue;
+          const relay = (c[3] || "").trim().toUpperCase() === "R";
+          const min = parseInt(c[4], 10) || 0, max = parseInt(c[5], 10) || 0;
+          const strokeNum = parseInt(c[7], 10) || 1;
+          const stroke = relay ? (strokeNum === 5 ? "Medley Relay" : "Freestyle Relay") : (HY_STROKES[strokeNum] || "Freestyle");
+          events.push({ eventNum: events.length + 1, eventLabel: label,
+            gender: genderLabel((c[2] || "").trim()), ageGroup: hyAgeLabel(min, max), minAge: min, maxAge: max,
+            distance: parseInt(c[6], 10) || 25, stroke, relay, course, heats: [], entries: [] });
+        }
+        if (!events.length) throw new Error("No events found in that file. Pick the Meet Events file (.hyv, or the .zip it came in).");
+        return { meetName: (h[0] || "").trim(), date: usDate(h[1]), facility: (h[5] || "").trim(), course, events };
+      }
+      // A Hy-Tek-style events file from this meet, so another host (or Meet
+      // Manager) can start from the same events. Events only — no swimmers.
+      function buildHyv(meet) {
+        const d = (meet.date || new Date().toISOString().slice(0, 10)).split("-");
+        const us = `${d[1]}/${d[2]}/${d[0]}`;
+        const clean = v => String(v == null ? "" : v).replace(/[;\r\n]/g, " ").trim();
+        const courseCode = { "25y": "Y", "25m": "S", "50m": "L" }[meet.pool || "25y"] || "Y";
+        const strokeCode = st => {
+          const t = String(st || "").toLowerCase();
+          if (t.includes("medley")) return 5;
+          if (t.includes("relay")) return 1;
+          return { freestyle: 1, backstroke: 2, breaststroke: 3, butterfly: 4, im: 5 }[t] || 1;
+        };
+        const sex = g => /^g|^w|^f/i.test(g || "") ? "F" : /^b|^m(?!ix)/i.test(g || "") ? "M" : "X";
+        const out = [[clean(meet.meetName) || "Swim Meet", us, us, us, courseCode, clean(meet.facility), "", "Timeathon", "1.0", "CN", "0000"].join(";")];
+        meet.events.forEach(ev => {
+          const [min, max] = ev.minAge != null ? [ev.minAge, ev.maxAge] : ageRangeOf(ev.ageGroup);
+          const relay = ev.relay || /relay/i.test(ev.stroke || "");
+          out.push([evLabel(ev), "F", sex(ev.gender), relay ? "R" : "I", min || 0, max >= 99 ? 0 : (max || 0), ev.distance || 25, strokeCode(ev.stroke), "", "", "", "0", "", "", "", "", "", ""].join(";"));
+        });
+        return out.join("\r\n") + "\r\n";
+      }
+      // Meet Manager hands out events as a .zip: open it in the browser and
+      // take the .hyv (or entries .hy3/.cl2) inside.
+      function loadJSZip() {
+        if (window.JSZip) return Promise.resolve(window.JSZip);
+        return new Promise((res, rej) => {
+          const sc = document.createElement("script");
+          sc.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+          sc.onload = () => res(window.JSZip); sc.onerror = () => rej(new Error("Couldn't open .zip files right now — unzip it and pick the .hyv inside."));
+          document.head.appendChild(sc);
+        });
+      }
+      async function fileFromZip(file) {
+        const JSZip = await loadJSZip();
+        const zip = await JSZip.loadAsync(file);
+        const names = Object.keys(zip.files).filter(n => !zip.files[n].dir);
+        const pick = names.find(n => /\.hyv$/i.test(n)) || names.find(n => /\.hy3$/i.test(n)) || names.find(n => /\.cl2$/i.test(n));
+        if (!pick) throw new Error("That .zip has no Hy-Tek meet file in it (.hyv, .hy3 or .cl2).");
+        return { name: pick.split("/").pop(), text: await zip.files[pick].async("string") };
+      }
+
       function parseSwimCsv(text) {
         const lines = text.split(/\r?\n/).filter(l => l.trim());
         if (lines.length < 2) return { meetName: "Imported Meet", events: [], meetEntries: [] };
@@ -2132,6 +2223,50 @@
           });
         }
         return Object.entries(scores).sort((a,b) => b[1] - a[1]);
+      }
+
+      // Every phone times against Firebase's clock, not its own: the host
+      // stamps the start in server time and each lane phone measures from it
+      // in server time, so a phone whose clock is a second off still gets the
+      // right swim time. (Firebase keeps the offset to its clock up to date.)
+      const SERVER_CLOCK = { offset: 0 };
+      try { rtdb.ref(".info/serverTimeOffset").on("value", sn => { SERVER_CLOCK.offset = sn.val() || 0; }); } catch (_) {}
+      function serverNow() { return Date.now() + SERVER_CLOCK.offset; }
+
+      // The start: "Take your marks" spoken from the host device, then the
+      // start tone out of its speaker at the moment the clock starts. The audio
+      // context is opened on the first tap so the tone isn't delayed or blocked.
+      let startAudio = null;
+      function primeStartAudio() {
+        try {
+          if (!startAudio) startAudio = new (window.AudioContext || window.webkitAudioContext)();
+          if (startAudio.state === "suspended") startAudio.resume();
+        } catch (_) {}
+      }
+      function sayTakeYourMarks() {
+        primeStartAudio();
+        try {
+          const u = new SpeechSynthesisUtterance("Take your marks");
+          u.rate = 0.85; u.pitch = 0.9; u.volume = 1;
+          window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+        } catch (_) {}
+      }
+      function playStartTone() {
+        primeStartAudio();
+        try {
+          const ctx = startAudio, t = ctx.currentTime;
+          const gain = ctx.createGain();
+          gain.connect(ctx.destination);
+          gain.gain.setValueAtTime(0.0001, t);
+          gain.gain.exponentialRampToValueAtTime(1, t + 0.01);
+          gain.gain.setValueAtTime(1, t + 0.7);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+          [1050, 1575].forEach(f => {   // two tones together: loud and clear over a pool deck
+            const o = ctx.createOscillator();
+            o.type = "square"; o.frequency.value = f;
+            o.connect(gain); o.start(t); o.stop(t + 0.8);
+          });
+        } catch (_) {}
       }
 
       function playSwimBeep() {
@@ -3201,6 +3336,7 @@
         const swimFileInputRef = useRef(null);
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
         const [swimSavedAt, setSwimSavedAt] = useState(null);
+        const [swimImportMsg, setSwimImportMsg] = useState(null);   // { ok, text } after importing/exporting a meet file
         const [swimResultsEvent, setSwimResultsEvent] = useState(null);
         const [swimResultsTab, setSwimResultsTab] = useState("results"); // "results" | "scores"
         const [swimAddEventOpen, setSwimAddEventOpen] = useState(false);
@@ -3449,9 +3585,9 @@
         useEffect(() => {
           clearInterval(swimLaneClockRef.current);
           if (swimLaneSession?.status === "racing" && swimLaneSession?.startedAt) {
-            setSwimLaneClockMs(Date.now() - swimLaneSession.startedAt);
+            setSwimLaneClockMs(serverNow() - swimLaneSession.startedAt);
             swimLaneClockRef.current = setInterval(() => {
-              setSwimLaneClockMs(Date.now() - swimLaneSession.startedAt);
+              setSwimLaneClockMs(serverNow() - swimLaneSession.startedAt);
             }, 10);
           } else {
             setSwimLaneClockMs(0);
@@ -3468,7 +3604,7 @@
             const triggered = e.key === swimClickerKey || VOLUME_KEYS.includes(e.key);
             if (triggered && !swimLaneFinished && swimLaneSession.status === "racing") {
               e.preventDefault();
-              const finalMs = Date.now() - swimLaneSession.startedAt;
+              const finalMs = serverNow() - swimLaneSession.startedAt;
               rtdb.ref(`swimLive/${code}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
               setSwimLaneFinished(true);
             }
@@ -3543,9 +3679,9 @@
         useEffect(() => {
           clearInterval(swimWatchClockRef.current);
           if (swimWatchSession?.status === "racing" && swimWatchSession?.startedAt) {
-            setSwimWatchClockMs(Date.now() - swimWatchSession.startedAt);
+            setSwimWatchClockMs(serverNow() - swimWatchSession.startedAt);
             swimWatchClockRef.current = setInterval(() => {
-              setSwimWatchClockMs(Date.now() - swimWatchSession.startedAt);
+              setSwimWatchClockMs(serverNow() - swimWatchSession.startedAt);
             }, 100);
           } else {
             setSwimWatchClockMs(0);
@@ -13215,9 +13351,32 @@
                 }
 
                 async function importMeetFile(file) {
-                  const text = await file.text();
+                  setSwimImportMsg(null);
+                  let name = file.name, text;
+                  try {
+                    if (/\.zip$/i.test(name)) ({ name, text } = await fileFromZip(file));
+                    else text = await file.text();
+                  } catch (e) { setSwimImportMsg({ ok: false, text: e.message || "Couldn't read that file." }); return; }
+                  if (/\.ev3$/i.test(name)) { setSwimImportMsg({ ok: false, text: "Pick the .hyv file (or the whole .zip) — it's the one with the events." }); return; }
+                  if (/\.hyv$/i.test(name)) {
+                    let hv;
+                    try { hv = parseHyv(text); } catch (e) { setSwimImportMsg({ ok: false, text: e.message }); return; }
+                    const had = swimMeet.events.length;
+                    if (had && !window.confirm(`Replace the ${had} event${had === 1 ? "" : "s"} you have with the ${hv.events.length} from “${hv.meetName || name}”? Swimmers already entered will need to be entered again.`)) return;
+                    const lanes = swimMeet.lanes || 8;
+                    const blankHeat = () => ({ heatNum: 1, lanes: Array.from({ length: lanes }, (_, li) => ({
+                      lane: li + 1, lastName: "", firstName: "", name: "", age: 0, team: "", seedTime: "NT", seedMs: null, finalMs: null, dq: false, scratch: false })) });
+                    setSwimMeet(m => ({ ...m,
+                      meetName: m.meetName || hv.meetName, date: hv.date || m.date, facility: hv.facility || m.facility, pool: hv.course || m.pool,
+                      events: hv.events.map(ev => ({ ...ev, heats: [blankHeat()] })),
+                      meetEntries: had ? [] : (m.meetEntries || []) }));
+                    setSwimExpandedEvents({});
+                    const relays = hv.events.filter(ev => ev.relay).length;
+                    setSwimImportMsg({ ok: true, text: `Imported ${hv.events.length} events from “${hv.meetName || name}”${relays ? ` (${relays} relays)` : ""}. Next: add swimmers, then 🌱 Seed.` });
+                    return;
+                  }
                   let parsed;
-                  const lower = file.name.toLowerCase();
+                  const lower = name.toLowerCase();
                   if (lower.endsWith(".hy3") || lower.endsWith(".cl2")) {
                     parsed = parseHy3(text);
                   } else {
@@ -13253,6 +13412,19 @@
                     lanes: m.lanes || 8
                   }));
                   setSwimExpandedEvents({});
+                  setSwimImportMsg({ ok: true, text: `Imported ${parsed.events.length} events and ${linkedEntries.length} swimmers.` });
+                }
+                function exportMeetEvents() {
+                  const text = buildHyv(swimMeet);
+                  const d = new Date(((swimMeet.date || new Date().toISOString().slice(0, 10))) + "T12:00:00");
+                  const stamp = `${String(d.getDate()).padStart(2, "0")}${d.toLocaleString("en-US", { month: "short" })}${d.getFullYear()}`;
+                  const safe = (swimMeet.meetName || "Swim Meet").replace(/[\\/:*?"<>|]/g, "").trim();
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+                  a.download = `Meet Events-${safe}-${stamp}-001.hyv`;
+                  document.body.appendChild(a); a.click();
+                  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+                  setSwimImportMsg({ ok: true, text: `Saved “${a.download}” — anyone can import it here (Events & heats → Import) to start a meet with these events.` });
                 }
 
                 function saveAndAdvance() {
@@ -13522,14 +13694,26 @@
                             <>
                         {/* Import */}
                         <div style={S.card}>
-                          <div style={S.label}>Import Meet File</div>
-                          <input ref={swimFileInputRef} type="file" accept=".hy3,.HY3,.cl2,.CL2,.csv" style={{ display:"none" }}
-                            onChange={e => { if (e.target.files[0]) importMeetFile(e.target.files[0]); e.target.value = ""; }} />
+                          <div style={S.label}>Start from a meet file</div>
+                          <input ref={swimFileInputRef} type="file" accept=".zip,.hyv,.ev3,.hy3,.cl2,.csv,.ZIP,.HYV,.HY3,.CL2" style={{ display:"none" }}
+                            onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importMeetFile(f); }} />
                           <button onClick={() => swimFileInputRef.current && swimFileInputRef.current.click()}
-                            style={{ ...btnStyle("#04613F"), fontSize:14, width:"100%", marginBottom:4 }}>
-                            📂 Import Meet File (.hy3 or .csv)
+                            style={{ ...btnStyle("#04613F"), fontSize:15, width:"100%", marginBottom:6 }}>
+                            📂 Import meet file
                           </button>
-                          <div style={{ fontSize:14, color:"#3D434B" }}>Supports Hy-Tek .hy3, .cl2 (Team Manager), and CSV exports.</div>
+                          <div style={{ fontSize:14, color:"#3D434B" }}>
+                            Hy-Tek <b>Meet Events</b> (.zip or .hyv) brings in the events. Entries files (.hy3, .cl2) or a CSV bring in events and swimmers.
+                          </div>
+                          {swimImportMsg && (
+                            <div role="status" style={{ ...rowStyle(swimImportMsg.ok ? TM.run : TM.live), marginTop: 10, fontSize: 15, fontWeight: 700 }}>
+                              {swimImportMsg.ok ? "✓ " : "✕ "}{swimImportMsg.text}
+                            </div>
+                          )}
+                          {swimMeet.events.length > 0 && (
+                            <button onClick={exportMeetEvents} style={{ ...btnStyle(TM.ink, true), fontSize: 15, width: "100%", marginTop: 10 }}>
+                              ⬇ Export events as a meet file (.hyv)
+                            </button>
+                          )}
                         </div>
 
                         {/* Event tree */}
@@ -13552,7 +13736,7 @@
                                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", cursor:"pointer" }}
                                     onClick={() => setSwimExpandedEvents(x => ({...x, [ev.eventNum]: !x[ev.eventNum]}))}>
                                     <div>
-                                      <span style={{ color:"#0B3FCC", fontWeight:700, marginRight:8, fontSize:14 }}>Event {ev.eventNum}</span>
+                                      <span style={{ color:"#0B3FCC", fontWeight:700, marginRight:8, fontSize:14 }}>Event {evLabel(ev)}</span>
                                       <span style={{ color:"#0B0D10", fontSize:14 }}>{ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</span>
                                       <span style={{ color:"#3D434B", fontSize:14, marginLeft:8 }}>{ev.heats.length} heat{ev.heats.length !== 1 ? "s" : ""}{ev.entries && ev.entries.length > 0 ? ` · ${ev.entries.length} entries` : ""}</span>
                                     </div>
@@ -13662,7 +13846,7 @@
                                   <div style={S.label}>Age Group</div>
                                   <select value={swimNewEvent.ageGroup} onChange={e => setSwimNewEvent(x => ({...x, ageGroup:e.target.value}))}
                                     style={{...S.input}}>
-                                    {["8 & Under","9-10","11-12","13-14","15-18","Open"].map(g => <option key={g} value={g}>{g}</option>)}
+                                    {["6 & Under","7-8","8 & Under","9-10","11-12","13-14","15-17","15-18","13 & Over","Open"].map(g => <option key={g} value={g}>{g}</option>)}
                                   </select>
                                 </div>
                                 <div style={{ flex:1, minWidth:100 }}>
@@ -13697,13 +13881,14 @@
                               <button style={{ ...btnStyle("#0B3FCC"), fontSize:14 }}
                                 onClick={() => {
                                   const nextNum = swimMeet.events.length > 0 ? Math.max(...swimMeet.events.map(e => e.eventNum)) + 1 : 1;
+                                  const nextLabel = String(Math.max(nextNum - 1, ...swimMeet.events.map(e => parseInt(evLabel(e), 10) || 0)) + 1);
                                   const heats = Array.from({length: swimNewEvent.heats}, (_, hi) => ({
                                     heatNum: hi + 1,
                                     lanes: Array.from({length: swimNewEvent.lanes}, (_, li) => ({
                                       lane: li + 1, lastName:"", firstName:"", name:"", age:0, team:"", seedTime:"NT", seedMs:null, finalMs:null, dq:false, scratch:false
                                     }))
                                   }));
-                                  setSwimMeet(m => ({...m, events: [...m.events, { eventNum:nextNum, gender:swimNewEvent.gender, ageGroup:swimNewEvent.ageGroup, distance:swimNewEvent.distance, stroke:swimNewEvent.stroke, course:m.pool, heats }]}));
+                                  setSwimMeet(m => ({...m, events: [...m.events, { eventNum:nextNum, eventLabel:nextLabel, gender:swimNewEvent.gender, ageGroup:swimNewEvent.ageGroup, distance:swimNewEvent.distance, stroke:swimNewEvent.stroke, course:m.pool, heats }]}));
                                   setSwimAddEventOpen(false);
                                 }}>
                                 Add Event
@@ -13741,7 +13926,7 @@
                                 {s.age ? <span style={{ fontSize:14, color:"#3D434B", marginLeft:6 }}>age {s.age}</span> : null}
                                 <div style={{ fontSize:14, color:"#3D434B", marginTop:2 }}>
                                   {s.events.length > 0
-                                    ? `Events: ${s.events.map(e => `${e.eventNum} (${e.seedTime})`).join(", ")}`
+                                    ? `Events: ${s.events.map(e => `${evLabel(swimMeet.events.find(ev => ev.eventNum === e.eventNum)) || e.eventNum} (${e.seedTime})`).join(", ")}`
                                     : <span style={{ color:"#B3001B" }}>No events selected</span>}
                                 </div>
                               </div>
@@ -13823,7 +14008,7 @@
                                             }));
                                           }} style={{ accentColor:"#0B3FCC", width:16, height:16, cursor:"pointer" }} />
                                         <span style={{ fontSize:14, color: checked ? "#0B0D10" : "#3D434B", flex:1 }}>
-                                          <span style={{ color:"#0B3FCC", marginRight:4 }}>#{ev.eventNum}</span>
+                                          <span style={{ color:"#0B3FCC", marginRight:4 }}>#{evLabel(ev)}</span>
                                           {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}
                                         </span>
                                         {checked && (
@@ -13905,7 +14090,7 @@
                             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                               {swimMeet.events.map(ev => (
                                 <div key={ev.eventNum} style={{ ...rowStyle(TM.swim) }}>
-                                  <div style={{ fontSize: 16, fontWeight: 900 }}>Event {ev.eventNum} · {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</div>
+                                  <div style={{ fontSize: 16, fontWeight: 900 }}>Event {evLabel(ev)} · {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</div>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                                     {ev.heats.map(h => {
                                       const n = h.lanes.filter(l => l.name && !l.scratch).length;
@@ -13931,7 +14116,7 @@
                             {/* Event / heat header */}
                             <div style={{ ...S.card, marginBottom:10 }}>
                               <div style={{ fontSize:14, color:"#3D434B", fontWeight:700, letterSpacing:1.2, textTransform:"uppercase" }}>
-                                Event {activeEv.eventNum} &mdash; {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
+                                Event {evLabel(activeEv)} &mdash; {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
                               </div>
                               <div style={{ fontSize:14, color:"#04613F", marginTop:2 }}>
                                 Heat {heatIndex + 1} of {totalHeats}
@@ -13944,14 +14129,19 @@
                                 {formatSwimTime(swimClockMs)}
                               </div>
                               <div style={{ display:"flex", gap:10, justifyContent:"center", marginTop:12 }}>
-                                {!swimClockStarted ? (
+                                {!swimClockStarted ? (<>
+                                  <button onClick={sayTakeYourMarks}
+                                    style={{ ...btnStyle(TM.ink, true), fontSize:16, padding:"12px 18px" }}>
+                                    🔊 Take your marks
+                                  </button>
                                   <button onClick={() => {
+                                    playStartTone();
                                     setSwimClockStarted(true);
                                     setSwimClockRunning(true);
                                     if (swimLiveCode) {
                                       rtdb.ref(`swimLive/${swimLiveCode}`).update({
                                         status: "racing",
-                                        startedAt: Date.now(),
+                                        startedAt: serverNow(),
                                         activeEvent: swimActiveEvent,
                                         activeHeat: swimActiveHeat,
                                         results: null,
@@ -13960,7 +14150,7 @@
                                   }} style={{ ...btnStyle("#0B3FCC"), fontSize:16, padding:"12px 40px", letterSpacing:1.2 }}>
                                     ▶ START ALL
                                   </button>
-                                ) : (
+                                </>) : (
                                   <>
                                     <button onClick={() => setSwimClockRunning(r => !r)}
                                       style={{ ...btnStyle(swimClockRunning ? "#8A5A00" : "#0B3FCC"), fontSize:14, padding:"8px 20px" }}>
@@ -14118,7 +14308,7 @@
                                 <option value="">-- choose event --</option>
                                 {swimMeet.events.map(ev => (
                                   <option key={ev.eventNum} value={ev.eventNum}>
-                                    Event {ev.eventNum} — {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}
+                                    Event {evLabel(ev)} — {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}
                                   </option>
                                 ))}
                               </select>
@@ -14375,7 +14565,7 @@
                                   <div style={{ fontSize:14, color:"#3D434B", marginBottom:3, letterSpacing:1.2, textTransform:"uppercase" }}>Age Group</div>
                                   <select value={swimNewAthlete.ageGroup} onChange={e => setSwimNewAthlete(a => ({ ...a, ageGroup: e.target.value }))}
                                     style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 10px", color:"#0B0D10", fontSize:14, outline:"none", width:"100%" }}>
-                                    {["8 & Under","9-10","11-12","13-14","15-18","Open"].map(g => <option key={g} value={g}>{g}</option>)}
+                                    {["6 & Under","7-8","8 & Under","9-10","11-12","13-14","15-17","15-18","13 & Over","Open"].map(g => <option key={g} value={g}>{g}</option>)}
                                   </select>
                                 </div>
                               </div>
@@ -14670,7 +14860,7 @@
                         </div>
                         {swimLaneSession.activeEvent && (
                           <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"5px 14px", fontSize:14, color:"#3D434B" }}>
-                            Event {swimLaneSession.activeEvent}
+                            Event {activeEvData ? evLabel(activeEvData) : swimLaneSession.activeEvent}
                             {activeEvData?.eventName ? ` · ${activeEvData.eventName}` : ""}
                           </div>
                         )}
@@ -14714,7 +14904,7 @@
                         disabled={status !== "racing" || swimLaneFinished}
                         onClick={() => {
                           if (status !== "racing" || swimLaneFinished) return;
-                          const finalMs = Date.now() - swimLaneSession.startedAt;
+                          const finalMs = serverNow() - swimLaneSession.startedAt;
                           rtdb.ref(`swimLive/${swimLaneCode}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
                           setSwimLaneFinished(true);
                         }}
@@ -14868,7 +15058,7 @@
                       ) : activeHt ? (
                         <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"14px 16px", marginBottom:12 }}>
                           <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:6 }}>
-                            Event {session.activeEvent} — {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
+                            Event {evLabel(activeEv)} — {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
                           </div>
                           <div style={{ fontSize:14, color:"#04613F", marginBottom:10 }}>
                             Heat {session.activeHeat} of {activeEv.heats.length}
@@ -14913,7 +15103,7 @@
                             return (
                               <div key={key} style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"10px 14px", marginBottom:8 }}>
                                 <div style={{ fontSize:14, color:"#04613F", fontWeight:700, marginBottom:6 }}>
-                                  {ev ? `Event ${evNum} — ${ev.gender} ${ev.ageGroup} ${ev.distance} ${ev.stroke}` : `Event ${evNum}`} · Heat {htNum}
+                                  {ev ? `Event ${evLabel(ev)} — ${ev.gender} ${ev.ageGroup} ${ev.distance} ${ev.stroke}` : `Event ${evNum}`} · Heat {htNum}
                                 </div>
                                 {sorted.map(([lane, r], rank) => {
                                   const isCheering = swimWatchCheering && r.name && r.name === swimWatchCheering;
