@@ -14877,7 +14877,7 @@
                           <div>
                             <div style={{ fontSize:28, fontWeight:700, color:"#0B0D10", marginBottom:4 }}>{mySwimmer.name || "—"}</div>
                             {mySwimmer.team && <div style={{ fontSize:14, color:"#04613F" }}>{mySwimmer.team}</div>}
-                            {mySwimmer.seedTime && <div style={{ fontSize:14, color:"#3D434B", marginTop:4 }}>Seed: {formatSwimTime(mySwimmer.seedTime)}</div>}
+                            {mySwimmer.seedMs ? <div style={{ fontSize:14, color:"#3D434B", marginTop:4 }}>Seed: {formatSwimTime(mySwimmer.seedMs)}</div> : null}
                           </div>
                         ) : (
                           <div style={{ color:"#3D434B", fontSize:14, paddingTop:8 }}>
@@ -14889,7 +14889,7 @@
                       {/* Clock */}
                       <div style={{ textAlign:"center", marginBottom:20 }}>
                         <div style={{ fontSize:64, fontWeight:700, letterSpacing:1.2, color: status === "racing" ? "#0B3FCC" : "#3D434B", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
-                          {formatSwimTime(status === "racing" ? swimLaneClockMs : (swimLaneFinished && swimLaneSession?.results?.[swimLaneNum] ? swimLaneSession.results[swimLaneNum].finalMs : 0))}
+                          {formatSwimTime(swimLaneFinished && swimLaneSession?.results?.[swimLaneNum] ? swimLaneSession.results[swimLaneNum].finalMs : status === "racing" ? swimLaneClockMs : 0)}
                         </div>
                         <div style={{ fontSize:14, color:"#3D434B", marginTop:8 }}>
                           {status === "waiting" ? "⏳ Waiting for start…" :
