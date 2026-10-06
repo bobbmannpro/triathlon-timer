@@ -92,6 +92,11 @@
         font-variant-numeric: tabular-nums; letter-spacing: -2.6px;
       }
       .tm-lane { height: 3px; background: var(--tm-ink); }
+      /* Google's map terms: its name stays visible on any map using its tiles. */
+      .leaflet-container:has(img[src*="tile.googleapis.com"])::after {
+        content: "Google"; position: absolute; left: 8px; bottom: 6px; z-index: 800; pointer-events: none;
+        font: 700 13px Arial, sans-serif; color: #FFFFFF; text-shadow: 0 0 3px rgba(0,0,0,0.9);
+      }
 
       /* Nav strip: tabs size to their own content and the strip scrolls. */
       .tm-nav-wrap { position: relative; }
@@ -189,6 +194,10 @@
         appId: "1:1068021372190:web:5891801b76b228c860650f",
         databaseURL: "https://timeathon-default-rtdb.firebaseio.com"
       };
+      // Google Maps Platform + Drive key: restricted in Google Cloud to this
+      // website and to Drive API, Map Tiles API and Places API (New). Empty =
+      // the app uses Esri maps and OpenStreetMap search instead.
+      const GOOGLE_KEY = "";
       firebase.initializeApp(firebaseConfig);
       var auth = firebase.auth();
       var rtdb = firebase.database();
@@ -816,7 +825,7 @@
         return "Google Drive said: " + (msg || ("error " + status));
       }
       async function driveGet(path, params) {
-        const q = new URLSearchParams({ ...params, key: firebaseConfig.apiKey, supportsAllDrives: "true" });
+        const q = new URLSearchParams({ ...params, key: GOOGLE_KEY || firebaseConfig.apiKey, supportsAllDrives: "true" });
         const r = await fetch("https://www.googleapis.com/drive/v3/" + path + "?" + q.toString());
         let body = null; try { body = await r.json(); } catch (_) {}
         if (!r.ok) throw new Error(driveErrorText(r.status, body));
@@ -1352,6 +1361,37 @@
           routeColor: "#0B3FCC", trailColor: "#8A5A00",
         },
       };
+
+      // ── Google map tiles ─────────────────────────────────────────────────────
+      // With a Google key, Satellite and Roads come from Google (Map Tiles API).
+      // Tiles need a session token; one lasts about two weeks and is cached, so
+      // a phone at the course reuses it. Until a session exists (first load, or
+      // no key) the Esri tiles above are used, so maps never go blank.
+      function useGoogleTiles(kind, session) {
+        const url = `https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}?session=${session}&key=${GOOGLE_KEY}`;
+        Object.assign(BIKE_BASEMAPS[kind], { url, subdomains: "abc", maxZoom: kind === "satellite" ? 21 : 20,
+          attribution: "Map data &copy; Google", labels: null, google: true });
+      }
+      (function setUpGoogleTiles() {
+        if (!GOOGLE_KEY) return;
+        const want = { satellite: { mapType: "satellite", layerTypes: ["layerRoadmap"] }, roads: { mapType: "roadmap" } };
+        let cache = {};
+        try { cache = JSON.parse(localStorage.getItem("g-tile-sessions") || "{}"); } catch (_) {}
+        const soon = Date.now() / 1000 + 86400;
+        Object.keys(want).forEach(kind => {
+          const c = cache[kind];
+          if (c && c.session && +c.expiry > soon) { useGoogleTiles(kind, c.session); return; }
+          fetch(`https://tile.googleapis.com/v1/createSession?key=${GOOGLE_KEY}`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...want[kind], language: "en-US", region: "US" }),
+          }).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(j => {
+            if (!j || !j.session) return;
+            cache[kind] = { session: j.session, expiry: j.expiry };
+            try { localStorage.setItem("g-tile-sessions", JSON.stringify(cache)); } catch (_) {}
+            useGoogleTiles(kind, j.session);
+          }).catch(e => console.warn("Google map tiles unavailable, using Esri:", e));
+        });
+      })();
 
       // ── Road snapping ────────────────────────────────────────────────────────
       // BRouter is an OpenStreetMap routing engine with genuine cycling profiles,
@@ -2893,6 +2933,26 @@
           const q = (triSearch || "").trim();
           if (!q) return;
           setTriSearching(true); setTriSearchMsg(""); setTriResults([]);
+          if (GOOGLE_KEY) {
+            try {
+              const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-Goog-Api-Key": GOOGLE_KEY,
+                           "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location" },
+                body: JSON.stringify({ textQuery: q, maxResultCount: 5 }),
+              });
+              if (res.ok) {
+                const j = await res.json();
+                const places = (j.places || []).filter(pl => pl.location);
+                if (places.length) {
+                  setTriResults(places.map(pl => ({ lat: pl.location.latitude, lon: pl.location.longitude,
+                    name: `${(pl.displayName && pl.displayName.text) || ""}${pl.formattedAddress ? " — " + pl.formattedAddress : ""}` })));
+                  setTriSearching(false);
+                  return;
+                }
+              } else console.warn("Google Places search failed:", res.status);
+            } catch (e) { console.warn("Google Places search failed:", e); }
+          }
           try {
             const url = "https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q="
                       + encodeURIComponent(q);
