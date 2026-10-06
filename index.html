@@ -532,10 +532,18 @@
         };
         if (seg === 0 && course.swimByLaps) return plan(course.swimYards, course.swimLap, gapFor(course.swimMinLapSec, 15));
         if (seg === 2 && course.bikeType === "laps") return plan(course.bikeMiles, course.lapMi, gapFor(course.minLapSec, 20));
+        // Spin bike: riders call out their miles and each tap is one mile, so a
+        // 27-mile ride is 27 taps — and the taps give the average speed.
+        if (seg === 2 && course.bikeType === "spin") return plan(course.bikeMiles, 1, 0);
         if (seg === 4 && course.runByLaps) return plan(course.runMiles, course.runLap, gapFor(course.runMinLapSec, 30));
         return null;
       }
-      function courseHasLaps(c) { return !!(c && (c.swimByLaps || c.bikeType === "laps" || c.runByLaps)); }
+      function courseHasLaps(c) { return !!(c && (c.swimByLaps || c.bikeType === "laps" || c.bikeType === "spin" || c.runByLaps)); }
+      // What one tap is on this leg: a mile on a spin bike, a lap everywhere else.
+      function tapWord(course, seg, plural = true) {
+        const mi = seg === 2 && course && course.bikeType === "spin";
+        return mi ? (plural ? "miles" : "mile") : (plural ? "laps" : "lap");
+      }
       function legWindow(a, seg, gap) {
         const start = seg === 0 ? a.startOffset : a.splits[seg - 2];
         if (start == null) return null;
@@ -580,7 +588,7 @@
       function countLegNow(a, course) {
         if (!a || !a.started || a.finished) return null;
         const nx = a.splits.findIndex(x => x == null);
-        if (nx === 2 && course && ["spin", "trainer", "distance"].includes(course.bikeType)) return null;
+        if (nx === 2 && course && ["trainer", "distance"].includes(course.bikeType)) return null;
         return [0, 2, 4].includes(nx) ? nx : null;
       }
       // ── Lap splits ───────────────────────────────────────────────────────────
@@ -3606,7 +3614,7 @@
             const athCourse = courses.find(c => c.id === ath.courseId) || courses[0];
             const type = athCourse?.bikeType || "gps";
             if (type === "gps") return;
-            if (type === "laps") return;   // finished by the lap effect below
+            if (type === "laps" || type === "spin") return;   // finished by the lap/mile taps below
             const targetMi = parseFloat(athCourse?.bikeMiles) || 0;
             if (targetMi <= 0) return;
             const g = athleteGps[i];
@@ -8813,7 +8821,7 @@
                             <div key={i} style={{ ...rowStyle(LEG_COLOUR[seg]) }}>
                               <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 20, fontWeight: 900, flex: 1, minWidth: 0 }}>{nameOf(a)}{a.raceNumber != null ? <span style={{ fontWeight: 700, color: TM.inkMuted }}> #{a.raceNumber}</span> : null}</span>
-                                <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: LEG_COLOUR[seg] }}>{LEG_NAME[seg]} laps</span>
+                                <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: LEG_COLOUR[seg] }}>{LEG_NAME[seg]} {tapWord(course, seg)}</span>
                               </div>
                               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
                                 <button onClick={() => mode === "host" ? undoLatestLap(i) : undoMyLatestLap(race.code, i)} disabled={n === 0}
@@ -8853,7 +8861,7 @@
                                        padding: big ? "22px 20px" : "12px 16px", flexDirection: big ? "column" : "row",
                                        background: justTapped ? TM.ink : LEG_COLOUR[seg], color: "#FFFFFF", border: "none", borderRadius: 6,
                                        textAlign: big ? "center" : "left", cursor: "pointer", touchAction: "manipulation" }}>
-                              <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", order: big ? 0 : 2 }}>{LEG_NAME[seg]} laps</span>
+                              <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", order: big ? 0 : 2 }}>{LEG_NAME[seg]} {tapWord(course, seg)}</span>
                               <span style={{ display: "flex", alignItems: "baseline", gap: 4, minWidth: big ? 0 : 96, order: 1 }}>
                                 <span style={{ ...TM_NUM, fontSize: big ? 110 : 54, lineHeight: 0.95 }}>{n}</span>
                                 {need > 0 && <span style={{ fontSize: big ? 28 : 18, fontWeight: 800 }}>/{need}</span>}
@@ -8906,7 +8914,11 @@
                     })()}
                     {flash && (
                       <div role="status" style={{ ...rowStyle(flash.error ? TM.live : TM.run), marginTop: 14, display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ flex: 1, fontSize: 17, fontWeight: 800 }}>{flash.error ? flash.error : `✓ Lap counted for ${flash.name}`}</span>
+                        <span style={{ flex: 1, fontSize: 17, fontWeight: 800 }}>{flash.error ? flash.error : (() => {
+                          const fa = race.athletes[flash.idx];
+                          const w = fa ? tapWord(courseFor(race, fa), fa.splits.findIndex(x => x == null), false) : "lap";
+                          return `✓ ${w[0].toUpperCase() + w.slice(1)} counted for ${flash.name}`;
+                        })()}</span>
                         {!flash.error && <button onClick={() => undoLap(race.code, flash.idx, flash.id)} style={{ ...btnStyle(TM.ink, true), padding: "0 14px" }}>Undo</button>}
                       </div>
                     )}
@@ -10992,11 +11004,11 @@
                       Distances turn raw times into pace. Most races have one course; add another for a shorter kids' or novice route.
                     </div>
                     {(() => {
-                      const allLaps = courses.length > 0 && courses.every(c => c.swimByLaps && c.bikeType === "laps" && c.runByLaps);
+                      const allLaps = courses.length > 0 && courses.every(c => c.swimByLaps && ["laps", "spin"].includes(c.bikeType) && c.runByLaps);
                       const someLaps = courses.some(courseHasLaps);
                       const setLapCounting = (on) => setCourses(cs => cs.map(c => on
-                        ? { ...c, swimByLaps: true, swimLap: c.swimLap || 25, bikeType: "laps", lapMi: c.lapMi || 0.25, runByLaps: true, runLap: c.runLap || 1 }
-                        : { ...c, swimByLaps: false, runByLaps: false, bikeType: c.bikeType === "laps" ? "gps" : c.bikeType }));
+                        ? { ...c, swimByLaps: true, swimLap: c.swimLap || 25, bikeType: c.bikeType === "spin" ? "spin" : "laps", lapMi: c.lapMi || 0.25, runByLaps: true, runLap: c.runLap || 1 }
+                        : { ...c, swimByLaps: false, runByLaps: false, bikeType: ["laps", "spin"].includes(c.bikeType) ? "gps" : c.bikeType }));
                       return (
                         <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
                           <div>
@@ -11151,7 +11163,7 @@
                                     : (course.bikeType || "gps") === "gps"
                                       ? "Riders follow a course; pins on the map (step 5) log the splits."
                                       : course.bikeType === "spin"
-                                        ? `Ask each rider for their miles and type them in on the Race screen (or connect the bike). The bike leg ends by itself at ${course.bikeMiles} ${short}.`
+                                        ? `Each tap is one ${short === "km" ? "km" : "mile"}: ask riders where they are and tap + for each ${short === "km" ? "km" : "mile"} — ${course.bikeMiles || "the"} ${short} = ${course.bikeMiles || "that many"} taps. You get their average speed, and the bike leg ends by itself on the last one. (Can connect the bike? Use Trainer.)`
                                         : `The bike leg ends by itself when the trainer reaches ${course.bikeMiles} ${short}.`}
                                 </div>
                               </div>
@@ -11844,7 +11856,7 @@
                             const n = legCount(lapTaps[i], ath, seg, athCourse);
                             return (
                               <button onClick={() => setLapOpen(o => o === i ? null : i)} aria-expanded={lapOpen === i}
-                                aria-label={`${LEG_NAME[seg]} laps ${n}${plan.need ? " of " + plan.need : ""} — show counter`}
+                                aria-label={`${LEG_NAME[seg]} ${tapWord(athCourse, seg)} ${n}${plan.need ? " of " + plan.need : ""} — show counter`}
                                 style={{ minHeight: 40, minWidth: 54, padding: "0 8px", borderRadius: 6, cursor: "pointer", fontWeight: 900, fontSize: 15,
                                          fontVariantNumeric: "tabular-nums", background: lapOpen === i ? LEG_COLOUR[seg] : "#FFFFFF",
                                          color: lapOpen === i ? "#FFFFFF" : LEG_COLOUR[seg], border: `2px solid ${LEG_COLOUR[seg]}` }}>
@@ -11889,7 +11901,7 @@
                               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                 {side("Take off a lap", () => undoLatestLap(i), !canCount || n === 0, false)}
                                 <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
-                                  <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: col }}>{LEG_NAME[seg].toUpperCase()} LAPS</div>
+                                  <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: col }}>{LEG_NAME[seg].toUpperCase()} {tapWord(athCourse, seg).toUpperCase()}</div>
                                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 4 }}>
                                     <span style={{ ...TM_NUM, fontSize: 36, lineHeight: 1, color: TM.ink }}>{n}</span>
                                     {plan.need > 0 && <span style={{ fontSize: 18, fontWeight: 800, color: TM.inkMuted }}>/ {plan.need}</span>}
@@ -12007,7 +12019,7 @@
                         {/* Trainer bike progress — shows for trainer/spin courses or whenever live trainer data arrives */}
                         {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
-                          const isTrainerCourse = ["trainer", "spin"].includes(athCourse?.bikeType);
+                          const isTrainerCourse = athCourse?.bikeType === "trainer";
                           // Resolve tData BEFORE the gate so we can show the panel for any course when data is present
                           const tDataFb = athleteTrainerData[i];
                           // Fallback: host's own local BLE device — exact match, or solo-athlete case when no UID/name match resolved
@@ -12026,8 +12038,7 @@
                           if (!isTrainerCourse && !tData) return null;
                           if (next !== 2 && ath.splits[2] !== null) return null; // T2 already done — hide
                           const targetMi = isTrainerCourse ? (parseFloat(athCourse?.bikeMiles) || 0) : 0;
-                          const isSpin = athCourse?.bikeType === "spin";
-                          const distMi = tData?.distMi ?? (spinMiles[i] ?? null);
+                          const distMi = tData?.distMi ?? null;
                           const pct = targetMi > 0 && distMi != null ? Math.min(100, (distMi / targetMi) * 100) : 0;
                           const inBike = next === 2;
                           return (
@@ -12037,7 +12048,7 @@
                                   <span style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>🚲 {athCourse?.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}</span>
                                   <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#8A5A00", letterSpacing: 1 }}>
                                     {isTrainerCourse
-                                      ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : isSpin ? `0 / ${targetMi} mi` : 'No signal'))
+                                      ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : 'No signal'))
                                       : (tData ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph` : 'No signal')}
                                   </span>
                                 </div>
@@ -12046,27 +12057,11 @@
                                     <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#04613F" : "#8A5A00", borderRadius: 3, transition: "width 0.4s" }} />
                                   </div>
                                 )}
-                                <div style={{ fontSize: 14, color: tData || isSpin ? "#3D434B" : "#B3001B" }}>
+                                <div style={{ fontSize: 14, color: tData ? "#3D434B" : "#B3001B" }}>
                                   {tData
                                     ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph${tData.cadence != null ? ` · ${tData.cadence} rpm` : ''}${tData.power != null ? ` · ${tData.power}w` : ''}${isTrainerCourse && pct >= 100 ? ' · ✓ target reached' : ''}`
-                                    : isSpin ? (inBike ? "Ask the rider for their miles and type them in." : "Miles go in once they're on the bike.")
                                     : (inBike ? 'No trainer signal — use Bike button above to advance manually' : 'Waiting for trainer signal…')}
                                 </div>
-                                {isSpin && inBike && (
-                                  <form onSubmit={e => {
-                                      e.preventDefault();
-                                      const v = parseFloat(e.target.elements.mi.value);
-                                      if (!(v >= 0)) return;
-                                      setSpinMiles(m => ({ ...m, [i]: v }));
-                                      if (liveRaceCode) rtdb.ref(`liveRaces/${liveRaceCode}/athletes/${i}/gps/manualMi`).set(v).catch(console.error);
-                                      e.target.reset();
-                                    }} style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                                    <input name="mi" type="number" inputMode="decimal" step="0.01" min="0" aria-label={`Miles so far for ${ath.name}`}
-                                      placeholder="Miles"
-                                      style={{ flex: 1, minWidth: 0, minHeight: 44, border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 10px", fontSize: 16, color: TM.ink, background: "#FFFFFF" }} />
-                                    <button type="submit" style={{ ...btnStyle("#8A5A00"), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Update</button>
-                                  </form>
-                                )}
                               </div>
                             </div>
                           );
