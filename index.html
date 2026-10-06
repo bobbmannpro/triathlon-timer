@@ -576,9 +576,11 @@
         return w ? countLaps(taps, w[0], w[1], p.gap) : 0;
       }
       // The leg to count right now: swim, bike or run (never a transition).
-      function countLegNow(a) {
+      // A bike measured in miles (spin bike, trainer, GPS miles) isn't counted by laps.
+      function countLegNow(a, course) {
         if (!a || !a.started || a.finished) return null;
         const nx = a.splits.findIndex(x => x == null);
+        if (nx === 2 && course && ["spin", "trainer", "distance"].includes(course.bikeType)) return null;
         return [0, 2, 4].includes(nx) ? nx : null;
       }
       // ── Lap splits ───────────────────────────────────────────────────────────
@@ -2368,7 +2370,9 @@
         const [emailCopied, setEmailCopied] = useState("");
         // The triathlon's code before it's locked in by sign-ups or going live.
         const [customRaceCode, setCustomRaceCode] = useState("");
-        const [raceListed, setRaceListed] = useState(true);   // show in Today's races
+        const [raceListed, setRaceListed] = useState(true);
+        // Course map on: a map step in Setup and GPS on athletes' phones. Off: neither.
+        const [courseMapOn, setCourseMapOn] = useState(true);   // show in Today's races
         const [oldRaceCodes, setOldRaceCodes] = useState([]);  // codes this race used before a change
         const [codeCheck, setCodeCheck] = useState({ code: "", status: "" });
         const [swimSetupStep, setSwimSetupStep] = useState(1);
@@ -2661,6 +2665,10 @@
         const [athleteTrackTick, setAthleteTrackTick] = useState(0);
         // Athletes' phones that have picked their name in this race: { idx: { uid, name, at, seen } }.
         const [athletePhones, setAthletePhones] = useState({});
+        // Parents counting each athlete: { idx: [{ uid, name, seen }] }.
+        const [athleteCounters, setAthleteCounters] = useState({});
+        // Spin-bike miles the host types in as riders call them out: { idx: miles }.
+        const [spinMiles, setSpinMiles] = useState({});
         const phonesKnownRef = useRef(null);
         const [phoneToast, setPhoneToast] = useState(null);
         const [gpsNow, setGpsNow] = useState(Date.now());
@@ -2730,7 +2738,10 @@
 
         // Auto-start GPS immediately when athlete is identified — no consent gate
         useEffect(() => {
-          if (joinRace && joinAthIdx !== null && !joinGpsActive && !watchToken) {
+          // No GPS when the host turned the course map off (unless the bike counts GPS miles).
+          const jr = joinRace || {};
+          const needGps = jr.courseMap !== false || asList(jr.courses).some(c => c && c.bikeType === "distance");
+          if (joinRace && joinAthIdx !== null && !joinGpsActive && !watchToken && needGps) {
             startGpsTracking();
           }
         }, [joinRace?.code, joinAthIdx]);
@@ -3458,7 +3469,7 @@
           }
           if (!liveRaceCode) {
             setAthleteGps({}); setAthleteTrainerData({}); setAthleteHrData({});
-            setAthletePhones({}); phonesKnownRef.current = null;
+            setAthletePhones({}); phonesKnownRef.current = null; setAthleteCounters({});
             athleteTrackRef.current = {};
             return;
           }
@@ -3473,6 +3484,14 @@
             const phoneMap = {};
             athArr.forEach((ath, idx) => { if (ath && ath.gps && ath.gps.phone && ath.gps.phone.uid) phoneMap[idx] = ath.gps.phone; });
             setAthletePhones(phoneMap);
+            const counterMap = {}, spinMap = {};
+            athArr.forEach((ath, idx) => {
+              const g = ath && ath.gps; if (!g) return;
+              if (g.counters) counterMap[idx] = Object.entries(g.counters).map(([uid, c]) => ({ uid, ...(c || {}) }));
+              if (typeof g.manualMi === "number") spinMap[idx] = g.manualMi;
+            });
+            setAthleteCounters(counterMap);
+            setSpinMiles(spinMap);
             // A phone that wasn't linked when this screen opened → say so.
             if (phonesKnownRef.current) {
               const fresh = Object.keys(phoneMap).filter(k => phonesKnownRef.current[k] !== phoneMap[k].uid);
@@ -3548,6 +3567,9 @@
         // off · none → this athlete's phone never checked in at all.
         // Riders on a lap-count, trainer or spin-bike course don't carry a phone,
         // so GPS badges and "not connected" warnings would just be noise for them.
+        // Parents counting this athlete right now (heard from in the last 90 s).
+        function countersFor(i) { return (athleteCounters[i] || []).filter(c => Date.now() - (c.seen || 0) < 90000); }
+
         function athleteUsesGps(ath) {
           const c = (courses || []).find(x => x.id === ath.courseId) || (courses || [])[0];
           return ["gps", "distance"].includes((c && c.bikeType) || "gps");
@@ -3590,11 +3612,11 @@
             const g = athleteGps[i];
             const distMi = type === "distance"
               ? (g && g.onBike ? g.distanceMi : null)
-              : (athleteTrainerData[i] ? athleteTrainerData[i].distMi : null);
+              : (athleteTrainerData[i] ? athleteTrainerData[i].distMi : (spinMiles[i] ?? null));
             if (distMi == null || distMi < targetMi) return;
             logSplit(i, 2);
           });
-        }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps, autoSplits]);
+        }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps, autoSplits, spinMiles]);
 
         useEffect(() => {
           if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/autoSplits").set(autoSplits).catch(console.error);
@@ -3603,9 +3625,9 @@
         // parents' and athletes' phones straight away.
         useEffect(() => {
           if (!liveRaceCode) return;
-          const t = setTimeout(() => rtdb.ref("liveRaces/" + liveRaceCode).update({ courses, units, ageGroups }).catch(console.error), 600);
+          const t = setTimeout(() => rtdb.ref("liveRaces/" + liveRaceCode).update({ courses, units, ageGroups, courseMap: courseMapOn }).catch(console.error), 600);
           return () => clearTimeout(t);
-        }, [courses, units, ageGroups, liveRaceCode]);
+        }, [courses, units, ageGroups, courseMapOn, liveRaceCode]);
 
         // Lap-counted legs (swim, bike or run) end by themselves on the last lap;
         // the last run lap finishes the race.
@@ -4317,7 +4339,7 @@
             raceName: certConfig.eventName || "Race",
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
-            courses, units, autoSplits, ageGroups,
+            courses, units, autoSplits, ageGroups, courseMap: courseMapOn,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes
           };
@@ -4612,6 +4634,7 @@
           setSaveRaceName(race.name || "");
           setCustomRaceCode(race.plannedCode || race.code || friendlyCode());
           setRaceListed(race.listed !== false);
+          setCourseMapOn(race.courseMap !== false);
           setOldRaceCodes(race.oldCodes || []);
           if (race.units) setUnits(race.units);
           if (race.certConfig) setCertConfig(race.certConfig);
@@ -4654,7 +4677,7 @@
         function raceSnapshot() {
           return {
             ageGroups, courses, units, certConfig, waypoints, raceRoutes,
-            listed: raceListed, oldCodes: oldRaceCodes, autoSplits,
+            listed: raceListed, oldCodes: oldRaceCodes, autoSplits, courseMap: courseMapOn,
             plannedCode: customRaceCode || null,
             athletes: athletes.map(a => ({
               name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup,
@@ -4704,6 +4727,7 @@
           setCustomRaceCode(race.plannedCode || race.code || friendlyCode());
           setSaveRaceName(race.name || "");
           setRaceListed(race.listed !== false);
+          setCourseMapOn(race.courseMap !== false);
           setAutoSplits(race.autoSplits !== false);
           setOldRaceCodes(race.oldCodes || []);
           setRegistrationOpen(false);
@@ -5100,6 +5124,7 @@
           setRaceRoutes({ swim: [], bike: [], run: [] });
           setRaceDrawLeg(null);
           setAgeGroups(DEFAULT_AGE_GROUPS);
+          setCourseMapOn(true);
           setCertConfig({ eventName: "Timeathon Race Event", accentColor: "#0B3FCC", orgName: "", customLogoB64: null });
           setRegistrationCode(null);
           setRegistrationOpen(false);
@@ -7927,6 +7952,18 @@
           setLapMine(next);
           try { localStorage.setItem("lap-mine-" + lapCode, JSON.stringify(next)); } catch(_) {}
         }
+        // A parent counting an athlete says so (30 s heartbeat), so the host can
+        // see who's covered and who still needs a counter.
+        const countingIdx = !isHost && !isAthlete && lapCountCode ? Object.keys(lapMine).find(k => lapMine[k]) : undefined;
+        useEffect(() => {
+          if (countingIdx == null || !lapCountCode || !auth.currentUser) return;
+          const ref = rtdb.ref(`liveRaces/${lapCountCode}/athletes/${countingIdx}/gps/counters/${auth.currentUser.uid}`);
+          const name = (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || "A parent";
+          const beat = () => ref.set({ name, seen: Date.now() }).catch(() => {});
+          beat();
+          const id = setInterval(beat, 30000);
+          return () => { clearInterval(id); ref.remove().catch(() => {}); };
+        }, [countingIdx, lapCountCode, currentUser && currentUser.uid]);
         // Firebase may hand back a sparse array or an object; keep athlete indexes.
         function indexedAthletes(raw) {
           const out = [];
@@ -8301,7 +8338,7 @@
                 ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__","Ride"],["__bike_feed__","Follow"],["__bike_riders__","Riders"]]
                 : appMode === "swim"
                 ? [["myraces","My Races"],["swimsetup","Setup"],["swimrace","Race"],["swimresults","Results"],["swimathletes","Athletes"],["swimdevices","Devices"],["swimlane","Lane"]]
-                : [["myraces","My Races"],["setup","Setup"],["race","Race"],["racemap","Map"],["results","Results"],["athletes","Athletes"],["devices","Devices"]];
+                : [["myraces","My Races"],["setup","Setup"],["race","Race"], ...(courseMapOn ? [["racemap","Map"]] : []),["results","Results"],["athletes","Athletes"],["devices","Devices"]];
               return (
                 <nav className="tm-nav-wrap" aria-label="Host">
                 <div className="tm-nav" ref={navStripRef}>
@@ -8649,7 +8686,7 @@
                     {missing.length > 0 && (
                       <div style={{ ...TM_CAPTION, marginTop: 10 }}>
                         No email for: {missing.map(a => athleteName(a) || "unnamed").join(", ")}.{" "}
-                        <button onClick={() => { setSetupStep(2); setView("setup"); }}
+                        <button onClick={() => { setSetupStep(3); setView("setup"); }}
                           style={{ background: "none", border: "none", padding: 0, minHeight: 0, color: TM.ink, fontWeight: 800, fontSize: 14, textDecoration: "underline", cursor: "pointer" }}>Add them</button>
                       </div>
                     )}
@@ -8758,7 +8795,7 @@
                           </div>
                         )}
                         {shown.map(({ a, i, course }) => {
-                          const seg = countLegNow(a);
+                          const seg = countLegNow(a, course);
                           if (seg == null) return (
                             <div key={i} style={{ ...rowStyle(), display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                               <span style={{ fontSize: 18, fontWeight: 900 }}>{nameOf(a)}</span>
@@ -9727,7 +9764,9 @@
                           <div style={{ display: "flex", alignItems: "center", gap: 8, background: joinGpsActive ? "#EFEDE8" : "#EFEDE8", border: `2px solid ${joinGpsActive ? "#C9C5BC" : "#C9C5BC"}`, borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
                             <div style={{ width: 8, height: 8, borderRadius: "50%", background: joinGpsActive ? "#04613F" : "#3D434B", boxShadow: joinGpsActive ? "0 0 0 0 rgba(11,13,16,0.18)" : "none", animation: joinGpsActive ? "gpsping 1.4s ease-out infinite" : "none", flexShrink: 0 }} />
                             <div style={{ fontSize: 14, color: joinGpsActive ? "#04613F" : "#3D434B", flex: 1 }}>
-                              {joinGpsActive ? joinGpsStatus : (joinGpsStatus || "Starting GPS…")}
+                              {(joinLiveData || joinRace)?.courseMap === false && !asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")
+                                ? "Laps and splits are logged at the course — no GPS needed."
+                                : joinGpsActive ? joinGpsStatus : (joinGpsStatus || "Starting GPS…")}
                             </div>
                             {(() => { const hrDev = btDevices.find(d => d.readings.heartRate != null); return hrDev ? <span style={{ fontSize: 14, color: "#04613F", fontWeight: 700, flexShrink: 0 }}>❤️ {hrDev.readings.heartRate}</span> : null; })()}
                             <div style={{ fontSize: 14, color: "#3D434B" }}>
@@ -9736,8 +9775,8 @@
                             </div>
                           </div>
 
-                          {/* Live GPS map with waypoints + trail */}
-                          <div style={{ marginBottom: 12, borderRadius: 8, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
+                          {/* Live GPS map with waypoints + trail — not on a race without a course map */}
+                          {(joinLiveData || joinRace)?.courseMap !== false && <div style={{ marginBottom: 12, borderRadius: 8, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
                             <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#04613F", padding: "7px 12px", background: "#EFEDE8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                               <span>📍 RACE MAP</span>
                               {joinGpsTrail.length > 0 && <span style={{ color: "#3D434B" }}>{joinGpsTrail.length} pts tracked</span>}
@@ -9755,7 +9794,7 @@
                                 ⊕ ME
                               </button>
                             )}
-                          </div>
+                          </div>}
 
                           {joinGpsActive && (
                             <button onClick={() => { acquireWakeLock(); setPocketOn(true); }}
@@ -9882,8 +9921,8 @@
                             );
                           })()}
 
-                          {/* Garmin watch panel */}
-                          {(() => {
+                          {/* Garmin watch panel — only when the race uses GPS */}
+                          {((joinLiveData || joinRace)?.courseMap !== false || asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")) && (() => {
                             const gpsData = joinLiveData?.athletes?.[joinAthIdx]?.gps;
                             const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
                             const curSeg = (() => { const s = splits.findIndex(x => x === null); return s === -1 ? SEGMENTS.length - 1 : s; })();
@@ -10655,7 +10694,7 @@
                           const wps = (liveRace.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
                           const hasGps = rankedWatchAthletes.some(a => a.gps);
                           // Lap-counted races have no one on a map — skip it.
-                          if (!wps.length && !asList(liveRace.courses).some(c => ["gps", "distance"].includes(c.bikeType || "gps"))) return null;
+                          if (liveRace.courseMap === false || (!wps.length && !asList(liveRace.courses).some(c => ["gps", "distance"].includes(c.bikeType || "gps")))) return null;
                           return (
                             <div style={{ marginTop: 16, borderRadius: 8, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
                               <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#04613F", padding: "8px 12px", background: "#EFEDE8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -10678,7 +10717,7 @@
 
               {/* ── SETUP ── */}
               {view === "setup" && (() => {
-                const TRI_STEPS = ["What kind of race?", "Who's racing?", "How far is each leg?", "Age groups & certificate", "Course map"];
+                const TRI_STEPS = ["What kind of race?", "Age groups", "Who's racing?", "How far is each leg?", courseMapOn ? "Certificate & course map" : "Certificate & save"];
                 const setRaceName = (v) => {
                   const prev = saveRaceName;
                   setSaveRaceName(v);
@@ -10688,10 +10727,10 @@
                 const u = { yards: "yd", meters: "m", miles: "mi", km: "km" };
                 const summaries = [
                   { title: TRI_STEPS[0], done: !!(saveRaceName || certConfig.eventName), summary: `Triathlon · ${saveRaceName || certConfig.eventName || "no name yet"} · code ${liveRaceCode || (registrationOpen ? registrationCode : customRaceCode) || "—"}` },
-                  { title: TRI_STEPS[1], done: athletes.length > 0, summary: `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""}${registrationOpen ? ` · sign-up open (${registrationCode})` : ""}` },
-                  { title: TRI_STEPS[2], done: courses.length > 0, summary: courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} · ${c.bikeMiles}${u[units.bike]} · ${c.runMiles}${u[units.run]}`).join(" | ") || "No distances yet" },
-                  { title: TRI_STEPS[3], done: ageGroups.length > 0, summary: `${ageGroups.length} age group${ageGroups.length !== 1 ? "s" : ""} · ${certConfig.eventName || "no event name"}` },
-                  { title: TRI_STEPS[4], done: placedPins > 0, summary: placedPins ? `${placedPins} pin${placedPins !== 1 ? "s" : ""} placed` : "Optional — skipped" },
+                  { title: TRI_STEPS[1], done: ageGroups.length > 0, summary: `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}` },
+                  { title: TRI_STEPS[2], done: athletes.length > 0, summary: `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""}${registrationOpen ? ` · sign-up open (${registrationCode})` : ""}` },
+                  { title: TRI_STEPS[3], done: courses.length > 0, summary: `${courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} · ${c.bikeMiles}${u[units.bike]} · ${c.runMiles}${u[units.run]}`).join(" | ") || "No distances yet"}${courses.some(courseHasLaps) ? " · laps" : ""}${courseMapOn ? "" : " · no map"}` },
+                  { title: TRI_STEPS[4], done: !!certConfig.eventName, summary: `${certConfig.eventName || "no event name"}${courseMapOn ? ` · ${placedPins ? `${placedPins} pin${placedPins !== 1 ? "s" : ""} placed` : "map optional"}` : ""}` },
                 ];
                 const loadedRace = savedRaces.find(r => r.id === loadedRaceId);
                 const flashOn = savedFlash && Date.now() - savedFlash.at < 6000;
@@ -10754,7 +10793,7 @@
                   )}
 
                   {/* How athletes start changes what the Race screen asks of you. */}
-                  {setupStep === 2 && (
+                  {setupStep === 3 && (
                     <div>
                       <div style={TM_LABEL}>Start</div>
                       <div role="radiogroup" aria-label="Start mode" style={{ display: "flex", gap: 8 }}>
@@ -10770,7 +10809,7 @@
                   )}
 
                   <SetupSection title="Athletes" color="#04613F"
-                    open={setupStep === 2}
+                    open={setupStep === 3}
                     summary={athletes.length === 0 ? "Nobody added yet"
                       : `${athletes.length} racing${registrationOpen ? " · sign-ups open" : ""}`}>
                   {athletes.map((ath, i) => (
@@ -10801,12 +10840,12 @@
                           <option value="Male">Male</option>
                           <option value="Female">Female</option>
                         </select>
-                        <select value={ath.ageGroup} onChange={e => updateAgeGroup(i, e.target.value)}
+                        <input type="date" value={ath.dob || ""} onChange={e => updateDob(i, e.target.value)} title="Birthday — sets the age group" aria-label={`Birthday for ${athleteName(ath) || "athlete " + (i + 1)}`}
+                          style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 8px", color: "#0B0D10", fontSize: 14, outline: "none", colorScheme: "light" }} />
+                        <select value={ath.ageGroup} onChange={e => updateAgeGroup(i, e.target.value)} aria-label={`Age group for ${athleteName(ath) || "athlete " + (i + 1)}`}
                           style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 10px", color: "#0B0D10", fontSize: 14, outline: "none", cursor: "pointer" }}>
                           {ageGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
                         </select>
-                        <input type="date" value={ath.dob || ""} onChange={e => updateDob(i, e.target.value)} title="Date of Birth"
-                          style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 8px", color: "#0B0D10", fontSize: 14, outline: "none", colorScheme: "light" }} />
                         <input type="email" inputMode="email" value={ath.email || ""} onChange={e => updateAthleteEmail(i, e.target.value)}
                           placeholder="Parent or athlete email" aria-label={`Email for ${athleteName(ath) || "athlete " + (i + 1)}`} autoComplete="off"
                           style={{ flex: "1 1 240px", minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 10px", color: "#0B0D10", outline: "none" }} />
@@ -10854,7 +10893,7 @@
                   </SetupSection>
 
                   <SetupSection title="Let Athletes Sign Themselves Up" color="#04613F"
-                    open={setupStep === 2}
+                    open={setupStep === 3}
                     summary={registrationOpen
                       ? `Open · code ${registrationCode} · ${regAthleteCount} joined`
                       : "Closed — open it to get a code athletes can enter"}>
@@ -10942,7 +10981,7 @@
 
                   {/* ── Courses (distances) ── */}
                   <SetupSection title="Courses" color="#04613F"
-                    open={setupStep === 3} plain
+                    open={setupStep === 4} plain
                     summary={(() => {
                       // Short forms so a one-line summary never reads "1 miles".
                       const u = { yards: "yd", meters: "m", miles: "mi", km: "km" };
@@ -10952,6 +10991,42 @@
                     <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted }}>
                       Distances turn raw times into pace. Most races have one course; add another for a shorter kids' or novice route.
                     </div>
+                    {(() => {
+                      const allLaps = courses.length > 0 && courses.every(c => c.swimByLaps && c.bikeType === "laps" && c.runByLaps);
+                      const someLaps = courses.some(courseHasLaps);
+                      const setLapCounting = (on) => setCourses(cs => cs.map(c => on
+                        ? { ...c, swimByLaps: true, swimLap: c.swimLap || 25, bikeType: "laps", lapMi: c.lapMi || 0.25, runByLaps: true, runLap: c.runLap || 1 }
+                        : { ...c, swimByLaps: false, runByLaps: false, bikeType: c.bikeType === "laps" ? "gps" : c.bikeType }));
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
+                          <div>
+                            <div style={TM_LABEL}>Lap counting</div>
+                            <div role="radiogroup" aria-label="Lap counting" style={{ display: "flex", gap: 8 }}>
+                              {[[true, "On"], [false, "Off"]].map(([v, l]) => (
+                                <button key={l} role="radio" aria-checked={v ? allLaps : !someLaps} onClick={() => setLapCounting(v)} style={segStyle(v ? allLaps : !someLaps)}>{l}</button>
+                              ))}
+                            </div>
+                            <div style={{ ...TM_CAPTION, marginTop: 6 }}>
+                              {allLaps ? "Swim, bike and run are counted by laps — you and parents tap each lap. Set lap lengths below."
+                                : someLaps ? "Some legs count laps — each leg below has its own switch."
+                                : "Legs are timed with splits only. Turn on to count laps on every leg."}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={TM_LABEL}>Course map</div>
+                            <div role="radiogroup" aria-label="Course map" style={{ display: "flex", gap: 8 }}>
+                              {[[true, "On"], [false, "Off"]].map(([v, l]) => (
+                                <button key={l} role="radio" aria-checked={courseMapOn === v} onClick={() => setCourseMapOn(v)} style={segStyle(courseMapOn === v)}>{l}</button>
+                              ))}
+                            </div>
+                            <div style={{ ...TM_CAPTION, marginTop: 6 }}>
+                              {courseMapOn ? "Draw the course and drop pins in the last step; athletes' phones share their GPS so you can see them on the Map tab."
+                                : "No map step, no Map tab, and athletes' phones don't track GPS."}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {/* Course names: one row each, then the legs below ask for a distance per course. */}
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
                       {courses.map((course, ci) => (
@@ -11075,7 +11150,9 @@
                                     ? `Each rider's phone counts miles like a workout watch — laps, circles, anywhere. The bike leg ends by itself at ${course.bikeMiles} ${short}. No map needed.`
                                     : (course.bikeType || "gps") === "gps"
                                       ? "Riders follow a course; pins on the map (step 5) log the splits."
-                                      : `The bike leg ends by itself when the ${course.bikeType === "spin" ? "spin bike" : "trainer"} reaches ${course.bikeMiles} ${short}.`}
+                                      : course.bikeType === "spin"
+                                        ? `Ask each rider for their miles and type them in on the Race screen (or connect the bike). The bike leg ends by itself at ${course.bikeMiles} ${short}.`
+                                        : `The bike leg ends by itself when the trainer reaches ${course.bikeMiles} ${short}.`}
                                 </div>
                               </div>
                             ))}
@@ -11087,16 +11164,24 @@
 
                   {/* ── Age Groups ── */}
                   <SetupSection title="Age Groups" color="#0B3FCC"
-                    open={setupStep === 4}
+                    open={setupStep === 2}
                     summary={ageGroups.length === 0 ? "No age groups — everyone scores together"
                       : `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}`}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => setAgeGroupsRefit(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Youth</button>
-                        <button onClick={() => setAgeGroupsRefit(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Adult 5yr</button>
                         <button onClick={addAgeGroupItem} style={{ ...btnStyle("#04613F", true), padding: "3px 8px", fontSize: 14 }}>+ Group</button>
                       </div>
+                    </div>
+                    <div style={{ ...TM_CAPTION, marginBottom: 8 }}>Start from a set, then adjust. Add birthdays in the next step and each athlete lands in their group by themselves.</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                      {[["Kids", ["8 and under","9-10","11-12","13-14","15 and over"]],
+                        ["Adults", ["19 and under","20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"]],
+                        ["Full race day", ["10 and under","11-14","15-19","20-29","30-39","40-49","50 and over"]],
+                        ["9 & under / 10 & up", ["9 and under","10 and over"]]].map(([lbl, set]) => (
+                        <button key={lbl} onClick={() => setAgeGroupsRefit(set)}
+                          style={{ ...btnStyle("#3D434B", JSON.stringify(set) !== JSON.stringify(ageGroups)), padding: "0 12px", minHeight: 40, fontSize: 14 }}>{lbl}</button>
+                      ))}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {ageGroups.map((ag, agIdx) => {
@@ -11143,7 +11228,7 @@
 
                   {/* ── Certificate & Event Config ── */}
                   <SetupSection title="Certificate &amp; Event" color="#0B3FCC"
-                    open={setupStep === 4}
+                    open={setupStep === 5}
                     summary={[certConfig.eventName, certConfig.orgName, certConfig.customLogoB64 ? "logo added" : ""]
                       .filter(Boolean).join(" · ") || "Name the event that prints on certificates"}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -11164,7 +11249,7 @@
                   {/* `bare` — this panel owns its own padding and the sticky map,
                       so it can't sit inside the section's padded body. */}
                   <SetupSection title="📍 Course Map &amp; Waypoints" color="#04613F" bare
-                    open={setupStep === 5} plain
+                    open={setupStep === 5 && courseMapOn} plain
                     summary={(() => {
                       const placed = waypoints.filter(w => w.lat !== null).length;
                       return placed === 0
@@ -11538,7 +11623,7 @@
                     onJump={setSetupStep} onList={() => setSetupStep(0)}
                     onBack={setupStep > 1 ? () => setSetupStep(setupStep - 1) : () => setView("myraces")}
                     onNext={last ? goToRace : () => { if (setupStep === 1 && codeBlocksNext) return; setSetupStep(setupStep + 1); }}
-                    nextLabel={last ? "Go to race →" : setupStep === 4 ? "Next: course map →" : "Next →"}
+                    nextLabel={last ? "Go to race →" : "Next →"}
                     nextDisabled={last && athletes.length === 0}
                     nextHint={last ? readyHint : null}>
                     {setupStep === 1 && (
@@ -11549,9 +11634,9 @@
                         onKind={k => { if (k !== "triathlon") startRaceOfKind(k, saveRaceName); }}
                         lockedHint="Picking a different kind starts a new race of that kind. This triathlon stays open." />
                     )}
-                    {setupStep === 5 && (
+                    {setupStep === 5 && courseMapOn && (
                       <div style={{ ...rowStyle(TM.swim), marginBottom: 6 }}>
-                        <div style={{ fontSize: 16, fontWeight: 700 }}>This step is optional.</div>
+                        <div style={{ fontSize: 16, fontWeight: 700 }}>The map is optional.</div>
                         <div style={TM_CAPTION}>Pins let the clock log splits automatically from athletes' phones. Skip it and time by hand.</div>
                         <button onClick={goToRace} disabled={athletes.length === 0}
                           style={{ ...btnStyle(TM.ink, true), marginTop: 10, opacity: athletes.length === 0 ? 0.45 : 1 }}>Skip map — go to race →</button>
@@ -11643,6 +11728,28 @@
                     </div>
                   </div>
 
+                  {/* Who's counting whom: every athlete on a lap race should have someone. */}
+                  {liveRaceCode && (courses || []).some(courseHasLaps) && (() => {
+                    const open = athletes.map((a, i) => ({ a, i })).filter(({ a }) => !a.finished);
+                    const none = open.filter(({ i }) => countersFor(i).length === 0);
+                    return (
+                      <div style={{ ...rowStyle(none.length ? TM.warn : TM.run), marginBottom: 12, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 15, fontWeight: 800 }}>
+                          👀 Counting: {open.length - none.length} of {open.length} athlete{open.length === 1 ? "" : "s"} have someone counting
+                        </div>
+                        {none.length > 0 && (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>No one yet:</span>
+                            {none.map(({ a, i }) => (
+                              <button key={a.id ?? i} onClick={() => setLapOpen(i)} title="Count this athlete yourself"
+                                style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 10px", fontSize: 14 }}>{a.name || `#${i + 1}`}</button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* One glance answers "is everyone's phone still sending?" — the
                       question you can't check by reading eight rows mid-race. */}
                   {liveRaceCode && athletes.some(athleteUsesGps) && (() => {
@@ -11711,6 +11818,9 @@
                               {athletePhones[i] && (Date.now() - (athletePhones[i].seen || 0) < 90000
                                 ? <span title="This athlete's phone is linked to the race" style={{ fontSize: 14, fontWeight: 800, color: TM.run }}>📱 Connected</span>
                                 : <span title="Linked earlier; not heard from in the last minute or so" style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>📱 Offline</span>)}
+                              {countersFor(i).length > 0 && (
+                                <span title="Parents counting this athlete's laps" style={{ fontSize: 14, fontWeight: 800, color: TM.swim }}>👀 {countersFor(i).map(c => (c.name || "Parent").split(" ")[0]).join(", ")}</span>
+                              )}
                               {athleteHrData[i] && <span style={{ fontSize: 14, fontWeight: 800, color: TM.live }}>♥ {athleteHrData[i].bpm}</span>}
                             </div>
                             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 1, fontVariantNumeric: "tabular-nums" }}>
@@ -11728,9 +11838,9 @@
                             </div>
                           </button>
                           {/* Laps so far on this leg — tap to count. */}
-                          {!done && ath.started && countLegNow(ath) != null && (() => {
+                          {!done && ath.started && countLegNow(ath, (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0]) != null && (() => {
                             const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
-                            const seg = countLegNow(ath), plan = legCountPlan(athCourse, seg);
+                            const seg = countLegNow(ath, athCourse), plan = legCountPlan(athCourse, seg);
                             const n = legCount(lapTaps[i], ath, seg, athCourse);
                             return (
                               <button onClick={() => setLapOpen(o => o === i ? null : i)} aria-expanded={lapOpen === i}
@@ -11758,7 +11868,7 @@
                         {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
                           if (lapOpen !== i) return null;
-                          const seg = ath.started ? countLegNow(ath) : 0;
+                          const seg = ath.started ? countLegNow(ath, athCourse) : 0;
                           if (seg == null) return null;
                           const plan = legCountPlan(athCourse, seg);
                           const n = ath.started ? legCount(lapTaps[i], ath, seg, athCourse) : 0;
@@ -11805,7 +11915,7 @@
                               )}
                               {canCount && plan.need === 0 && (
                                 <div style={{ ...TM_CAPTION, marginTop: 6, textAlign: "center" }}>
-                                  Set a lap length for the {LEG_NAME[seg].toLowerCase()} in setup step 3 to see distance and finish the leg automatically.
+                                  Set a lap length for the {LEG_NAME[seg].toLowerCase()} in setup step 4 to see distance and finish the leg automatically.
                                 </div>
                               )}
                             </div>
@@ -11916,7 +12026,8 @@
                           if (!isTrainerCourse && !tData) return null;
                           if (next !== 2 && ath.splits[2] !== null) return null; // T2 already done — hide
                           const targetMi = isTrainerCourse ? (parseFloat(athCourse?.bikeMiles) || 0) : 0;
-                          const distMi = tData?.distMi ?? null;
+                          const isSpin = athCourse?.bikeType === "spin";
+                          const distMi = tData?.distMi ?? (spinMiles[i] ?? null);
                           const pct = targetMi > 0 && distMi != null ? Math.min(100, (distMi / targetMi) * 100) : 0;
                           const inBike = next === 2;
                           return (
@@ -11926,7 +12037,7 @@
                                   <span style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>🚲 {athCourse?.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}</span>
                                   <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#8A5A00", letterSpacing: 1 }}>
                                     {isTrainerCourse
-                                      ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : 'No signal'))
+                                      ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : isSpin ? `0 / ${targetMi} mi` : 'No signal'))
                                       : (tData ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph` : 'No signal')}
                                   </span>
                                 </div>
@@ -11935,11 +12046,27 @@
                                     <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#04613F" : "#8A5A00", borderRadius: 3, transition: "width 0.4s" }} />
                                   </div>
                                 )}
-                                <div style={{ fontSize: 14, color: tData ? "#3D434B" : "#B3001B" }}>
+                                <div style={{ fontSize: 14, color: tData || isSpin ? "#3D434B" : "#B3001B" }}>
                                   {tData
                                     ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph${tData.cadence != null ? ` · ${tData.cadence} rpm` : ''}${tData.power != null ? ` · ${tData.power}w` : ''}${isTrainerCourse && pct >= 100 ? ' · ✓ target reached' : ''}`
+                                    : isSpin ? (inBike ? "Ask the rider for their miles and type them in." : "Miles go in once they're on the bike.")
                                     : (inBike ? 'No trainer signal — use Bike button above to advance manually' : 'Waiting for trainer signal…')}
                                 </div>
+                                {isSpin && inBike && (
+                                  <form onSubmit={e => {
+                                      e.preventDefault();
+                                      const v = parseFloat(e.target.elements.mi.value);
+                                      if (!(v >= 0)) return;
+                                      setSpinMiles(m => ({ ...m, [i]: v }));
+                                      if (liveRaceCode) rtdb.ref(`liveRaces/${liveRaceCode}/athletes/${i}/gps/manualMi`).set(v).catch(console.error);
+                                      e.target.reset();
+                                    }} style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                    <input name="mi" type="number" inputMode="decimal" step="0.01" min="0" aria-label={`Miles so far for ${ath.name}`}
+                                      placeholder="Miles"
+                                      style={{ flex: 1, minWidth: 0, minHeight: 44, border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 10px", fontSize: 16, color: TM.ink, background: "#FFFFFF" }} />
+                                    <button type="submit" style={{ ...btnStyle("#8A5A00"), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Update</button>
+                                  </form>
+                                )}
                               </div>
                             </div>
                           );
