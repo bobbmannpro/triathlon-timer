@@ -77,7 +77,7 @@
       "$code": {
         ".read": "auth != null",
         ".write": "auth != null && (data.exists() ? data.child('ownerUid').val() === auth.uid : newData.child('ownerUid').val() === auth.uid)",
-        ".validate": "!newData.exists() || (newData.child('ownerUid').val() === auth.uid && newData.hasChildren(['folderId', 'name']))"
+        ".validate": "!newData.exists() || (newData.child('ownerUid').val() === auth.uid && newData.hasChildren(['name']))"
       }
     },
     "bikeFeeds": {

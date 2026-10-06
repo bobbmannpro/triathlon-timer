@@ -1,0 +1,17 @@
+rules_version = '2';
+// Firebase Storage rules — paste into Firebase console → Storage → Rules → Publish.
+// Race photos live at albums/{hostUid}/{albumId}/…: only that host can add or
+// delete them; anyone signed in can open a photo they have the link to (the
+// links are only listed inside an album, which needs the photo code). Nobody
+// can list folders, and everything else in the bucket is closed.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /albums/{uid}/{albumId}/{file} {
+      allow get: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.contentType == 'image/jpeg'
+        && request.resource.size < 8 * 1024 * 1024;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

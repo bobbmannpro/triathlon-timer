@@ -795,7 +795,7 @@
           </div>
         );
       }
-      // ── Photo albums from Google Drive ──────────────────────────────────────
+      // ── Photo albums from Google Drive (older albums; new ones live in the app) ──
       // The host drops photos into a Google Drive folder shared "Anyone with the
       // link · Viewer", pastes the folder link once, and hands out a photo code.
       // Parents sign in, type the code, and the app lists that folder's photos
@@ -861,6 +861,30 @@
           url: `https://drive.google.com/thumbnail?id=${f.id}&sz=w2400`,
           download: `https://drive.google.com/uc?export=download&id=${f.id}`,
         }));
+      }
+
+      // ── Photos stored in the app (Firebase Storage) ─────────────────────────
+      // The host picks photos; each is shrunk here (a big copy for viewing and
+      // saving, a small one for the grid) and uploaded under the host's own
+      // folder. The album's photo list lives at photoAlbums/{code}/photos, so
+      // only someone with the code can find them — nothing is in Google Drive.
+      const PHOTO_BIG = 2560, PHOTO_THUMB = 480;
+      async function shrinkPhoto(file, maxSide, quality) {
+        const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+        const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+        const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(bmp, 0, 0, w, h);
+        bmp.close && bmp.close();
+        const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("Couldn't read that photo.")), "image/jpeg", quality));
+        return { blob, w, h };
+      }
+      // An album's photos in name order (1, 2, … 10), from the stored list.
+      function albumPhotoList(photos) {
+        if (Array.isArray(photos)) return photos;   // older albums kept an array
+        return Object.entries(photos || {}).map(([id, ph]) => ({ id, name: ph.n, thumb: ph.t, url: ph.u, path: ph.p, w: ph.w, h: ph.h }))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" }));
       }
 
       // A row of split chips, wrapping; the newest last.
@@ -3113,12 +3137,13 @@
         const [photoCodeInput, setPhotoCodeInput] = useState("");
         const [photoCodeSection, setPhotoCodeSection] = useState(false);
         const [viewPhotoAlbum, setViewPhotoAlbum] = useState(null);
-        // Host's Google Drive photo albums: { code: { name, folderId, raceId, createdAt } }.
+        // Host's photo albums: { code: { name, sid, count, raceId, createdAt } } (Drive albums have folderId).
         const [hostAlbums, setHostAlbums] = useState({});
         const [albumDraft, setAlbumDraft] = useState(null);   // { name, link, code, raceId, editing }
         const [albumBusy, setAlbumBusy] = useState(false);
         const [albumMsg, setAlbumMsg] = useState(null);       // { ok, text }
         const [albumRemove, setAlbumRemove] = useState(null);
+        const [albumUpload, setAlbumUpload] = useState(null); // { code, done, total, failed, skipped, finished }
         useEffect(() => {
           if (view !== "photos" || !currentUser) return;
           rtdb.ref("users/" + currentUser.uid + "/photoAlbums").once("value")
@@ -5154,6 +5179,12 @@
           const code = normCode(d.code);
           if (code.length < 6) { setAlbumMsg({ ok: false, text: "Photo codes need at least 6 letters or numbers — they open pictures of kids, so they must be hard to guess." }); return; }
           setAlbumBusy(true); setAlbumMsg(null);
+          if (!(d.link || "").trim()) {
+            try { await saveAppAlbum(d, code); }
+            catch (e) { setAlbumMsg({ ok: false, text: e.message || "Couldn't save the album." }); }
+            setAlbumBusy(false);
+            return;
+          }
           try {
             let id = driveFolderIdFrom(d.link), folder = null, count = null;
             if (!id) throw new Error("Paste the folder's share link from Google Drive (it has /folders/ in it).");
@@ -5180,14 +5211,104 @@
           }
           setAlbumBusy(false);
         }
+        // An album whose photos are uploaded into the app.
+        async function saveAppAlbum(d, code) {
+          const existing = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val());
+          if (existing && existing.ownerUid !== currentUser.uid) throw new Error("That code is already used for another album. Tap New code.");
+          const old = d.editing && d.editing !== code
+            ? await rtdb.ref("photoAlbums/" + d.editing).once("value").then(sn => sn.val()) : existing;
+          const name = (d.name || "").trim() || "Race photos";
+          const rec = { name, raceName: name, ownerUid: currentUser.uid, updatedAt: Date.now(),
+            sid: (old && old.sid) || newPhotoCode(12), photos: (old && !old.folderId && old.photos) || null };
+          await rtdb.ref("photoAlbums/" + code).set(rec);
+          if (d.editing && d.editing !== code) {
+            await rtdb.ref("photoAlbums/" + d.editing).remove().catch(() => {});
+            await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + d.editing).remove().catch(() => {});
+          }
+          const count = Object.keys(rec.photos || {}).length;
+          const entry = { name, sid: rec.sid, count, raceId: d.raceId || null, createdAt: (hostAlbums[d.editing || code] && hostAlbums[d.editing || code].createdAt) || Date.now() };
+          await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).set(entry);
+          setHostAlbums(a => { const n = { ...a }; if (d.editing && d.editing !== code) delete n[d.editing]; n[code] = entry; return n; });
+          if (d.raceId) persistArchiveUpdate(savedArchive.map(r => r.id === d.raceId ? { ...r, photoCode: code } : r));
+          setAlbumDraft(null);
+          setAlbumMsg({ ok: true, text: count
+            ? `Saved “${name}” — share code ${code}.`
+            : `Saved “${name}” — share code ${code}. Now tap + Add photos on the album below.` });
+        }
+        // Shrink and upload the chosen photos, three at a time. Photos already
+        // in the album (same file name) are skipped, so picking the whole
+        // folder again only adds the new ones.
+        async function addAlbumPhotos(code, fileList) {
+          if (!currentUser || !fileList || !fileList.length) return;
+          const rec = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val());
+          if (!rec || rec.ownerUid !== currentUser.uid) { setAlbumMsg({ ok: false, text: "Couldn't open that album." }); return; }
+          const sid = rec.sid || newPhotoCode(12);
+          if (!rec.sid) await rtdb.ref("photoAlbums/" + code + "/sid").set(sid);
+          const have = new Set(Object.values(rec.photos || {}).map(ph => String(ph.n).toLowerCase()));
+          const files = Array.from(fileList).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name));
+          const todo = files.filter(f => !have.has(f.name.toLowerCase()));
+          const st = { code, done: 0, total: todo.length, failed: [], skipped: files.length - todo.length, finished: false };
+          setAlbumMsg(null);
+          setAlbumUpload({ ...st });
+          const base = "albums/" + currentUser.uid + "/" + sid + "/";
+          const meta = { contentType: "image/jpeg", cacheControl: "public, max-age=31536000" };
+          let next = 0, added = 0;
+          async function worker() {
+            while (next < todo.length) {
+              const f = todo[next++];
+              try {
+                const id = newPhotoCode(10);
+                const big = await shrinkPhoto(f, PHOTO_BIG, 0.86);
+                const small = await shrinkPhoto(f, PHOTO_THUMB, 0.72);
+                const bigRef = storage.ref(base + id + ".jpg"), smallRef = storage.ref(base + id + "_t.jpg");
+                await bigRef.put(big.blob, meta);
+                await smallRef.put(small.blob, meta);
+                const [u, t] = await Promise.all([bigRef.getDownloadURL(), smallRef.getDownloadURL()]);
+                await rtdb.ref("photoAlbums/" + code + "/photos/" + id).set({ n: f.name, u, t, p: base + id, w: big.w, h: big.h, at: Date.now() });
+                added++;
+              } catch (e) {
+                console.warn("Photo upload failed:", f.name, e);
+                st.failed.push(f.name);
+              }
+              st.done++;
+              setAlbumUpload({ ...st, failed: [...st.failed] });
+            }
+          }
+          await Promise.all([worker(), worker(), worker()]);
+          const count = await rtdb.ref("photoAlbums/" + code + "/photos").once("value").then(sn => sn.numChildren());
+          await rtdb.ref("photoAlbums/" + code + "/updatedAt").set(Date.now()).catch(() => {});
+          await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code + "/count").set(count).catch(() => {});
+          setHostAlbums(a => a[code] ? { ...a, [code]: { ...a[code], count } } : a);
+          setAlbumUpload({ ...st, failed: [...st.failed], finished: true, added, count });
+        }
+        async function deleteAlbumPhoto(code, ph) {
+          if (!currentUser || !ph || !ph.path) return;
+          await Promise.all([storage.ref(ph.path + ".jpg").delete(), storage.ref(ph.path + "_t.jpg").delete()].map(pr => pr.catch(() => {})));
+          await rtdb.ref("photoAlbums/" + code + "/photos/" + ph.id).remove();
+          setViewPhotoAlbum(p => {
+            if (!p) return p;
+            const photos = p.photos.filter(x => x.id !== ph.id);
+            return { ...p, photos, lightboxIdx: photos.length ? Math.min(p.lightboxIdx ?? 0, photos.length - 1) : null };
+          });
+          setHostAlbums(a => a[code] ? { ...a, [code]: { ...a[code], count: Math.max(0, (a[code].count || 1) - 1) } } : a);
+          setAlbumUpload(u => u && u.code === code && u.finished ? null : u);
+          rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code + "/count").transaction(c => Math.max(0, (c || 1) - 1)).catch(() => {});
+        }
         async function removeAlbum(code) {
           if (!currentUser) return;
+          const rec = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val()).catch(() => null);
+          const stored = rec && !rec.folderId ? Object.values(rec.photos || {}).filter(ph => ph && ph.p) : [];
+          for (const ph of stored) {
+            await Promise.all([storage.ref(ph.p + ".jpg").delete(), storage.ref(ph.p + "_t.jpg").delete()].map(pr => pr.catch(() => {})));
+          }
           await rtdb.ref("photoAlbums/" + code).remove().catch(console.error);
           await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).remove().catch(console.error);
           setHostAlbums(a => { const n = { ...a }; delete n[code]; return n; });
           persistArchiveUpdate(savedArchive.map(r => r.photoCode === code ? { ...r, photoCode: null } : r));
           setAlbumRemove(null);
-          setAlbumMsg({ ok: true, text: `Removed — code ${code} no longer opens any photos. (The photos are still in your Google Drive.)` });
+          setAlbumMsg({ ok: true, text: rec && rec.folderId
+            ? `Removed — code ${code} no longer opens any photos. (The photos are still in your Google Drive.)`
+            : `Removed — code ${code} and its ${stored.length} photo${stored.length === 1 ? "" : "s"} are deleted.` });
         }
         function openAlbumEditor(fields) {
           setAlbumMsg(null);
@@ -5222,7 +5343,8 @@
               setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos, drive: true, lightboxIdx: null, loading: false, error: null });
               return;
             }
-            setViewPhotoAlbum({ code: trimmedCode, raceName: data.raceName || trimmedCode, photos: data.photos || [], lightboxIdx: null, loading: false, error: null });
+            setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos: albumPhotoList(data.photos),
+              mine: data.ownerUid === currentUser.uid, lightboxIdx: null, loading: false, error: null });
           } catch(e) {
             setViewPhotoAlbum(function(p) { return p ? Object.assign({}, p, { loading: false, error: (e && e.message && /Drive/.test(e.message)) ? e.message : "Could not load photos. Check your connection and try again." }) : p; });
           }
@@ -8793,7 +8915,7 @@
                         style={{ ...rowStyle(), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
                         <span style={{ flex: 1 }}>
                           <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>📷 Photo albums</span>
-                          <span style={{ display: "block", ...TM_CAPTION }}>Share race photos from a Google Drive folder with a code</span>
+                          <span style={{ display: "block", ...TM_CAPTION }}>Share race photos with parents by code</span>
                         </span>
                         <ArrowIcon size={24} />
                       </button>
@@ -9662,7 +9784,7 @@
                                 ) : null}
                               </div>
                               <button onClick={() => race.photoCode && hostAlbums[race.photoCode]
-                                  ? openAlbumEditor({ name: hostAlbums[race.photoCode].name, link: "https://drive.google.com/drive/folders/" + hostAlbums[race.photoCode].folderId, code: race.photoCode, raceId: race.id, editing: race.photoCode })
+                                  ? openAlbumEditor({ name: hostAlbums[race.photoCode].name, link: hostAlbums[race.photoCode].folderId ? "https://drive.google.com/drive/folders/" + hostAlbums[race.photoCode].folderId : "", code: race.photoCode, raceId: race.id, editing: race.photoCode })
                                   : openAlbumEditor({ name: race.name, raceId: race.id })} style={{ ...btnStyle("#0B3FCC", true), padding: "4px 10px", fontSize: 14, flexShrink: 0 }}>📷 Photos</button>
                               <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#8A5A00", true), padding: "4px 10px", fontSize: 14, flexShrink: 0 }}>🏆 Certs</button>
                               <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 4px" }}>{isOpen ? "▲" : "▼"}</button>
@@ -9709,7 +9831,7 @@
               )}
 
               {/* ── ATHLETES ROSTER ── */}
-              {/* ── PHOTO ALBUMS (host): Google Drive folders shared by code ── */}
+              {/* ── PHOTO ALBUMS (host): photos kept in the app (or a Drive folder), shared by code ── */}
               {view === "photos" && isHost && (() => {
                 const codes = Object.keys(hostAlbums).sort((a, b) => (hostAlbums[b].createdAt || 0) - (hostAlbums[a].createdAt || 0));
                 const inp = { width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 14px", color: TM.ink, outline: "none" };
@@ -9719,19 +9841,8 @@
                     <button onClick={() => setView("myraces")} style={{ ...btnStyle(TM.ink, true), marginTop: 4 }}>← Back</button>
                     <h1 style={{ ...TM_DISPLAY, marginTop: 16 }}>Photo albums</h1>
                     <div style={{ ...TM_CAPTION, fontSize: 16, marginTop: 8 }}>
-                      Drop photos into a Google Drive folder, share the folder, paste its link here and hand out the code. Parents sign in, type the code and see the photos — new ones you add show up by themselves.
+                      Make an album, add the photos, and hand out the code. Parents sign in, type the code and see the photos right here in Timeathon — they're kept in the app, not in your Google Drive.
                     </div>
-
-                    <details style={{ ...rowStyle(TM.swim), marginTop: 16 }}>
-                      <summary style={{ fontWeight: 800, fontSize: 16, cursor: "pointer" }}>How to set up a Google Drive folder</summary>
-                      <ol style={{ margin: "10px 0 0 20px", padding: 0, fontSize: 15, fontWeight: 600, lineHeight: 1.6 }}>
-                        <li>In <b>Google Drive</b> on this computer, open <b>Timeathon Photos</b> and make a folder for the race.</li>
-                        <li>Drag the photos into it — Drive uploads them by itself.</li>
-                        <li>Right-click the folder → <b>Share</b> → General access: <b>Anyone with the link</b> · <b>Viewer</b> → <b>Copy link</b>.</li>
-                        <li>Paste the link below and save. Give parents the photo code, not the link.</li>
-                        <li>Done with the season? Set the folder back to <b>Restricted</b> in Drive, or Remove the album here.</li>
-                      </ol>
-                    </details>
 
                     {albumMsg && (
                       <div role="status" style={{ ...rowStyle(albumMsg.ok ? TM.run : TM.live), marginTop: 14, fontSize: 15, fontWeight: 700 }}>
@@ -9749,11 +9860,14 @@
                           <input id="album-name" value={d.name} onChange={e => setAlbumDraft(x => ({ ...x, name: e.target.value }))}
                             placeholder="e.g. Ready Check Tri 2026" style={inp} />
                         </div>
-                        <div>
-                          <label htmlFor="album-link" style={TM_LABEL}>Google Drive folder link</label>
-                          <input id="album-link" value={d.link} onChange={e => setAlbumDraft(x => ({ ...x, link: e.target.value }))}
-                            placeholder="https://drive.google.com/drive/folders/…" autoComplete="off" style={inp} />
-                        </div>
+                        {d.link ? (
+                          <div>
+                            <label htmlFor="album-link" style={TM_LABEL}>Google Drive folder link</label>
+                            <input id="album-link" value={d.link} onChange={e => setAlbumDraft(x => ({ ...x, link: e.target.value }))}
+                              placeholder="https://drive.google.com/drive/folders/…" autoComplete="off" style={inp} />
+                            <div style={{ ...TM_CAPTION, marginTop: 6 }}>Clear this to keep the photos in the app instead — then add them with + Add photos.</div>
+                          </div>
+                        ) : null}
                         <div>
                           <label htmlFor="album-code" style={TM_LABEL}>Photo code — what parents type</label>
                           <div style={{ display: "flex", gap: 8 }}>
@@ -9766,7 +9880,7 @@
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button onClick={saveAlbum} disabled={albumBusy} style={{ ...btnStyle(TM.ink), flex: "1 1 160px", opacity: albumBusy ? 0.6 : 1 }}>
-                            {albumBusy ? "Checking the folder…" : "Check folder & save"}
+                            {albumBusy ? "Saving…" : d.link ? "Check folder & save" : "Save album"}
                           </button>
                           <button onClick={() => { setAlbumDraft(null); setAlbumMsg(null); }} style={{ ...btnStyle(TM.ink, true), flex: "0 1 120px" }}>Cancel</button>
                         </div>
@@ -9786,12 +9900,49 @@
                               <button onClick={() => { try { navigator.clipboard.writeText(code); setAlbumMsg({ ok: true, text: `Copied ${code}.` }); } catch (_) {} }}
                                 style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 10px", fontSize: 14 }}>Copy</button>
                             </div>
+                            <div style={{ ...TM_CAPTION, marginTop: 4 }}>
+                              {a.folderId ? "Google Drive folder" : `${a.count || 0} photo${a.count === 1 ? "" : "s"}`}
+                            </div>
+                            {albumUpload && albumUpload.code === code && (() => {
+                              const u = albumUpload;
+                              const pct = u.total ? Math.round(u.done / u.total * 100) : 100;
+                              return (
+                                <div role="status" style={{ marginTop: 10 }}>
+                                  {!u.finished && (
+                                    <div style={{ height: 10, background: TM.bgAlt, borderRadius: 5, overflow: "hidden" }}>
+                                      <div style={{ height: "100%", width: pct + "%", background: TM.swim, transition: "width 0.3s" }} />
+                                    </div>
+                                  )}
+                                  <div style={{ fontSize: 15, fontWeight: 700, marginTop: 6 }}>
+                                    {!u.finished
+                                      ? `Uploading ${u.done} of ${u.total}… keep this page open.`
+                                      : `✓ Added ${u.added} photo${u.added === 1 ? "" : "s"} — ${u.count} in the album.`}
+                                    {u.skipped ? ` ${u.skipped} already in the album, skipped.` : ""}
+                                  </div>
+                                  {u.failed.length > 0 && (
+                                    <div style={{ fontSize: 14, fontWeight: 700, color: TM.live, marginTop: 4 }}>
+                                      {u.failed.length} couldn't be added{u.finished ? " — pick them again to retry" : ""}: {u.failed.slice(0, 5).join(", ")}{u.failed.length > 5 ? "…" : ""}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                               <button onClick={() => loadPhotosByCode(code)} style={{ ...btnStyle(TM.ink), minHeight: 40, padding: "0 14px", fontSize: 15 }}>View</button>
-                              <button onClick={() => openAlbumEditor({ name: a.name, link: "https://drive.google.com/drive/folders/" + a.folderId, code, raceId: a.raceId || null, editing: code })}
+                              {!a.folderId && (
+                                <label style={{ ...btnStyle(TM.swim), minHeight: 40, padding: "0 14px", fontSize: 15, display: "inline-flex", alignItems: "center",
+                                  opacity: albumUpload && !albumUpload.finished ? 0.5 : 1, pointerEvents: albumUpload && !albumUpload.finished ? "none" : "auto" }}>
+                                  + Add photos
+                                  <input type="file" accept="image/*" multiple style={{ display: "none" }}
+                                    onChange={e => { const fl = Array.from(e.target.files || []); e.target.value = ""; addAlbumPhotos(code, fl); }} />
+                                </label>
+                              )}
+                              <button onClick={() => openAlbumEditor({ name: a.name, link: a.folderId ? "https://drive.google.com/drive/folders/" + a.folderId : "", code, raceId: a.raceId || null, editing: code })}
                                 style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Edit</button>
-                              <a href={"https://drive.google.com/drive/folders/" + a.folderId} target="_blank" rel="noopener noreferrer"
-                                style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15, display: "inline-flex", alignItems: "center", textDecoration: "none" }}>Open in Drive</a>
+                              {a.folderId && (
+                                <a href={"https://drive.google.com/drive/folders/" + a.folderId} target="_blank" rel="noopener noreferrer"
+                                  style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15, display: "inline-flex", alignItems: "center", textDecoration: "none" }}>Open in Drive</a>
+                              )}
                               {albumRemove === code ? (<>
                                 <button onClick={() => removeAlbum(code)} style={{ ...btnStyle(TM.live), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Yes, remove</button>
                                 <button onClick={() => setAlbumRemove(null)} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Keep</button>
@@ -12819,6 +12970,10 @@
                     {viewPhotoAlbum.lightboxIdx < viewPhotoAlbum.photos.length - 1 && (
                       <button onClick={e => { e.stopPropagation(); setViewPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx + 1 })); }}
                         style={{ position: "absolute", right: 12, background: "#EFEDE8", border: "none", color: "#0B0D10", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>&#8250;</button>
+                    )}
+                    {viewPhotoAlbum.mine && vf.path && (
+                      <button onClick={e => { e.stopPropagation(); if (window.confirm("Delete this photo from the album?")) deleteAlbumPhoto(viewPhotoAlbum.code, vf); }}
+                        style={{ position: "absolute", bottom: 14, left: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, color: "#B3001B", fontSize: 14, padding: "6px 14px", cursor: "pointer", zIndex: 1 }}>Delete photo</button>
                     )}
                     <button onClick={e => { e.stopPropagation(); downloadPhoto(vf.url, vf.name); }}
                       style={{ position: "absolute", bottom: 14, right: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, color: "#0B3FCC", fontSize: 14, padding: "6px 14px", cursor: "pointer" }}>&#8595; Download</button>
