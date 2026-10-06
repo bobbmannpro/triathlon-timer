@@ -825,7 +825,8 @@
               <div>
                 <label htmlFor={idBase + "-len"} style={lbl}>One lap is</label>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input id={idBase + "-len"} type="number" min="0.01" step="any" value={value ?? ""}
+                  <input id={idBase + "-len"} type="number" min="0.01" step="any"
+                    value={value == null ? "" : String(value).length > 7 ? +Number(value).toFixed(4) : value}
                     onChange={e => onChange(e.target.value === "" ? null : Number(e.target.value))} style={box} />
                   <span style={{ fontWeight: 800, fontSize: 17 }}>{short}</span>
                 </div>
@@ -5205,11 +5206,27 @@
           return `${a}-${b}`;
         }
         function addAgeGroupItem() { setAgeGroups(g => [...g, "0-10"]); }
+        // The group in `groups` that fits this athlete: by birthday, else by the
+        // ages their old group covered (11-12 → "10 and over"), else the closest.
+        function fitAgeGroup(ath, groups) {
+          if (groups.includes(ath.ageGroup)) return ath.ageGroup;
+          const ranges = groups.map(g => [g, parseAgeRange(g)]).filter(([, r]) => r);
+          const age = calcAge(ath.dob);
+          const old = parseAgeRange(ath.ageGroup);
+          const probe = age !== null ? age : old ? (old.min === 0 ? old.max : old.min) : null;
+          if (probe === null || !ranges.length) return groups[0];
+          const hit = ranges.find(([, r]) => probe >= r.min && probe <= r.max);
+          if (hit) return hit[0];
+          const gap = (r) => probe < r.min ? r.min - probe : probe - r.max;
+          return ranges.slice().sort((x, y) => gap(x[1]) - gap(y[1]))[0][0];
+        }
+        function setAgeGroupsRefit(groups) {
+          setAgeGroups(groups);
+          setAthletes(a => a.map(ath => ({ ...ath, ageGroup: fitAgeGroup(ath, groups) })));
+        }
         function removeAgeGroupItem(label) {
           if (ageGroups.length <= 1) return;
-          const remaining = ageGroups.filter(g => g !== label);
-          setAthletes(a => a.map(ath => ath.ageGroup === label ? { ...ath, ageGroup: remaining[0] } : ath));
-          setAgeGroups(remaining);
+          setAgeGroupsRefit(ageGroups.filter(g => g !== label));
         }
         function renameAgeGroup(oldLabel, newLabel) {
           const newGroups = ageGroups.map(item => item === oldLabel ? newLabel : item);
@@ -7714,7 +7731,8 @@
             kind, hostUid: auth.currentUser.uid,
             hostName: userProfile?.displayName || [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(" ") || "",
             updatedAt: Date.now(), ...fields,
-          }).catch(e => console.warn("raceDirectory not writable yet (publish the rule):", e && e.code));
+          }).then(() => setDirectoryBlocked(false))
+            .catch(e => { console.warn("raceDirectory not writable yet (publish the rule):", e && e.code); setDirectoryBlocked(true); });
         }
         function unlistRace(code) {
           if (code && auth.currentUser) rtdb.ref("raceDirectory/" + code).remove().catch(() => {});
@@ -7723,6 +7741,8 @@
         // The open triathlon is listed while sign-ups are open or it's live, and
         // comes off the list when it closes or the host switches it to code-only.
         const listedCodeRef = useRef(null);
+        // Firebase refused the Today's races listing (its rule isn't published).
+        const [directoryBlocked, setDirectoryBlocked] = useState(false);
         const raceTitle = saveRaceName || (certConfig.eventName !== "Timeathon Race Event" && certConfig.eventName) || "Triathlon";
         useEffect(() => {
           if (!isHost) return;
@@ -11003,7 +11023,7 @@
                                           onChange={val => updateCourse(course.id, lapKey, val)} />
                                       </div>
                                       <div style={{ fontSize: 22, fontWeight: 900, paddingBottom: 8 }}>
-                                        {plan && plan.need ? `= ${plan.need} laps of ${fmtLegDist(plan.lap, short)}` : "→ pick a lap length"}
+                                        {plan && plan.need ? `= ${plan.need} lap${plan.need === 1 ? "" : "s"} of ${fmtLegDist(plan.lap, short)}` : "→ pick a lap length"}
                                       </div>
                                       <div style={{ flexBasis: "100%", fontSize: 15, fontWeight: 600 }}>
                                         The {seg} ends by itself on the last lap{seg === "run" ? ", which finishes the race" : ""}.
@@ -11068,8 +11088,8 @@
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => setAgeGroups(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Youth</button>
-                        <button onClick={() => setAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Adult 5yr</button>
+                        <button onClick={() => setAgeGroupsRefit(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Youth</button>
+                        <button onClick={() => setAgeGroupsRefit(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Adult 5yr</button>
                         <button onClick={addAgeGroupItem} style={{ ...btnStyle("#04613F", true), padding: "3px 8px", fontSize: 14 }}>+ Group</button>
                       </div>
                     </div>
@@ -11600,6 +11620,11 @@
                             <button onClick={() => setStopLiveConfirm(true)} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>Stop</button>
                           ) : null}
                           </span>
+                          {directoryBlocked && raceListed && (
+                            <div style={{ flexBasis: "100%", fontSize: 14, fontWeight: 700, color: TM.warn }}>
+                              Not showing in Today's races yet — Firebase is blocking the list. Share the code instead (or publish the database rules).
+                            </div>
+                          )}
                           {stopLiveConfirm && (
                             <div style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                               <span style={{ fontSize: 15, fontWeight: 800, flex: "1 1 160px" }}>Stop sharing? Parents and athletes lose the live race.</span>
