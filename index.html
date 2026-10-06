@@ -13159,6 +13159,17 @@
                   swimOffsetRef.current = 0;
                 }
 
+                // ↺ Reset = start this heat over (a false start): clock to zero,
+                // this heat's times cleared here and on the lane phones.
+                function restartHeat() {
+                  const ht = swimMeet.events.find(e => e.eventNum === swimActiveEvent)?.heats.find(h => h.heatNum === swimActiveHeat);
+                  if (ht && ht.lanes.some(l => l.finalMs != null) && !window.confirm("Start this heat over? Its times will be cleared.")) return;
+                  resetSwimClock();
+                  setSwimMeet(m => ({ ...m, events: m.events.map(ev => ev.eventNum !== swimActiveEvent ? ev : {
+                    ...ev, heats: ev.heats.map(h => h.heatNum !== swimActiveHeat ? h : { ...h, lanes: h.lanes.map(l => ({ ...l, finalMs: null })) }) }) }));
+                  if (swimLiveCode) rtdb.ref(`swimLive/${swimLiveCode}`).update({ status: "waiting", startedAt: null, results: null }).catch(console.error);
+                }
+
                 function persistSwimArchive(updatedMeet) {
                   const entry = {
                     id: `swim_${Date.now()}`,
@@ -14156,7 +14167,7 @@
                                       style={{ ...btnStyle(swimClockRunning ? "#8A5A00" : "#0B3FCC"), fontSize:14, padding:"8px 20px" }}>
                                       {swimClockRunning ? "⏸ Pause" : "▶ Resume"}
                                     </button>
-                                    <button onClick={resetSwimClock}
+                                    <button onClick={restartHeat}
                                       style={{ ...btnStyle("#B3001B", true), fontSize:14, padding:"8px 16px" }}>
                                       ↺ Reset
                                     </button>
