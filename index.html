@@ -488,6 +488,122 @@
         const t = Math.round(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
         return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
       }
+      // ── Live standings ───────────────────────────────────────────────────────
+      // Who's ahead right now, by each athlete's own time since they were sent
+      // off. Finishers lead, by finish time. Everyone still out is ranked by how
+      // far they've got — legs done, then laps on the current leg — and, when
+      // level, by the lower time when they reached that point.
+      function standingOf(a, clock, course, taps) {
+        if (!a || !a.started || a.startOffset == null) return null;
+        const splits = a.splits || [];
+        let done = 0;
+        while (done < SEGMENTS.length && splits[done] != null) done++;
+        const finished = !!a.finished || done >= SEGMENTS.length;
+        const at = done ? splits[done - 1] - a.startOffset : 0;
+        const legNow = finished ? null : done;
+        const laps = legNow != null && [0, 2, 4].includes(legNow) ? (legCount(taps, { ...a, splits }, legNow, course) || 0) : 0;
+        const need = legNow != null && [0, 2, 4].includes(legNow) ? legCountPlan(course, legNow).need : 0;
+        return { finished, done, at, laps, need, legNow,
+                 time: finished ? at : Math.max(0, clock - a.startOffset) };
+      }
+      function compareStanding(x, y) {
+        if (x.finished !== y.finished) return x.finished ? -1 : 1;
+        if (x.finished) return x.time - y.time;
+        if (x.done !== y.done) return y.done - x.done;
+        if (x.laps !== y.laps) return y.laps - x.laps;
+        return x.at - y.at || x.time - y.time;
+      }
+      // The race's own age groups, in the host's order; anyone without one in
+      // "Other". Each group lists its started athletes, leader first.
+      function ageGroupStandings(athletes, groups, clock, courseOf, tapsOf) {
+        const rows = [];
+        (athletes || []).forEach((a, i) => {
+          const s = a ? standingOf(a, clock, courseOf(a), tapsOf(a, i)) : null;
+          if (s) rows.push({ a, i, s });
+        });
+        rows.sort((p, q) => compareStanding(p.s, q.s));
+        const labels = [...(groups || [])];
+        (athletes || []).forEach(a => { if (a && a.ageGroup && !labels.includes(a.ageGroup)) labels.push(a.ageGroup); });
+        const out = labels.map(g => ({
+          label: g,
+          rows: rows.filter(r => r.a.ageGroup === g),
+          waiting: (athletes || []).filter(a => a && a.ageGroup === g && !a.started).length,
+        }));
+        const other = rows.filter(r => !r.a.ageGroup);
+        if (other.length) out.push({ label: "Other", rows: other, waiting: 0 });
+        return out.filter(g => g.rows.length || g.waiting);
+      }
+      // 1st, 2nd and 3rd in each age group, live. Each group is its own feed on
+      // the same page.
+      function AgeGroupStandings({ athletes, groups, clock, courseOf, tapsOf, mine = null, top = 3 }) {
+        const feeds = ageGroupStandings(athletes, groups, clock, courseOf, tapsOf);
+        if (!feeds.length) return null;
+        const medal = ["🥇", "🥈", "🥉"];
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {feeds.map(f => (
+              <section key={f.label} aria-label={`${f.label} standings`}
+                style={{ border: `2px solid ${TM.line}`, borderRadius: 8, overflow: "hidden", background: "#FFFFFF" }}>
+                <div style={{ background: TM.ink, color: "#FFFFFF", padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ fontWeight: 900, fontSize: 17, letterSpacing: 0.5 }}>{f.label}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>Live standings</span>
+                </div>
+                {f.rows.length === 0 && (
+                  <div style={{ padding: "10px 12px", fontSize: 15, fontWeight: 600, color: TM.inkMuted }}>Nobody's been sent off yet.</div>
+                )}
+                {f.rows.slice(0, top).map(({ a, i, s }, k) => {
+                  const leg = s.legNow != null ? SEGMENTS[s.legNow] : null;
+                  const col = s.finished ? TM.run : s.legNow != null ? (segColors[s.legNow] || TM.ink) : TM.ink;
+                  return (
+                    <div key={a.id ?? i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+                      borderTop: k ? `1px solid ${TM.line}` : "none", background: mine === i ? TM.bgAlt : "#FFFFFF" }}>
+                      <span style={{ fontSize: 24, lineHeight: 1, width: 30, textAlign: "center" }} aria-label={`Place ${k + 1}`}>{medal[k] || k + 1}</span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {a.name || `${a.firstName || ""} ${a.lastName || ""}`.trim() || "Athlete"}{a.raceNumber != null ? <span style={{ fontWeight: 600, color: TM.inkMuted }}> #{a.raceNumber}</span> : null}
+                        </span>
+                        <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: col }}>
+                          {s.finished ? "Finished" : leg}{!s.finished && s.laps ? ` · lap ${s.laps}${s.need ? `/${s.need}` : ""}` : ""}
+                        </span>
+                      </span>
+                      <span className="tm-metric" style={{ fontSize: 22, letterSpacing: 0, color: col }}>{fmtSplit(s.time)}</span>
+                    </div>
+                  );
+                })}
+                {(f.rows.length > top || f.waiting > 0) && (
+                  <div style={{ padding: "6px 12px 8px", fontSize: 14, fontWeight: 600, color: TM.inkMuted, borderTop: `1px solid ${TM.line}` }}>
+                    {[f.rows.length > top ? `${f.rows.length - top} more racing` : "", f.waiting ? `${f.waiting} not sent off yet` : ""].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+        );
+      }
+      // One athlete's time on each leg: done legs, and the one they're on, live.
+      function LegTimes({ a, clock }) {
+        if (!a || !a.started || a.startOffset == null) return null;
+        const sp = a.splits || [];
+        const cur = sp.findIndex(x => x == null);
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${SEGMENTS.length}, minmax(0, 1fr))`, gap: 4 }}>
+            {SEGMENTS.map((name, si) => {
+              const prev = si === 0 ? a.startOffset : sp[si - 1];
+              const done = sp[si] != null && prev != null;
+              const live = !a.finished && si === cur && prev != null;
+              const ms = done ? sp[si] - prev : live ? clock - prev : null;
+              const col = segColors[si] || TM.ink;
+              return (
+                <div key={name} style={{ border: `2px solid ${done || live ? col : TM.line}`, background: live ? TM.bgAlt : "#FFFFFF",
+                  borderRadius: 5, padding: "4px 2px", textAlign: "center", minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: col }}>{name}</div>
+                  <div className="tm-metric" style={{ fontSize: 16, letterSpacing: 0, color: ms == null ? TM.inkMuted : TM.ink }}>{ms == null ? "—" : fmtSplit(ms)}</div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
       // A row of split chips, wrapping; the newest last.
       function SplitChips({ splits, colour, onDark = false }) {
         if (!splits || !splits.items.length) return null;
@@ -3277,9 +3393,9 @@
         // parents' and athletes' phones straight away.
         useEffect(() => {
           if (!liveRaceCode) return;
-          const t = setTimeout(() => rtdb.ref("liveRaces/" + liveRaceCode).update({ courses, units }).catch(console.error), 600);
+          const t = setTimeout(() => rtdb.ref("liveRaces/" + liveRaceCode).update({ courses, units, ageGroups }).catch(console.error), 600);
           return () => clearTimeout(t);
-        }, [courses, units, liveRaceCode]);
+        }, [courses, units, ageGroups, liveRaceCode]);
 
         // Lap-counted legs (swim, bike or run) end by themselves on the last lap;
         // the last run lap finishes the race.
@@ -3990,7 +4106,7 @@
             raceName: certConfig.eventName || "Race",
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
-            courses, units, autoSplits,
+            courses, units, autoSplits, ageGroups,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes
           };
@@ -7591,7 +7707,7 @@
         // The race a lap counter is looking at: the host's own, or the one watched.
         function lapRaceData() {
           if (isHost && liveRaceCode) {
-            return { code: liveRaceCode, athletes, courses, units, clock: () => clockMsRef.current, name: raceTitle };
+            return { code: liveRaceCode, athletes, courses, units, ageGroups, clock: () => clockMsRef.current, name: raceTitle };
           }
           const src = (liveRace && liveRace.code === lapCountCode) ? liveRace
                     : (joinLiveData && joinLiveData.code === lapCountCode) ? joinLiveData : null;
@@ -7599,7 +7715,7 @@
           const clockNow = () => (src.clockMs || 0) + (src.clockRunning ? Math.max(0, Date.now() - (src.updatedAt || Date.now())) : 0);
           const aths = indexedAthletes(src.athletes).map(a => a && ({ ...a,
             splits: Array.from({ length: SEGMENTS.length }, (_, k) => (a.splits && a.splits[k] != null) ? a.splits[k] : null) }));
-          return { code: lapCountCode, athletes: aths, courses: asList(src.courses), clock: clockNow, name: src.raceName,
+          return { code: lapCountCode, athletes: aths, courses: asList(src.courses), clock: clockNow, name: src.raceName, ageGroups: asList(src.ageGroups),
                    units: src.units || { swim: "yards", bike: "miles", run: "miles" } };
         }
         function courseFor(race, a) { return race.courses.find(c => c.id === a.courseId) || race.courses[0]; }
@@ -8452,6 +8568,37 @@
                           const legUnit = UNIT_SHORT[(race.units || {})[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || (seg === 0 ? "yd" : "mi");
                           const pct = need > 0 ? Math.min(100, (n / need) * 100) : 0;
                           const distLine = plan.lap > 0 ? `${fmtLegDist(Math.min(n * plan.lap, plan.total || Infinity), legUnit)} of ${fmtLegDist(plan.total, legUnit)}` : "";
+                          if (big) return (
+                            <div key={i} style={{ ...rowStyle(LEG_COLOUR[seg]) }}>
+                              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 20, fontWeight: 900, flex: 1, minWidth: 0 }}>{nameOf(a)}{a.raceNumber != null ? <span style={{ fontWeight: 700, color: TM.inkMuted }}> #{a.raceNumber}</span> : null}</span>
+                                <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: LEG_COLOUR[seg] }}>{LEG_NAME[seg]} laps</span>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                                <button onClick={() => mode === "host" ? undoLatestLap(i) : undoMyLatestLap(race.code, i)} disabled={n === 0}
+                                  aria-label={`Take off a lap for ${nameOf(a)}`}
+                                  style={{ width: 64, height: 64, flex: "none", borderRadius: 8, fontSize: 36, fontWeight: 900, lineHeight: 1, cursor: n ? "pointer" : "default",
+                                           opacity: n ? 1 : 0.4, background: "#FFFFFF", color: LEG_COLOUR[seg], border: `3px solid ${LEG_COLOUR[seg]}`, touchAction: "manipulation" }}>−</button>
+                                <div aria-live="polite" style={{ flex: 1, textAlign: "center", color: LEG_COLOUR[seg] }}>
+                                  <span style={{ ...TM_NUM, fontSize: 56, lineHeight: 1, letterSpacing: -1 }}>{n}</span>
+                                  {need > 0 && <span style={{ fontSize: 22, fontWeight: 800 }}>/{need}</span>}
+                                </div>
+                                <button onClick={() => tapLap(race.code, i, race.clock(), nameOf(a))}
+                                  aria-label={`Count a ${LEG_NAME[seg]} lap for ${nameOf(a)}`}
+                                  style={{ width: 96, height: 80, flex: "none", borderRadius: 8, fontSize: 48, fontWeight: 900, lineHeight: 1, cursor: "pointer",
+                                           background: justTapped ? TM.ink : LEG_COLOUR[seg], color: "#FFFFFF", border: "none", touchAction: "manipulation" }}>+</button>
+                              </div>
+                              {distLine && (
+                                <div style={{ marginTop: 10 }}>
+                                  <div style={{ fontSize: 15, fontWeight: 800 }}>{distLine}</div>
+                                  <div aria-hidden="true" style={{ height: 10, background: TM.bgAlt, marginTop: 4, borderRadius: 5, overflow: "hidden" }}>
+                                    <div style={{ height: "100%", width: `${pct}%`, background: LEG_COLOUR[seg] }} />
+                                  </div>
+                                </div>
+                              )}
+                              <SplitChips splits={legSplits(lapTaps[i], a, seg, course, legUnit)} colour={LEG_COLOUR[seg]} />
+                            </div>
+                          );
                           return (
                             <div key={i} style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                             <button onClick={() => mode === "host" ? undoLatestLap(i) : undoMyLatestLap(race.code, i)} disabled={n === 0}
@@ -8492,6 +8639,21 @@
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+
+                    {mode !== "host" && !(mode === "one" && (picked.length === 0 || lapPicking)) && shown.length === 1 && shown[0].a.started && (
+                      <div style={{ marginTop: 18 }}>
+                        <h2 style={{ ...TM_H2, fontSize: 18 }}>{mode === "self" ? "My times" : `${nameOf(shown[0].a)}'s times`}</h2>
+                        <div style={{ marginTop: 8 }}><LegTimes a={shown[0].a} clock={race.clock()} /></div>
+                      </div>
+                    )}
+                    {mode !== "host" && (
+                      <div style={{ marginTop: 22 }}>
+                        <h2 style={{ ...TM_H2, fontSize: 18, marginBottom: 8 }}>Standings</h2>
+                        <AgeGroupStandings athletes={race.athletes} groups={race.ageGroups} clock={race.clock()}
+                          courseOf={a => courseFor(race, a)} tapsOf={(a, i) => lapTaps[i] || (a.gps && a.gps.lapTaps)}
+                          mine={shown.length === 1 ? shown[0].i : null} />
                       </div>
                     )}
 
@@ -9949,11 +10111,13 @@
                       }
                     }
                     return { ...ath, chipMs, finishMs, curSeg };
+                  }).map(ath => {
+                    const crs = asList(liveRace.courses).find(c => c.id === ath.courseId) || asList(liveRace.courses)[0];
+                    const splits = Array.from({ length: SEGMENTS.length }, (_, k) => (ath.splits && ath.splits[k] != null) ? ath.splits[k] : null);
+                    return { ...ath, _st: standingOf({ ...ath, splits }, clock, crs, ath.gps && ath.gps.lapTaps) };
                   }).sort((a, b) => {
-                    if (a.finished && b.finished) return a.finishMs - b.finishMs;
-                    if (a.finished) return -1; if (b.finished) return 1;
-                    if (a.started && b.started) return b.chipMs - a.chipMs;
-                    if (a.started) return -1; if (b.started) return 1;
+                    if (a._st && b._st) return compareStanding(a._st, b._st);
+                    if (a._st) return -1; if (b._st) return 1;
                     return 0;
                   });
                 })() : [];
@@ -10075,7 +10239,14 @@
                             </div>
                           );
                         })()}
-                        <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textAlign: "center", marginBottom: 12 }}>LEADERBOARD</div>
+                        <h2 style={{ ...TM_H2, fontSize: 18, marginBottom: 8 }}>Standings</h2>
+                        <div style={{ marginBottom: 22 }}>
+                          <AgeGroupStandings athletes={liveRace.athletes || []} groups={asList(liveRace.ageGroups)}
+                            clock={spectatorClockMs || liveRace.clockMs || 0}
+                            courseOf={a => asList(liveRace.courses).find(c => c.id === a.courseId) || asList(liveRace.courses)[0]}
+                            tapsOf={a => a.gps && a.gps.lapTaps} />
+                        </div>
+                        <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B", textAlign: "center", marginBottom: 12 }}>EVERYONE</div>
                         {rankedWatchAthletes.length === 0 && <div style={{ textAlign: "center", color: "#3D434B", padding: "30px 0" }}>Waiting for athletes…</div>}
                         {rankedWatchAthletes.map((ath, idx) => {
                           const place = idx + 1;
@@ -10149,8 +10320,11 @@
                                     than tapping each one open. */}
                                 {(() => {
                                   const gps = ath.gps || watchLastGpsRef.current[ath.id];
-                                  if (!gps) return null;
-                                  const crs = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
+                                  // Lap taps live under gps too; only a phone actually sending GPS counts here.
+                                  if (!gps || !gps.t) return null;
+                                  const raceCourses = asList(liveRace.courses).length ? asList(liveRace.courses) : (courses || []);
+                                  const crs = raceCourses.find(c => c.id === ath.courseId) || raceCourses[0];
+                                  if (!["gps", "distance"].includes((crs && crs.bikeType) || "gps")) return null;
                                   const target = crs?.bikeMiles;
                                   if (!target) return null;
                                   // Laps across a measured loop are exact; GPS distance is an estimate.
