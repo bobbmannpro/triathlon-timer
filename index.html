@@ -3222,6 +3222,15 @@
         // so every lap tap threw and the live clock sync silently failed.)
         const clockMsRef   = useRef(0);
         clockMsRef.current = clockMs;
+        // The race clock right now, from the wall clock — not the last value
+        // drawn on screen, which goes stale when the phone sleeps or the app is
+        // in the background. Every split, send-off and tap is stamped with this.
+        const clockRunningRef = useRef(false);
+        clockRunningRef.current = clockRunning;
+        function raceNow() {
+          return clockRunningRef.current && startTimeRef.current != null
+            ? Math.max(0, Date.now() - startTimeRef.current) : clockMsRef.current;
+        }
 
         useEffect(() => {
           if (clockRunning) {
@@ -3444,7 +3453,7 @@
           if (!liveRaceCode || !clockRunning) return;
           const iv = setInterval(() => {
             rtdb.ref("liveRaces/" + liveRaceCode)
-              .update({ clockMs: clockMsRef.current, clockRunning: true, updatedAt: Date.now() })
+              .update({ clockMs: raceNow(), clockRunning: true, updatedAt: Date.now() })
               .catch(console.error);
           }, 2000);
           return () => clearInterval(iv);
@@ -3649,7 +3658,15 @@
             const seg = currentLapLeg(ath, course);
             if (seg == null) return;
             const plan = legLapPlan(course, seg);
-            if (plan.need > 0 && legLaps(lapTaps[i], ath, seg, course) >= plan.need) logSplit(i, seg);
+            if (plan.need > 0 && legLaps(lapTaps[i], ath, seg, course) >= plan.need) {
+              // The leg ended on the last lap's tap — use that moment, not when
+              // this phone noticed (it may have been asleep).
+              const w = legWindow(ath, seg, plan.gap);
+              const marks = w ? lapMarks(lapTaps[i], w[0], w[1], plan.gap) : [];
+              const prev = seg === 0 ? ath.startOffset : ath.splits[seg - 1];
+              const at = marks[plan.need - 1];
+              logSplit(i, seg, at != null && (prev == null || at > prev) ? at : undefined);
+            }
           });
         }, [lapTaps, athletes, courses, liveRaceCode, autoSplits]);
 
@@ -5578,7 +5595,7 @@
                 const clockMs = snap.val().clockMs || 0;
                 const athRef = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}`);
                 if (wp.action === "start") {
-                  athRef.update({ startOffset: clockMs, started: true }).catch(console.error);
+                  athRef.update({ startOffset: raceNow(), started: true }).catch(console.error);
                   raceStartedForMe = true;
                 } else if (wp.action === "split") {
                   athRef.child(`splits/${wp.segIdx}`).set(clockMs).catch(console.error);
@@ -5914,7 +5931,7 @@
         // Sending someone off always has the clock running: it starts it, or
         // resumes it if it was paused.
         function sendOff(athleteIdx) {
-          let at = clockMs;
+          let at = raceNow();
           if (!clockStarted) {
             if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
             offsetRef.current = 0; setClockMs(0); at = 0;
@@ -5926,7 +5943,7 @@
         }
 
         function sendOffAll() {
-          const offset = clockStarted ? clockMs : 0;
+          const offset = clockStarted ? raceNow() : 0;
           if (!clockStarted) {
             offsetRef.current = 0;
             setClockMs(0);
@@ -5938,11 +5955,11 @@
           setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: offset, started: true }));
         }
 
-        function logSplit(athleteIdx, segIndex) {
+        function logSplit(athleteIdx, segIndex, atMs) {
           setAthletes(a => a.map((ath, i) => {
             if (i !== athleteIdx) return ath;
             const newSplits = [...ath.splits];
-            newSplits[segIndex] = clockMs;
+            newSplits[segIndex] = atMs != null ? atMs : raceNow();
             const finished = segIndex === SEGMENTS.length - 1;
             return { ...ath, splits: newSplits, finished };
           }));
@@ -7998,7 +8015,7 @@
         // The race a lap counter is looking at: the host's own, or the one watched.
         function lapRaceData() {
           if (isHost && liveRaceCode) {
-            return { code: liveRaceCode, athletes, courses, units, ageGroups, clock: () => clockMsRef.current, name: raceTitle };
+            return { code: liveRaceCode, athletes, courses, units, ageGroups, clock: () => raceNow(), name: raceTitle };
           }
           const src = (liveRace && liveRace.code === lapCountCode) ? liveRace
                     : (joinLiveData && joinLiveData.code === lapCountCode) ? joinLiveData : null;
@@ -11936,7 +11953,7 @@
                                     </div>
                                   )}
                                 </div>
-                                {side("Add a lap", () => tapLap(liveRaceCode, i, clockMsRef.current, athleteName(ath) || ath.name), !canCount, true)}
+                                {side("Add a lap", () => tapLap(liveRaceCode, i, raceNow(), athleteName(ath) || ath.name), !canCount, true)}
                               </div>
                               <SplitChips splits={ath.started ? legSplits(lapTaps[i], ath, seg, athCourse, legUnit) : null} colour={col} />
                               {!canCount && (
