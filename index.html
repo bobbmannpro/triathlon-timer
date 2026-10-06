@@ -13228,6 +13228,7 @@
                   setSwimSaveBeforeName("");
                   if (swimMeet.listed !== false) listRace(code, "swim", { name: swimMeet.meetName || "Swim meet", status: "live" }); else unlistRace(code);
                   rtdb.ref(`swimLive/${code}`).set({
+                    hostUid: currentUser ? currentUser.uid : null,
                     meetName: name, pool: swimMeet.pool,
                     activeEvent: swimActiveEvent, activeHeat: swimActiveHeat,
                     status: "waiting", startedAt: null,
