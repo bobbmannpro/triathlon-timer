@@ -4014,7 +4014,8 @@
                           const restoredClockMs = (ld.clockMs || 0) + elapsed;
                           offsetRef.current = restoredClockMs;
                           setClockMs(restoredClockMs);
-                          setClockStarted(true);
+                          // A race that never started comes back ready to start, not paused at zero.
+                          setClockStarted(!!(ld.clockStarted || ld.clockRunning || restoredClockMs > 0 || asList(ld.athletes).some(a => a && a.started)));
                           setClockRunning(ld.clockRunning || false);
                           setLiveRaceCode(code);
                           setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
@@ -4792,7 +4793,7 @@
                   const restoredClockMs = (ld.clockMs || 0) + elapsed;
                   offsetRef.current = restoredClockMs;
                   setClockMs(restoredClockMs);
-                  setClockStarted(true);
+                  setClockStarted(!!(ld.clockStarted || ld.clockRunning || restoredClockMs > 0 || asList(ld.athletes).some(a => a && a.started)));
                   setClockRunning(ld.clockRunning || false);
                   setLiveRaceCode(race.code);
                   setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
@@ -5910,8 +5911,18 @@
           setView("race");
         }
 
+        // Sending someone off always has the clock running: it starts it, or
+        // resumes it if it was paused.
         function sendOff(athleteIdx) {
-          setAthletes(a => a.map((ath, i) => i === athleteIdx ? { ...ath, startOffset: clockMs, started: true } : ath));
+          let at = clockMs;
+          if (!clockStarted) {
+            if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
+            offsetRef.current = 0; setClockMs(0); at = 0;
+            setClockStarted(true); setClockRunning(true);
+          } else if (!clockRunning) {
+            setClockRunning(true);
+          }
+          setAthletes(a => a.map((ath, i) => i === athleteIdx ? { ...ath, startOffset: at, started: true } : ath));
         }
 
         function sendOffAll() {
@@ -5921,6 +5932,8 @@
             setClockMs(0);
             setClockRunning(true);
             setClockStarted(true);
+          } else if (!clockRunning) {
+            setClockRunning(true);
           }
           setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: offset, started: true }));
         }
@@ -10492,7 +10505,7 @@
                               CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{wFinished} finished&nbsp;&nbsp;·&nbsp;&nbsp;{wOnCourse} on course
                             </div>
                           </div>
-                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); setWatchSelectedAthId(null); watchSelectedAthIdRef.current = null; localStorage.removeItem("tri-active-watch"); }}
+                          <button onClick={() => { if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; } setLiveRace(null); setSpectatorCode(""); setWatchSelectedAthId(null); watchSelectedAthIdRef.current = null; localStorage.removeItem("tri-active-watch"); if (!isHost) setView("spectate"); }}
                             style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, color: "#3D434B", fontSize: 14, cursor: "pointer", padding: "5px 10px" }}>Leave</button>
                         </div>
                         <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "12px 20px", marginBottom: 16, textAlign: "center", border: "2px solid #C9C5BC" }}>
