@@ -3578,8 +3578,11 @@
           const curr = swimLaneSession.status;
           swimLanePrevStatusRef.current = curr;
           if (curr === "racing" && prev !== "racing") playSwimBeep();
-          if (curr === "waiting" && prev && prev !== "waiting") setSwimLaneFinished(false);
-        }, [swimLaneSession?.status]);
+          // Ready for a new start (next heat, a restart, or the host reopening
+          // the meet): this lane's Stop button comes back.
+          if (curr === "waiting") setSwimLaneFinished(false);
+          if (curr === "racing" && prev !== "racing" && !(swimLaneSession.results && swimLaneSession.results[swimLaneNum])) setSwimLaneFinished(false);
+        }, [swimLaneSession?.status, swimLaneSession?.startedAt]);
 
         // Lane timer local clock driven by Firebase startedAt
         useEffect(() => {
