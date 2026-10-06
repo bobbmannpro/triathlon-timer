@@ -7702,7 +7702,7 @@
           if (!kind) {
             if (!authed) {
               setSpectateNeedsAccount(true);
-              setSpectateError("Watching without an account isn't switched on for this site yet. Sign in to watch, or ask the organiser.");
+              setSpectateError("Sign in or create a free account to watch and count laps.");
             } else {
               setSpectateError("No race found with that code. Check it with the organiser.");
             }
@@ -7888,7 +7888,7 @@
           setTodayBusy(null);
           if (!authed && r.kind !== "bike") {
             setSpectateNeedsAccount(true);
-            setSpectateError("Watching without an account isn't switched on for this site yet. Sign in to watch, or ask the organiser.");
+            setSpectateError("Sign in or create a free account to watch and count laps.");
             return;
           }
           openRaceAsViewer(r.kind, r.code);
@@ -8096,7 +8096,7 @@
             setView(effectiveRole === "athlete" ? "join" : "spectate");
             setSpectateNeedsAccount(!authed);
             setSpectateError(authed ? "That race isn't live yet. Keep this link — it'll work once the race starts."
-                                    : "Watching without an account isn't switched on for this site yet. Sign in to watch, or ask the organiser.");
+                                    : "Sign in or create a free account to watch and count laps.");
           })();
         }, [authLoading]);
         function watchLink(code) { return `${location.origin}${location.pathname}?watch=${code}`; }
@@ -8166,7 +8166,7 @@
           const lanes = [
             ["host",      TM.swim, "Host",      "I'm running the race",          <RoleIcon kind="host" />],
             ["athlete",   TM.bike, "Athlete",   "I'm racing today",              <RoleIcon kind="athlete" />],
-            ["spectator", TM.run,  "Spectator", "Watching — no account needed",  <RoleIcon kind="spectator" />],
+            ["spectator", TM.run,  "Spectator", "Watch and count laps — free account",  <RoleIcon kind="spectator" />],
           ];
           return (
             <div style={{ minHeight: "100vh", background: TM.bg, color: TM.ink, display: "flex", flexDirection: "column" }}>
@@ -8604,7 +8604,7 @@
                     subject: raceName === "the race" ? "Watch the race live" : `${raceName}: watch it live`,
                     body: `Hi everyone,\n\nYou can follow ${raceName} live on your phone — times update as each athlete finishes a leg.\n\n` +
                           (link ? `Tap this link:\n${link}\n\nOr open the Timeathon app, choose Spectator and type the code: ${code}\n\n` : "") +
-                          `No account needed.\n\nSee you there!`,
+                          `The first time, make a free account (name, email and a password) — it takes a minute.\n\nSee you there!`,
                   },
                   results: {
                     subject: raceName === "the race" ? "Race results" : `${raceName}: results`,
@@ -8973,13 +8973,15 @@
                       {spectateError}
                     </div>
                   )}
-                  {(spectateNeedsAccount || !signedIn) && (
-                    <div style={{ marginTop: 22, ...TM_CAPTION }}>
-                      {spectateNeedsAccount ? "" : "No account needed. "}
-                      {!signedIn && (
+                  {!signedIn && (
+                    <div style={{ marginTop: 22 }}>
+                      <div style={TM_CAPTION}>Parents and fans make a free account to watch and count laps.</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                        <button onClick={() => { setSpectatorWantsLogin(true); setAuthMode("signup"); }}
+                          style={{ ...btnStyle(TM.ink), flex: "1 1 160px" }}>Create free account</button>
                         <button onClick={() => { setSpectatorWantsLogin(true); setAuthMode("login"); }}
-                          style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>Sign in instead</button>
-                      )}
+                          style={{ ...btnStyle(TM.ink, true), flex: "1 1 120px" }}>Sign in</button>
+                      </div>
                     </div>
                   )}
                 </div>
