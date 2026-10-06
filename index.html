@@ -453,7 +453,20 @@
       // Splits for one leg. Swim and run: one per lap ("Length"/"Lap"). Bike with a
       // lap length: one per mile (or km) — the time a mile falls inside a lap is
       // shared out in proportion — with mph (km/h) per mile and an average.
+      // What the live screens show for a leg: swim and bike with a lap length
+      // show just the running average (pace per 100, or mph) — every lap's time
+      // is still kept in the taps. Run, and legs without a lap length, list each lap.
       function legSplits(taps, a, seg, course, unitShort) {
+        const full = legSplitsFull(taps, a, seg, course, unitShort);
+        const p = legCountPlan(course, seg);
+        if (!full || !(p.lap > 0) || seg === 4) return full;
+        if (seg === 2) return { items: [], avg: full.avg };
+        const w = legWindow(a, seg, p.gap);
+        const marks = lapMarks(taps, w[0], w[1], p.gap);
+        const dist = marks.length * p.lap, el = marks[marks.length - 1] - a.startOffset;
+        return { items: [], avg: dist > 0 && el > 0 ? `Average ${fmtSplit(el / (dist / 100))} per 100 ${unitShort || "yd"}` : "" };
+      }
+      function legSplitsFull(taps, a, seg, course, unitShort) {
         if (!a) return null;
         const p = legCountPlan(course, seg);
         const w = legWindow(a, seg, p.gap);
@@ -527,15 +540,17 @@
         const out = labels.map(g => ({
           label: g,
           rows: rows.filter(r => r.a.ageGroup === g),
-          waiting: (athletes || []).filter(a => a && a.ageGroup === g && !a.started).length,
+          waiting: (athletes || []).filter(a => a && a.ageGroup === g && !a.started),
         }));
         const other = rows.filter(r => !r.a.ageGroup);
-        if (other.length) out.push({ label: "Other", rows: other, waiting: 0 });
-        return out.filter(g => g.rows.length || g.waiting);
+        const otherWaiting = (athletes || []).filter(a => a && !a.ageGroup && !a.started);
+        if (other.length || otherWaiting.length) out.push({ label: "Other", rows: other, waiting: otherWaiting });
+        return out.filter(g => g.rows.length || g.waiting.length);
       }
-      // 1st, 2nd and 3rd in each age group, live. Each group is its own feed on
-      // the same page.
-      function AgeGroupStandings({ athletes, groups, clock, courseOf, tapsOf, mine = null, top = 3 }) {
+      // Every athlete in each age group, in place order, live — medals for the
+      // top three. Each group is its own feed on the same page; kids not sent
+      // off yet are listed at the bottom.
+      function AgeGroupStandings({ athletes, groups, clock, courseOf, tapsOf, mine = null, top = Infinity }) {
         const feeds = ageGroupStandings(athletes, groups, clock, courseOf, tapsOf);
         if (!feeds.length) return null;
         const medal = ["🥇", "🥈", "🥉"];
@@ -557,7 +572,7 @@
                   return (
                     <div key={a.id ?? i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
                       borderTop: k ? `1px solid ${TM.line}` : "none", background: mine === i ? TM.bgAlt : "#FFFFFF" }}>
-                      <span style={{ fontSize: 24, lineHeight: 1, width: 30, textAlign: "center" }} aria-label={`Place ${k + 1}`}>{medal[k] || k + 1}</span>
+                      <span style={{ fontSize: medal[k] ? 24 : 20, fontWeight: 900, lineHeight: 1, width: 30, textAlign: "center" }} aria-label={`Place ${k + 1}`}>{medal[k] || k + 1}</span>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <span style={{ display: "block", fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {a.name || `${a.firstName || ""} ${a.lastName || ""}`.trim() || "Athlete"}{a.raceNumber != null ? <span style={{ fontWeight: 600, color: TM.inkMuted }}> #{a.raceNumber}</span> : null}
@@ -570,11 +585,15 @@
                     </div>
                   );
                 })}
-                {(f.rows.length > top || f.waiting > 0) && (
-                  <div style={{ padding: "6px 12px 8px", fontSize: 14, fontWeight: 600, color: TM.inkMuted, borderTop: `1px solid ${TM.line}` }}>
-                    {[f.rows.length > top ? `${f.rows.length - top} more racing` : "", f.waiting ? `${f.waiting} not sent off yet` : ""].filter(Boolean).join(" · ")}
+                {f.waiting.map((a, k) => (
+                  <div key={"w" + (a.id ?? k)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: `1px solid ${TM.line}` }}>
+                    <span style={{ width: 30, textAlign: "center", color: TM.inkMuted, fontWeight: 800 }}>–</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 16, fontWeight: 700, color: TM.inkMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {a.name || `${a.firstName || ""} ${a.lastName || ""}`.trim() || "Athlete"}{a.raceNumber != null ? ` #${a.raceNumber}` : ""}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>Not sent off yet</span>
                   </div>
-                )}
+                ))}
               </section>
             ))}
           </div>
@@ -606,7 +625,7 @@
       }
       // A row of split chips, wrapping; the newest last.
       function SplitChips({ splits, colour, onDark = false }) {
-        if (!splits || !splits.items.length) return null;
+        if (!splits || (!splits.items.length && !splits.avg)) return null;
         return (
           <div style={{ marginTop: 10 }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -8532,7 +8551,7 @@
                         if (a.splits[seg] == null) return null;
                         const unit = UNIT_SHORT[(race.units || {})[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || (seg === 0 ? "yd" : "mi");
                         const sp = legSplits(lapTaps[i], a, seg, course, unit);
-                        return sp && sp.items.length ? { seg, sp } : null;
+                        return sp && (sp.items.length || sp.avg) ? { seg, sp } : null;
                       }).filter(Boolean);
                       if (!legs.length) return null;
                       return (
@@ -11553,7 +11572,7 @@
                             if (ath.splits[seg] == null) return null;
                             const unit = UNIT_SHORT[units[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || "mi";
                             const sp = legSplits(lapTaps[i], ath, seg, athCourse, unit);
-                            return sp && sp.items.length ? { seg, sp } : null;
+                            return sp && (sp.items.length || sp.avg) ? { seg, sp } : null;
                           }).filter(Boolean);
                           if (!legs.length) return null;
                           return (
