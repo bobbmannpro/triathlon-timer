@@ -3465,6 +3465,7 @@
           rtdb.ref("liveRaces/" + liveRaceCode).update({
             clockMs,
             clockRunning,
+            clockStarted: true,   // athletes' phones show the clock once this is set
             updatedAt: Date.now(),
           }).catch(console.error);
         }, [clockRunning, clockStarted, liveRaceCode]);
@@ -9729,7 +9730,7 @@
                           </div>
                           <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1 }}>
                             {joinRace.publisherName} · CODE: {joinRace.code} · {rosterWithSignups(joinLiveData || joinRace).length} athletes
-                            {joinLiveData && !joinLiveData.clockStarted && <span style={{ color: "#8A5A00", marginLeft: 8 }}>● WAITING TO START</span>}
+                            {joinLiveData && !(joinLiveData.clockStarted || joinLiveData.clockRunning || joinLiveData.clockMs > 0) && <span style={{ color: "#8A5A00", marginLeft: 8 }}>● WAITING TO START</span>}
                             {joinLiveData?.clockRunning && <span style={{ color: "#04613F", marginLeft: 8 }}>● LIVE</span>}
                           </div>
                         </div>
@@ -9758,12 +9759,12 @@
                           {/* Race clock — always visible */}
                           <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 16px", marginBottom: 12, textAlign: "center", border: "2px solid #C9C5BC" }}>
                             <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#3D434B" }}>
-                              {joinLiveData?.clockStarted ? "RACE CLOCK" : joinLiveData ? "RACE NOT STARTED" : "CONNECTING…"}
+                              {(joinLiveData?.clockStarted || joinLiveData?.clockRunning || joinLiveData?.clockMs > 0) ? "RACE CLOCK" : joinLiveData ? "RACE NOT STARTED" : "CONNECTING…"}
                             </div>
-                            <div style={{ fontFamily: "var(--tm-font)", fontVariantNumeric: "tabular-nums", fontWeight: 700, fontSize: 40, color: joinLiveData?.clockStarted ? "#04613F" : "#3D434B", lineHeight: 1 }}>
-                              {joinLiveData?.clockStarted ? formatTime(joinLiveClockMs) : "0:00:00"}
+                            <div style={{ fontFamily: "var(--tm-font)", fontVariantNumeric: "tabular-nums", fontWeight: 700, fontSize: 40, color: (joinLiveData?.clockStarted || joinLiveData?.clockRunning || joinLiveData?.clockMs > 0) ? "#04613F" : "#3D434B", lineHeight: 1 }}>
+                              {(joinLiveData?.clockStarted || joinLiveData?.clockRunning || joinLiveData?.clockMs > 0) ? formatTime(joinLiveClockMs) : "0:00:00"}
                             </div>
-                            {joinLiveData && !joinLiveData.clockStarted && (
+                            {joinLiveData && !(joinLiveData.clockStarted || joinLiveData.clockRunning || joinLiveData.clockMs > 0) && (
                               <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>{joinLiveData.raceName || "Race"} · {joinLiveData.publisherName}</div>
                             )}
                           </div>
