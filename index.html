@@ -786,6 +786,69 @@
           </div>
         );
       }
+      // ── Photo albums from Google Drive ──────────────────────────────────────
+      // The host drops photos into a Google Drive folder shared "Anyone with the
+      // link · Viewer", pastes the folder link once, and hands out a photo code.
+      // Parents sign in, type the code, and the app lists that folder's photos
+      // through the Drive API (read-only, with the app's key) — they never see
+      // the Drive link itself. Photo codes are longer than race codes because
+      // they open pictures of kids: 8 characters from 31 (no 0/O, 1/I/L).
+      const PHOTO_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+      function newPhotoCode(len = 8) {
+        const a = new Uint32Array(len);
+        try { crypto.getRandomValues(a); } catch (_) { for (let i = 0; i < len; i++) a[i] = Math.floor(Math.random() * 1e9); }
+        return Array.from(a, n => PHOTO_CODE_CHARS[n % PHOTO_CODE_CHARS.length]).join("");
+      }
+      function driveFolderIdFrom(link) {
+        const s = String(link || "").trim();
+        const m = s.match(/\/folders\/([A-Za-z0-9_-]{10,})/) || s.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+        if (m) return m[1];
+        return /^[A-Za-z0-9_-]{20,}$/.test(s) ? s : null;
+      }
+      function driveErrorText(status, body) {
+        const msg = (body && body.error && body.error.message) || "";
+        if (/has not been used|is disabled|SERVICE_DISABLED|accessNotConfigured/i.test(msg))
+          return "Google Drive isn't switched on for the app yet (the Drive API in Google Cloud). The host needs to enable it.";
+        if (/are blocked|API_KEY_SERVICE_BLOCKED/i.test(msg))
+          return "The app's Google key isn't allowed to read Google Drive yet. In Google Cloud → Credentials → Browser key → API restrictions, add Google Drive API.";
+        if (status === 404)
+          return "Can't open that Google Drive folder. In Drive: right-click the folder → Share → General access → Anyone with the link (Viewer).";
+        return "Google Drive said: " + (msg || ("error " + status));
+      }
+      async function driveGet(path, params) {
+        const q = new URLSearchParams({ ...params, key: firebaseConfig.apiKey, supportsAllDrives: "true" });
+        const r = await fetch("https://www.googleapis.com/drive/v3/" + path + "?" + q.toString());
+        let body = null; try { body = await r.json(); } catch (_) {}
+        if (!r.ok) throw new Error(driveErrorText(r.status, body));
+        return body;
+      }
+      // The folder itself — confirms it's shared and gives its name.
+      async function driveFolderInfo(folderId) {
+        const f = await driveGet("files/" + encodeURIComponent(folderId), { fields: "id,name,mimeType" });
+        if (f.mimeType !== "application/vnd.google-apps.folder") throw new Error("That link is to a file, not a folder. Share the folder the photos are in.");
+        return f;
+      }
+      // Every photo in the folder, by name (1, 2, … 10 in order).
+      async function drivePhotos(folderId) {
+        const out = [];
+        let pageToken = "";
+        do {
+          const body = await driveGet("files", {
+            q: `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`,
+            fields: "nextPageToken,files(id,name)", orderBy: "name_natural", pageSize: "1000",
+            includeItemsFromAllDrives: "true", ...(pageToken ? { pageToken } : {}),
+          });
+          (body.files || []).forEach(f => out.push(f));
+          pageToken = body.nextPageToken || "";
+        } while (pageToken);
+        return out.map(f => ({
+          id: f.id, name: f.name,
+          thumb: `https://drive.google.com/thumbnail?id=${f.id}&sz=w480`,
+          url: `https://drive.google.com/thumbnail?id=${f.id}&sz=w2400`,
+          download: `https://drive.google.com/uc?export=download&id=${f.id}`,
+        }));
+      }
+
       // A row of split chips, wrapping; the newest last.
       function SplitChips({ splits, colour, onDark = false }) {
         if (!splits || (!splits.items.length && !splits.avg)) return null;
@@ -2984,7 +3047,18 @@
         const photoAlbumUrlsRef = useRef([]);
         const [photoCodeInput, setPhotoCodeInput] = useState("");
         const [photoCodeSection, setPhotoCodeSection] = useState(false);
-        const [viewPhotoAlbum, setViewPhotoAlbum] = useState(null); // participant view: { code, raceName, photos:[{name,url}], lightboxIdx, loading, error }
+        const [viewPhotoAlbum, setViewPhotoAlbum] = useState(null);
+        // Host's Google Drive photo albums: { code: { name, folderId, raceId, createdAt } }.
+        const [hostAlbums, setHostAlbums] = useState({});
+        const [albumDraft, setAlbumDraft] = useState(null);   // { name, link, code, raceId, editing }
+        const [albumBusy, setAlbumBusy] = useState(false);
+        const [albumMsg, setAlbumMsg] = useState(null);       // { ok, text }
+        const [albumRemove, setAlbumRemove] = useState(null);
+        useEffect(() => {
+          if (view !== "photos" || !currentUser) return;
+          rtdb.ref("users/" + currentUser.uid + "/photoAlbums").once("value")
+            .then(sn => setHostAlbums(sn.val() || {})).catch(() => {});
+        }, [view, currentUser && currentUser.uid]); // participant view: { code, raceName, photos:[{name,url}], lightboxIdx, loading, error }
 
         // Manual Race Entry state
         const [manualRaceName, setManualRaceName] = useState("My Race");
@@ -5001,10 +5075,59 @@
           }
         }
 
+        // Check a Drive folder: shared? how many photos?
+        async function checkAlbumFolder(link) {
+          const id = driveFolderIdFrom(link);
+          if (!id) throw new Error("Paste the folder's share link from Google Drive (it has /folders/ in it).");
+          const folder = await driveFolderInfo(id);
+          const photos = await drivePhotos(id);
+          return { id, folder, count: photos.length };
+        }
+        async function saveAlbum() {
+          const d = albumDraft; if (!d || !currentUser) return;
+          const code = normCode(d.code);
+          if (code.length < 6) { setAlbumMsg({ ok: false, text: "Photo codes need at least 6 letters or numbers — they open pictures of kids, so they must be hard to guess." }); return; }
+          setAlbumBusy(true); setAlbumMsg(null);
+          try {
+            const { id, folder, count } = await checkAlbumFolder(d.link);
+            const existing = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val());
+            if (existing && existing.ownerUid !== currentUser.uid) throw new Error("That code is already used for another album. Tap New code.");
+            const name = (d.name || "").trim() || folder.name;
+            await rtdb.ref("photoAlbums/" + code).set({ name, raceName: name, folderId: id, ownerUid: currentUser.uid, updatedAt: Date.now() });
+            if (d.editing && d.editing !== code) {
+              await rtdb.ref("photoAlbums/" + d.editing).remove().catch(() => {});
+              await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + d.editing).remove().catch(() => {});
+            }
+            const entry = { name, folderId: id, raceId: d.raceId || null, createdAt: (hostAlbums[code] && hostAlbums[code].createdAt) || Date.now() };
+            await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).set(entry);
+            setHostAlbums(a => { const n = { ...a }; if (d.editing && d.editing !== code) delete n[d.editing]; n[code] = entry; return n; });
+            if (d.raceId) persistArchiveUpdate(savedArchive.map(r => r.id === d.raceId ? { ...r, photoCode: code } : r));
+            setAlbumDraft(null);
+            setAlbumMsg({ ok: true, text: `Saved “${name}” — ${count} photo${count === 1 ? "" : "s"} right now. Share code ${code}; new photos you add to the folder show up by themselves.` });
+          } catch (e) {
+            setAlbumMsg({ ok: false, text: e.message || "Couldn't save the album." });
+          }
+          setAlbumBusy(false);
+        }
+        async function removeAlbum(code) {
+          if (!currentUser) return;
+          await rtdb.ref("photoAlbums/" + code).remove().catch(console.error);
+          await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).remove().catch(console.error);
+          setHostAlbums(a => { const n = { ...a }; delete n[code]; return n; });
+          persistArchiveUpdate(savedArchive.map(r => r.photoCode === code ? { ...r, photoCode: null } : r));
+          setAlbumRemove(null);
+          setAlbumMsg({ ok: true, text: `Removed — code ${code} no longer opens any photos. (The photos are still in your Google Drive.)` });
+        }
+        function openAlbumEditor(fields) {
+          setAlbumMsg(null);
+          setAlbumDraft({ name: "", link: "", code: newPhotoCode(), raceId: null, editing: null, ...fields });
+          setView("photos");
+        }
+
         async function loadPhotosByCode(code) {
           if (!code) return;
           if (!currentUser) {
-            alert("Please sign in to view race photos.");
+            alert("Sign in (or create a free account) to view race photos.");
             return;
           }
           var trimmedCode = code.trim().toUpperCase();
@@ -5016,9 +5139,14 @@
               return;
             }
             var data = snap.val();
+            if (data.folderId) {
+              const photos = await drivePhotos(data.folderId);
+              setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos, drive: true, lightboxIdx: null, loading: false, error: null });
+              return;
+            }
             setViewPhotoAlbum({ code: trimmedCode, raceName: data.raceName || trimmedCode, photos: data.photos || [], lightboxIdx: null, loading: false, error: null });
           } catch(e) {
-            setViewPhotoAlbum(function(p) { return p ? Object.assign({}, p, { loading: false, error: "Could not load photos. Check your connection and try again." }) : p; });
+            setViewPhotoAlbum(function(p) { return p ? Object.assign({}, p, { loading: false, error: (e && e.message && /Drive/.test(e.message)) ? e.message : "Could not load photos. Check your connection and try again." }) : p; });
           }
         }
 
@@ -8583,12 +8711,20 @@
                         </span>
                         <ArrowIcon size={24} />
                       </button>
+                      <button onClick={() => { setAlbumDraft(null); setAlbumMsg(null); setView("photos"); }}
+                        style={{ ...rowStyle(), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>📷 Photo albums</span>
+                          <span style={{ display: "block", ...TM_CAPTION }}>Share race photos from a Google Drive folder with a code</span>
+                        </span>
+                        <ArrowIcon size={24} />
+                      </button>
                       <div style={{ ...rowStyle() }}>
-                        <label htmlFor="photo-code" style={{ ...TM_LABEL }}>Race photos</label>
+                        <label htmlFor="photo-code" style={{ ...TM_LABEL }}>View photos by code</label>
                         <div style={{ display: "flex", gap: 8 }}>
                           <input id="photo-code" value={photoCodeInput}
                             onChange={e => setPhotoCodeInput(normCode(e.target.value))}
-                            placeholder="Race code"
+                            placeholder="Photo code"
                             onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                             style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
                                      padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none" }} />
@@ -9027,6 +9163,17 @@
                       </div>
                     </div>
                   )}
+                  <div style={{ ...rowStyle(), marginTop: 28 }}>
+                    <label htmlFor="spectate-photo-code" style={{ ...TM_LABEL }}>📷 Race photos</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input id="spectate-photo-code" value={photoCodeInput} autoCapitalize="characters" autoComplete="off"
+                        onChange={e => setPhotoCodeInput(normCode(e.target.value))} placeholder="Photo code"
+                        onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                        style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none", minHeight: 46 }} />
+                      <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }} style={{ ...btnStyle(TM.ink), minHeight: 46 }}>View</button>
+                    </div>
+                    <div style={{ ...TM_CAPTION, marginTop: 6 }}>The race host gives out this code once the photos are up.</div>
+                  </div>
                 </div>
               )}
 
@@ -9434,11 +9581,11 @@
                                     <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#0B3FCC", letterSpacing: 0.5 }}>{race.photoCode}</span>
                                     <button onClick={() => navigator.clipboard.writeText(race.photoCode)} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 3, color: "#0B3FCC", fontSize: 14, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
                                   </div>
-                                ) : (
-                                  <button onClick={() => assignPhotoCode(race.id)} style={{ marginTop: 4, background: "none", border: "2px solid #C9C5BC", borderRadius: 3, color: "#3D434B", fontSize: 14, padding: "2px 8px", cursor: "pointer" }}>+ Assign photo code</button>
-                                )}
+                                ) : null}
                               </div>
-                              <button onClick={() => openPhotoAlbum(race.id, race.name, race.photoCode)} style={{ ...btnStyle("#0B3FCC", true), padding: "4px 10px", fontSize: 14, flexShrink: 0 }}>📷 Photos</button>
+                              <button onClick={() => race.photoCode && hostAlbums[race.photoCode]
+                                  ? openAlbumEditor({ name: hostAlbums[race.photoCode].name, link: "https://drive.google.com/drive/folders/" + hostAlbums[race.photoCode].folderId, code: race.photoCode, raceId: race.id, editing: race.photoCode })
+                                  : openAlbumEditor({ name: race.name, raceId: race.id })} style={{ ...btnStyle("#0B3FCC", true), padding: "4px 10px", fontSize: 14, flexShrink: 0 }}>📷 Photos</button>
                               <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#8A5A00", true), padding: "4px 10px", fontSize: 14, flexShrink: 0 }}>🏆 Certs</button>
                               <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 4px" }}>{isOpen ? "▲" : "▼"}</button>
                               {archiveDeleteConfirm === race.id ? (
@@ -9484,6 +9631,104 @@
               )}
 
               {/* ── ATHLETES ROSTER ── */}
+              {/* ── PHOTO ALBUMS (host): Google Drive folders shared by code ── */}
+              {view === "photos" && isHost && (() => {
+                const codes = Object.keys(hostAlbums).sort((a, b) => (hostAlbums[b].createdAt || 0) - (hostAlbums[a].createdAt || 0));
+                const inp = { width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 14px", color: TM.ink, outline: "none" };
+                const d = albumDraft;
+                return (
+                  <div>
+                    <button onClick={() => setView("myraces")} style={{ ...btnStyle(TM.ink, true), marginTop: 4 }}>← Back</button>
+                    <h1 style={{ ...TM_DISPLAY, marginTop: 16 }}>Photo albums</h1>
+                    <div style={{ ...TM_CAPTION, fontSize: 16, marginTop: 8 }}>
+                      Drop photos into a Google Drive folder, share the folder, paste its link here and hand out the code. Parents sign in, type the code and see the photos — new ones you add show up by themselves.
+                    </div>
+
+                    <details style={{ ...rowStyle(TM.swim), marginTop: 16 }}>
+                      <summary style={{ fontWeight: 800, fontSize: 16, cursor: "pointer" }}>How to set up a Google Drive folder</summary>
+                      <ol style={{ margin: "10px 0 0 20px", padding: 0, fontSize: 15, fontWeight: 600, lineHeight: 1.6 }}>
+                        <li>In <b>Google Drive</b> on this computer, open <b>Timeathon Photos</b> and make a folder for the race.</li>
+                        <li>Drag the photos into it — Drive uploads them by itself.</li>
+                        <li>Right-click the folder → <b>Share</b> → General access: <b>Anyone with the link</b> · <b>Viewer</b> → <b>Copy link</b>.</li>
+                        <li>Paste the link below and save. Give parents the photo code, not the link.</li>
+                        <li>Done with the season? Set the folder back to <b>Restricted</b> in Drive, or Remove the album here.</li>
+                      </ol>
+                    </details>
+
+                    {albumMsg && (
+                      <div role="status" style={{ ...rowStyle(albumMsg.ok ? TM.run : TM.live), marginTop: 14, fontSize: 15, fontWeight: 700 }}>
+                        {albumMsg.ok ? "✓ " : "✕ "}{albumMsg.text}
+                      </div>
+                    )}
+
+                    {!d ? (
+                      <button onClick={() => openAlbumEditor({})} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 16 }}>+ New photo album</button>
+                    ) : (
+                      <div style={{ ...rowStyle(TM.ink), marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                        <div style={{ fontSize: 17, fontWeight: 900 }}>{d.editing ? "Edit album" : "New album"}</div>
+                        <div>
+                          <label htmlFor="album-name" style={TM_LABEL}>Album name</label>
+                          <input id="album-name" value={d.name} onChange={e => setAlbumDraft(x => ({ ...x, name: e.target.value }))}
+                            placeholder="e.g. Ready Check Tri 2026" style={inp} />
+                        </div>
+                        <div>
+                          <label htmlFor="album-link" style={TM_LABEL}>Google Drive folder link</label>
+                          <input id="album-link" value={d.link} onChange={e => setAlbumDraft(x => ({ ...x, link: e.target.value }))}
+                            placeholder="https://drive.google.com/drive/folders/…" autoComplete="off" style={inp} />
+                        </div>
+                        <div>
+                          <label htmlFor="album-code" style={TM_LABEL}>Photo code — what parents type</label>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <input id="album-code" value={d.code} autoCapitalize="characters" autoComplete="off"
+                              onChange={e => setAlbumDraft(x => ({ ...x, code: normCode(e.target.value) }))}
+                              style={{ ...inp, flex: 1, minWidth: 0, fontSize: 24, fontWeight: 900, letterSpacing: 2 }} />
+                            <button type="button" onClick={() => setAlbumDraft(x => ({ ...x, code: newPhotoCode() }))} style={{ ...btnStyle(TM.ink, true), padding: "0 14px" }}>New code</button>
+                          </div>
+                          <div style={{ ...TM_CAPTION, marginTop: 6 }}>At least 6 letters or numbers, so nobody can guess their way into the photos.</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={saveAlbum} disabled={albumBusy} style={{ ...btnStyle(TM.ink), flex: "1 1 160px", opacity: albumBusy ? 0.6 : 1 }}>
+                            {albumBusy ? "Checking the folder…" : "Check folder & save"}
+                          </button>
+                          <button onClick={() => { setAlbumDraft(null); setAlbumMsg(null); }} style={{ ...btnStyle(TM.ink, true), flex: "0 1 120px" }}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+
+                    <h2 style={{ ...TM_H2, marginTop: 28 }}>Your albums</h2>
+                    {codes.length === 0 && <div style={{ ...rowStyle(), ...TM_CAPTION, marginTop: 10 }}>No albums yet.</div>}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                      {codes.map(code => {
+                        const a = hostAlbums[code];
+                        return (
+                          <div key={code} style={{ ...rowStyle(TM.swim) }}>
+                            <div style={{ fontSize: 17, fontWeight: 900 }}>{a.name}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                              <span style={{ ...TM_NUM, fontSize: 26, letterSpacing: 1.5, color: TM.swim }}>{code}</span>
+                              <button onClick={() => { try { navigator.clipboard.writeText(code); setAlbumMsg({ ok: true, text: `Copied ${code}.` }); } catch (_) {} }}
+                                style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 10px", fontSize: 14 }}>Copy</button>
+                            </div>
+                            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                              <button onClick={() => loadPhotosByCode(code)} style={{ ...btnStyle(TM.ink), minHeight: 40, padding: "0 14px", fontSize: 15 }}>View</button>
+                              <button onClick={() => openAlbumEditor({ name: a.name, link: "https://drive.google.com/drive/folders/" + a.folderId, code, raceId: a.raceId || null, editing: code })}
+                                style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Edit</button>
+                              <a href={"https://drive.google.com/drive/folders/" + a.folderId} target="_blank" rel="noopener noreferrer"
+                                style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15, display: "inline-flex", alignItems: "center", textDecoration: "none" }}>Open in Drive</a>
+                              {albumRemove === code ? (<>
+                                <button onClick={() => removeAlbum(code)} style={{ ...btnStyle(TM.live), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Yes, remove</button>
+                                <button onClick={() => setAlbumRemove(null)} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Keep</button>
+                              </>) : (
+                                <button onClick={() => setAlbumRemove(code)} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Remove</button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {view === "racemap" && isHost && (
                 <div>
                   <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>Race map</h1>
@@ -9670,6 +9915,17 @@
                         <button onClick={() => joinRaceByCode()} disabled={regWorking} style={{ ...btnStyle("#04613F"), padding: "12px 20px", fontSize: 14, opacity: regWorking ? 0.6 : 1 }}>{regWorking ? "…" : "Find Race"}</button>
                       </div>
                       {regError && <div style={{ fontSize: 14, color: "#B3001B", marginTop: 8 }}>{regError}</div>}
+                  <div style={{ ...rowStyle(), marginTop: 28 }}>
+                    <label htmlFor="join-photo-code" style={{ ...TM_LABEL }}>📷 Race photos</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input id="join-photo-code" value={photoCodeInput} autoCapitalize="characters" autoComplete="off"
+                        onChange={e => setPhotoCodeInput(normCode(e.target.value))} placeholder="Photo code"
+                        onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                        style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none", minHeight: 46 }} />
+                      <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }} style={{ ...btnStyle(TM.ink), minHeight: 46 }}>View</button>
+                    </div>
+                    <div style={{ ...TM_CAPTION, marginTop: 6 }}>The race host gives out this code once the photos are up.</div>
+                  </div>
                     </div>
                   )}
 
@@ -12439,19 +12695,21 @@
                   <div style={{ textAlign: "center", color: "#3D434B", padding: 40, fontSize: 14 }}>No photos in this album.</div>
                 ) : (
                   <>
-                    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                    {viewPhotoAlbum.drive ? (
+                      <div style={{ ...TM_CAPTION, marginBottom: 8 }}>Tap a photo to see it full size; ↓ saves it to your phone.</div>
+                    ) : <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
                       <button onClick={() => downloadAllPhotos(viewPhotoAlbum.photos)} style={{ ...btnStyle("#0B3FCC", true), padding: "6px 16px", fontSize: 14 }}>&#8595; Download All ({viewPhotoAlbum.photos.length})</button>
-                    </div>
+                    </div>}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
                       {viewPhotoAlbum.photos.map((f, idx) => (
-                        <div key={f.name} style={{ position: "relative" }}>
+                        <div key={f.id || f.name} style={{ position: "relative" }}>
                           <div onClick={() => setViewPhotoAlbum(p => ({ ...p, lightboxIdx: idx }))}
                             style={{ aspectRatio: "1", borderRadius: 6, overflow: "hidden", cursor: "pointer", background: "#EFEDE8" }}>
-                            <img src={f.url} alt={f.name} loading="lazy"
+                            <img src={f.thumb || f.url} alt={f.name} loading="lazy" referrerPolicy="no-referrer"
                               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                           </div>
-                          <button onClick={e => { e.stopPropagation(); downloadPhoto(f.url, f.name); }}
-                            style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(0,0,0,0.75)", border: "none", borderRadius: 4, color: "#0B0D10", fontSize: 14, padding: "2px 8px", cursor: "pointer", lineHeight: "1.6" }} title="Download">&#8595;</button>
+                          <button onClick={e => { e.stopPropagation(); if (f.download) window.open(f.download, "_blank"); else downloadPhoto(f.url, f.name); }}
+                            style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(0,0,0,0.75)", border: "none", borderRadius: 4, color: "#FFFFFF", fontSize: 16, minWidth: 36, minHeight: 32, padding: "2px 8px", cursor: "pointer", lineHeight: "1.6" }} title="Download" aria-label={`Download ${f.name}`}>&#8595;</button>
                         </div>
                       ))}
                     </div>
@@ -12478,7 +12736,7 @@
                     )}
                     <button onClick={e => { e.stopPropagation(); downloadPhoto(vf.url, vf.name); }}
                       style={{ position: "absolute", bottom: 14, right: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, color: "#0B3FCC", fontSize: 14, padding: "6px 14px", cursor: "pointer" }}>&#8595; Download</button>
-                    <img src={vf.url} alt={vf.name} onClick={e => e.stopPropagation()}
+                    <img referrerPolicy="no-referrer" src={vf.url} alt={vf.name} onClick={e => e.stopPropagation()}
                       style={{ maxWidth: "90vw", maxHeight: "88vh", objectFit: "contain", borderRadius: 4 }} />
                     <div style={{ position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)", color: "#3D434B", fontSize: 14, maxWidth: "60vw", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vf.name}</div>
                   </div>
