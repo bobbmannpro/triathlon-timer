@@ -14219,7 +14219,7 @@
                                       📋 Copy
                                     </button>
                                     <button style={{ ...btnStyle("#B3001B", true), padding:"4px 10px", fontSize:14 }} onClick={() => {
-                                      rtdb.ref(`swimLive/${swimLiveCode}`).remove().catch(console.error);
+                                      rtdb.ref(`swimLive/${swimLiveCode}`).remove().catch(console.error); unlistRace(swimLiveCode);
                                       setSwimLiveCode(null);
                                     }}>
                                       Stop
