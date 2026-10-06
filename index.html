@@ -8760,6 +8760,7 @@
                   if (!a.started) return "Counter shows up when they're sent off";
                   if (a.finished) return "Finished";
                   const nextSeg = a.splits.findIndex(s => s == null);
+                  if (nextSeg === 1 || nextSeg === 3) return `In ${SEGMENTS[nextSeg]} — the ${nextSeg === 1 ? "bike" : "run"} counter comes up next`;
                   return `${SEGMENTS[nextSeg] || "Race"} — not counted by laps`;
                 };
                 return (
@@ -12918,12 +12919,30 @@
                                 ))}
                               </div>
                               <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", marginTop: 22 }}>Lanes</div>
-                              <div role="radiogroup" aria-label="Lanes" style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                                {[4,6,8,10].map(n => (
-                                  <button key={n} role="radio" aria-checked={(swimMeet.lanes || 8) === n}
-                                    onClick={() => setSwimMeet(m => ({ ...m, lanes: n }))} style={choice((swimMeet.lanes || 8) === n)}>{n}</button>
-                                ))}
-                              </div>
+                              {/* Any number of lanes: type it, step it, or tap a common size. */}
+                              {(() => {
+                                const n = swimMeet.lanes || 8;
+                                const setLanes = (v) => setSwimMeet(m => ({ ...m, lanes: Math.max(1, Math.min(20, Math.round(v) || 1)) }));
+                                const step = { width: 56, minWidth: 56, minHeight: 56, borderRadius: 6, border: "2px solid #FFFFFF", background: "transparent",
+                                               color: "#FFFFFF", fontSize: 28, fontWeight: 900, cursor: "pointer", lineHeight: 1 };
+                                return (<>
+                                  <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                                    <button type="button" onClick={() => setLanes(n - 1)} disabled={n <= 1} aria-label="One lane fewer" style={{ ...step, opacity: n <= 1 ? 0.4 : 1 }}>−</button>
+                                    <input id="swim-lanes" type="number" inputMode="numeric" min="1" max="20" value={n} aria-label="Number of lanes"
+                                      onChange={e => { if (e.target.value !== "") setLanes(+e.target.value); }}
+                                      style={{ width: 90, minHeight: 56, borderRadius: 6, border: "none", background: "#FFFFFF", color: TM.swim,
+                                               fontSize: 30, fontWeight: 900, textAlign: "center", outline: "none" }} />
+                                    <button type="button" onClick={() => setLanes(n + 1)} disabled={n >= 20} aria-label="One lane more" style={{ ...step, opacity: n >= 20 ? 0.4 : 1 }}>+</button>
+                                    <span style={{ fontWeight: 800, fontSize: 17 }}>lane{n === 1 ? "" : "s"}</span>
+                                  </div>
+                                  <div role="radiogroup" aria-label="Common lane counts" style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                                    {[4,5,6,8,10].map(k => (
+                                      <button key={k} role="radio" aria-checked={n === k}
+                                        onClick={() => setLanes(k)} style={choice(n === k)}>{k}</button>
+                                    ))}
+                                  </div>
+                                </>);
+                              })()}
                             </div>
                           )}
                           {st === 3 && (
