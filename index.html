@@ -8614,7 +8614,7 @@
           if (!effectiveRole || effectiveRole === "host") return;
           const allowed = effectiveRole === "athlete"
             ? ["join", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount"]
-            : ["spectate", "watch", "swimwatch", "bike", "profile", "lapcount"];
+            : ["spectate", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount"];
           if (!allowed.includes(view)) { setView(roleLanding(effectiveRole)); return; }
           if (view === "bike") {
             const ok = effectiveRole === "athlete" ? ["ride", "feed"] : ["feed"];
@@ -14171,7 +14171,7 @@
                               {!swimLiveCode ? (
                                 <button style={{ ...btnStyle("#04613F"), fontSize:14, padding:"8px 20px" }} onClick={async () => {
                                   const savedMeet = swimSavedMeets.find(m => m.id === swimMeet._id);
-                                  if (!swimMeet._id || !savedMeet) { setSwimShowSaveBefore(true); return; }
+                                  if (!swimMeet._id || !savedMeet) { setSwimSaveBeforeName(n => n || swimMeet.meetName || ""); setSwimShowSaveBefore(true); return; }
                                   const code = savedMeet.code || swimMeet.code || generateSwimCode();
                                   // swimLive is writable by any signed-in user, so never
                                   // take over a code another host's meet is using.
@@ -15028,6 +15028,11 @@
                           }}>Leave</button>
                         </div>
                       </div>
+                      {/* Volunteers timing a lane start here: same code, their lane's Stop button */}
+                      <button onClick={() => { setSwimLaneCode(swimWatchCode); setView("swimlane"); }}
+                        style={{ ...btnStyle(TM.swim), width: "100%", marginBottom: 12, fontSize: 16 }}>
+                        ⏱ I'm timing a lane
+                      </button>
 
                       {/* Swimmer chooser */}
                       {swimWatchChooserOpen && (
