@@ -222,6 +222,152 @@
       // one map per athlete would mean a dozen tile-loading widgets on a phone during
       // a race. This draws the planned course, the recent breadcrumb and the current
       // fix as plain SVG, so it costs nothing and always renders.
+      // ── Host race map ────────────────────────────────────────────────────────
+      // Everyone with a phone sending GPS, where they are now, with the trail of
+      // where they've been, over the course you drew. Anyone further than
+      // OFF_COURSE_M from their leg's course is flagged.
+      const OFF_COURSE_M = 60;
+      function metresToRoute(lat, lng, route) {
+        if (!route || route.length < 2) return null;
+        const k = 111320, cos = Math.cos(lat * Math.PI / 180);
+        const P = (q) => [(q[1] - lng) * k * cos, (q[0] - lat) * k];
+        let best = Infinity;
+        for (let j = 1; j < route.length; j++) {
+          const a = P(route[j - 1]), b = P(route[j]);
+          const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+          const t = L2 ? Math.max(0, Math.min(1, -(a[0] * dx + a[1] * dy) / L2)) : 0;
+          best = Math.min(best, Math.hypot(a[0] + t * dx, a[1] + t * dy));
+        }
+        return best;
+      }
+      function HostRaceMap({ athletes, gps, tracks, tick, waypoints, raceRoutes, code }) {
+        const elRef = useRef(null), mapRef = useRef(null), layersRef = useRef({}), fittedRef = useRef(false), courseRef = useRef(null);
+        // The course from Setup, or — if this screen doesn't have it — the one
+        // published with the live race.
+        const hasOwn = !!(raceRoutes && ["swim", "bike", "run"].some(k => raceRoutes[k] && raceRoutes[k].length > 1));
+        const [liveCourse, setLiveCourse] = useState(null);
+        useEffect(() => {
+          if (hasOwn || !code) return;
+          Promise.all([rtdb.ref(`liveRaces/${code}/raceRoutes`).once("value"), rtdb.ref(`liveRaces/${code}/waypoints`).once("value")])
+            .then(([r, w]) => setLiveCourse({ routes: r.val() || {}, waypoints: asList(w.val()) })).catch(() => {});
+        }, [code, hasOwn]);
+        const routes = hasOwn ? raceRoutes : (liveCourse && liveCourse.routes) || {};
+        const wpts = ((waypoints || []).some(w => w.lat != null) ? waypoints : (liveCourse && liveCourse.waypoints)) || [];
+        const legRoute = (seg) => seg === 0 ? routes.swim : seg === 2 ? routes.bike : seg === 4 ? routes.run : null;
+        const allRoutes = [routes.swim, routes.bike, routes.run].filter(r => r && r.length > 1);
+        // Where each athlete is and whether they're on course.
+        const rows = (athletes || []).map((a, i) => {
+          const g = gps[i];
+          if (!g || g.lat == null) return { a, i, g: null };
+          const seg = (a.splits || []).findIndex(x => x == null);
+          const route = legRoute(seg);
+          const off = route ? metresToRoute(g.lat, g.lng, route)
+            : allRoutes.length ? Math.min(...allRoutes.map(r => metresToRoute(g.lat, g.lng, r))) : null;
+          return { a, i, g, seg, off, offCourse: off != null && off > OFF_COURSE_M && a.started && !a.finished };
+        });
+        const nowMs = Date.now();
+        const located = rows.filter(r => r.g);
+
+        useEffect(() => {
+          if (!elRef.current || mapRef.current) return;
+          const map = L.map(elRef.current, { zoomControl: true, attributionControl: false, maxZoom: 21 });
+          const b = BIKE_BASEMAPS[(() => { try { return localStorage.getItem("tri-basemap"); } catch(_) { return null; } })()] || BIKE_BASEMAPS.satellite;
+          L.tileLayer(b.url, { subdomains: b.subdomains, maxZoom: 21, maxNativeZoom: b.maxZoom, detectRetina: b.url.includes("{r}") }).addTo(map);
+          if (b.labels) L.tileLayer(b.labels, { maxZoom: 21, maxNativeZoom: b.maxZoom }).addTo(map);
+          map.setView([39.5, -98.35], 4);
+          mapRef.current = map;
+          setTimeout(() => map.invalidateSize(), 150);
+          return () => { map.remove(); mapRef.current = null; layersRef.current = {}; fittedRef.current = false; courseRef.current = null; };
+        }, []);
+
+        // The course: each leg in its colour, plus the pins.
+        const courseKey = JSON.stringify([routes, wpts.map(w => [w.lat, w.lng])]);
+        useEffect(() => {
+          const map = mapRef.current; if (!map) return;
+          if (courseRef.current) map.removeLayer(courseRef.current);
+          const g = courseRef.current = L.layerGroup().addTo(map);
+          [["swim", 0], ["bike", 2], ["run", 4]].forEach(([leg, si]) => {
+            const pts = routes[leg];
+            if (pts && pts.length > 1) L.polyline(pts, { color: segColors[si], weight: 5, opacity: 0.85 }).addTo(g);
+          });
+          wpts.filter(w => w.lat != null && w.lng != null).forEach(w => {
+            L.circleMarker([w.lat, w.lng], { radius: 7, color: "#FFFFFF", fillColor: TM.ink, fillOpacity: 0.9, weight: 2 })
+              .bindTooltip(w.label || "", { direction: "top", offset: [0, -8] }).addTo(g);
+          });
+          if (!located.length) {
+            const first = wpts.find(w => w.lat != null) || (allRoutes[0] && { lat: allRoutes[0][0][0], lng: allRoutes[0][0][1] });
+            if (first) map.setView([first.lat, first.lng], 16);
+          } else fitAll();
+        }, [courseKey]);
+
+        // Markers and trails follow every GPS update.
+        useEffect(() => {
+          const map = mapRef.current; if (!map) return;
+          const seen = new Set();
+          rows.forEach(({ a, i, g, seg, offCourse }) => {
+            if (!g) return;
+            seen.add(i);
+            const col = offCourse ? TM.live : segColors[seg === -1 ? 4 : seg] || TM.ink;
+            const name = (a.firstName || (a.name || "").split(" ")[0] || `#${i + 1}`);
+            const trail = (tracks[i] || []).map(p => [p[0], p[1]]);
+            let L_ = layersRef.current[i];
+            if (!L_) {
+              L_ = layersRef.current[i] = {
+                trail: L.polyline(trail, { color: col, weight: 3, opacity: 0.7 }).addTo(map),
+                dot: L.circleMarker([g.lat, g.lng], { radius: 9, color: "#FFFFFF", weight: 3, fillColor: col, fillOpacity: 1 })
+                  .bindTooltip(name, { permanent: true, direction: "top", offset: [0, -10], className: "leaflet-ath-label" }).addTo(map),
+              };
+            } else {
+              L_.trail.setLatLngs(trail); L_.trail.setStyle({ color: col });
+              L_.dot.setLatLng([g.lat, g.lng]); L_.dot.setStyle({ fillColor: col });
+            }
+          });
+          Object.keys(layersRef.current).forEach(k => {
+            if (!seen.has(+k)) { map.removeLayer(layersRef.current[k].trail); map.removeLayer(layersRef.current[k].dot); delete layersRef.current[k]; }
+          });
+          if (!fittedRef.current && located.length) { fitAll(); fittedRef.current = true; }
+        });
+
+        function fitAll() {
+          const map = mapRef.current; if (!map) return;
+          const pts = [...located.map(r => [r.g.lat, r.g.lng]), ...allRoutes.flat()];
+          if (pts.length === 1) map.setView(pts[0], 17);
+          else if (pts.length) map.fitBounds(pts, { padding: [30, 30], maxZoom: 18 });
+        }
+        const ago = (t) => { const s = Math.max(0, Math.round((nowMs - t) / 1000)); return s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`; };
+        const offList = rows.filter(r => r.offCourse);
+
+        return (
+          <div>
+            {offList.length > 0 && (
+              <div role="alert" style={{ ...rowStyle(TM.live), marginBottom: 10, fontSize: 16, fontWeight: 800 }}>
+                ⚠ Off course: {offList.map(r => `${r.a.name} (${Math.round(r.off)} m away)`).join(", ")}
+              </div>
+            )}
+            <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: `2px solid ${TM.line}`, isolation: "isolate" }}>
+              <div ref={elRef} style={{ height: "62vh", minHeight: 320 }} />
+              <button onClick={fitAll} style={{ ...btnStyle(TM.ink), position: "absolute", right: 10, bottom: 10, zIndex: 500, minHeight: 44, padding: "0 14px", fontSize: 15 }}>Show everyone</button>
+            </div>
+            {!allRoutes.length && (
+              <div style={{ ...TM_CAPTION, marginTop: 8 }}>No course drawn — draw one in Setup → Course map to check that everyone is on it.</div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
+              {rows.map(({ a, i, g, seg, off, offCourse }) => (
+                <div key={a.id ?? i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 6,
+                  background: "#FFFFFF", border: `2px solid ${offCourse ? TM.live : TM.line}` }}>
+                  <span aria-hidden="true" style={{ width: 12, height: 12, borderRadius: 6, flex: "none",
+                    background: !g ? TM.line : offCourse ? TM.live : segColors[seg === -1 ? 4 : seg] || TM.ink }} />
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: offCourse ? TM.live : TM.inkMuted, textAlign: "right" }}>
+                    {!g ? "No GPS" : offCourse ? `${Math.round(off)} m off course` : `${a.finished ? "Finished" : seg >= 0 ? SEGMENTS[seg] : ""}${off != null ? " · on course" : ""} · ${ago(g.t)}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
       function RaceGpsThumb({ route, track, color, state, w = 88, h = 56 }) {
         const pts = [].concat(route && route.length > 1 ? route : [], track || []);
         if (!pts.length) {
@@ -2512,6 +2658,10 @@
         // so the thumbnail beside each name shows movement rather than a lone dot.
         const athleteTrackRef = useRef({});
         const [athleteTrackTick, setAthleteTrackTick] = useState(0);
+        // Athletes' phones that have picked their name in this race: { idx: { uid, name, at, seen } }.
+        const [athletePhones, setAthletePhones] = useState({});
+        const phonesKnownRef = useRef(null);
+        const [phoneToast, setPhoneToast] = useState(null);
         const [gpsNow, setGpsNow] = useState(Date.now());
         const RACE_BIKE_SEG   = 2;      // SEGMENTS = Swim, T1, Bike, T2, Run
         const GPS_LIVE_MS     = 15000;  // a fix this recent means the device is talking
@@ -2556,6 +2706,21 @@
           watchGpsListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
         }, [watchToken, joinRace, joinAthIdx]);
+
+        // Picking your name links this phone to that athlete; the host sees
+        // "connected". A heartbeat every 30 s keeps it current.
+        useEffect(() => {
+          if (!joinRace || joinAthIdx === null || !auth.currentUser) return;
+          const ref = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps/phone`);
+          const roster = rosterWithSignups(joinLiveData || joinRace);
+          const me = roster[joinAthIdx] || {};
+          const beat = (first) => ref.update(first
+            ? { uid: auth.currentUser.uid, name: me.name || "", at: Date.now(), seen: Date.now() }
+            : { seen: Date.now() }).catch(() => {});
+          beat(true);
+          const id = setInterval(() => beat(false), 30000);
+          return () => clearInterval(id);
+        }, [joinRace?.code, joinAthIdx]);
 
         // Auto-start GPS immediately when athlete is identified — no consent gate
         useEffect(() => {
@@ -3287,6 +3452,7 @@
           }
           if (!liveRaceCode) {
             setAthleteGps({}); setAthleteTrainerData({}); setAthleteHrData({});
+            setAthletePhones({}); phonesKnownRef.current = null;
             athleteTrackRef.current = {};
             return;
           }
@@ -3298,6 +3464,18 @@
             const trainerMap = {};
             const hrMap = {};
             let moved = false;
+            const phoneMap = {};
+            athArr.forEach((ath, idx) => { if (ath && ath.gps && ath.gps.phone && ath.gps.phone.uid) phoneMap[idx] = ath.gps.phone; });
+            setAthletePhones(phoneMap);
+            // A phone that wasn't linked when this screen opened → say so.
+            if (phonesKnownRef.current) {
+              const fresh = Object.keys(phoneMap).filter(k => phonesKnownRef.current[k] !== phoneMap[k].uid);
+              if (fresh.length) {
+                setPhoneToast({ names: fresh.map(k => (athArr[k] && athArr[k].name) || phoneMap[k].name || "An athlete"), at: Date.now() });
+                setTimeout(() => setPhoneToast(t => t && Date.now() - t.at >= 7900 ? null : t), 8000);
+              }
+            }
+            phonesKnownRef.current = Object.fromEntries(Object.entries(phoneMap).map(([k, v]) => [k, v.uid]));
             athArr.forEach((ath, idx) => {
               // Every athlete writes to their own node, so any number of phones can
               // publish at once; this just reads whatever each of them last sent.
@@ -8097,7 +8275,7 @@
                 ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__","Ride"],["__bike_feed__","Follow"],["__bike_riders__","Riders"]]
                 : appMode === "swim"
                 ? [["myraces","My Races"],["swimsetup","Setup"],["swimrace","Race"],["swimresults","Results"],["swimathletes","Athletes"],["swimdevices","Devices"],["swimlane","Lane"]]
-                : [["myraces","My Races"],["setup","Setup"],["race","Race"],["results","Results"],["athletes","Athletes"],["devices","Devices"]];
+                : [["myraces","My Races"],["setup","Setup"],["race","Race"],["racemap","Map"],["results","Results"],["athletes","Athletes"],["devices","Devices"]];
               return (
                 <nav className="tm-nav-wrap" aria-label="Host">
                 <div className="tm-nav" ref={navStripRef}>
@@ -9183,6 +9361,34 @@
               )}
 
               {/* ── ATHLETES ROSTER ── */}
+              {view === "racemap" && isHost && (
+                <div>
+                  <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>Race map</h1>
+                  {!liveRaceCode ? (
+                    <div style={{ ...rowStyle(TM.warn), marginTop: 14, fontSize: 16, fontWeight: 600 }}>
+                      Share the race live first (Race → Share Live Results). Athletes' phones show up here once they pick their name.
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ ...TM_CAPTION, marginBottom: 10 }}>
+                        {Object.keys(athleteGps).length} of {athletes.length} sending GPS · {Object.keys(athletePhones).length} phone{Object.keys(athletePhones).length === 1 ? "" : "s"} connected
+                      </div>
+                      <HostRaceMap athletes={athletes} gps={athleteGps} tracks={athleteTrackRef.current} tick={athleteTrackTick}
+                        waypoints={waypoints} raceRoutes={raceRoutes} code={liveRaceCode} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isHost && phoneToast && Date.now() - phoneToast.at < 8000 && (
+                <div role="status" onClick={() => setPhoneToast(null)}
+                  style={{ position: "fixed", left: 16, right: 16, bottom: 20, zIndex: 2000, maxWidth: 520, margin: "0 auto",
+                           background: TM.run, color: "#FFFFFF", borderRadius: 8, padding: "14px 16px", fontSize: 17, fontWeight: 800,
+                           boxShadow: "0 8px 30px rgba(0,0,0,0.35)", cursor: "pointer" }}>
+                  📱 {phoneToast.names.join(", ")} connected
+                </div>
+              )}
+
               {view === "athletes" && (
                 <div style={{ paddingTop: 8 }}>
 
@@ -11470,9 +11676,9 @@
                               <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>
                                 {ath.dob && calcAge(ath.dob) !== null ? `Age ${calcAge(ath.dob)}` : ath.ageGroup}
                               </span>
-                              {athleteUsesGps(ath) && gpsHealth(i).state === "live" && (
-                                <span style={{ fontSize: 14, fontWeight: 800, color: TM.run }}>● GPS</span>
-                              )}
+                              {athletePhones[i] && (Date.now() - (athletePhones[i].seen || 0) < 90000
+                                ? <span title="This athlete's phone is linked to the race" style={{ fontSize: 14, fontWeight: 800, color: TM.run }}>📱 Connected</span>
+                                : <span title="Linked earlier; not heard from in the last minute or so" style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>📱 Offline</span>)}
                               {athleteHrData[i] && <span style={{ fontSize: 14, fontWeight: 800, color: TM.live }}>♥ {athleteHrData[i].bpm}</span>}
                             </div>
                             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 1, fontVariantNumeric: "tabular-nums" }}>
