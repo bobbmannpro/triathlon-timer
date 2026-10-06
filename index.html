@@ -2731,9 +2731,11 @@
           const ref = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps/phone`);
           const roster = rosterWithSignups(joinLiveData || joinRace);
           const me = roster[joinAthIdx] || {};
+          // Every beat says who this is, so a host's "Reset all times" (which
+          // clears the node) is repaired within 30 s.
           const beat = (first) => ref.update(first
             ? { uid: auth.currentUser.uid, name: me.name || "", at: Date.now(), seen: Date.now() }
-            : { seen: Date.now() }).catch(() => {});
+            : { uid: auth.currentUser.uid, name: me.name || "", seen: Date.now() }).catch(() => {});
           beat(true);
           const id = setInterval(() => beat(false), 30000);
           // Switching to another name (or leaving) frees this one, if it's still ours.
