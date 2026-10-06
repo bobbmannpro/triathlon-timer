@@ -512,11 +512,17 @@
         let done = 0;
         while (done < SEGMENTS.length && splits[done] != null) done++;
         const finished = !!a.finished || done >= SEGMENTS.length;
-        const at = done ? splits[done - 1] - a.startOffset : 0;
+        let at = done ? splits[done - 1] - a.startOffset : 0;
         const legNow = finished ? null : done;
         const laps = legNow != null && [0, 2, 4].includes(legNow) ? (legCount(taps, { ...a, splits }, legNow, course) || 0) : 0;
         const need = legNow != null && [0, 2, 4].includes(legNow) ? legCountPlan(course, legNow).need : 0;
-        return { finished, done, at, laps, need, legNow,
+        // When they reached their latest point — the last lap counted on this leg.
+        if (laps) {
+          const w = legWindow({ ...a, splits }, legNow, 0);
+          const marks = w ? lapMarks(taps, w[0], w[1], 0) : [];
+          if (marks.length) at = Math.max(at, marks[marks.length - 1] - a.startOffset);
+        }
+        return { finished, done, at, laps, need, legNow, start: a.startOffset,
                  time: finished ? at : Math.max(0, clock - a.startOffset) };
       }
       function compareStanding(x, y) {
@@ -524,7 +530,8 @@
         if (x.finished) return x.time - y.time;
         if (x.done !== y.done) return y.done - x.done;
         if (x.laps !== y.laps) return y.laps - x.laps;
-        return x.at - y.at || x.time - y.time;
+        // Level: whoever got there in less time; nobody's counted yet → send-off order.
+        return x.at - y.at || x.start - y.start;
       }
       // The race's own age groups, in the host's order; anyone without one in
       // "Other". Each group lists its started athletes, leader first.
@@ -563,7 +570,7 @@
                   <span style={{ fontWeight: 900, fontSize: 17, letterSpacing: 0.5 }}>{f.label}</span>
                   <span style={{ fontSize: 14, fontWeight: 700 }}>Live standings</span>
                 </div>
-                {f.rows.length === 0 && (
+                {f.rows.length === 0 && !f.waiting.length && (
                   <div style={{ padding: "10px 12px", fontSize: 15, fontWeight: 600, color: TM.inkMuted }}>Nobody's been sent off yet.</div>
                 )}
                 {f.rows.slice(0, top).map(({ a, i, s }, k) => {
@@ -3862,7 +3869,7 @@
         }
         async function authSignUp() {
           if (!authFirstName.trim() || !authLastName.trim()) { setAuthError("Please enter your first and last name."); return; }
-          if (!authGender) { setAuthError("Please select your gender."); return; }
+          if (!authGender && !isSpectator) { setAuthError("Please select your gender."); return; }
           setAuthError(""); setAuthWorking(true);
           try {
             const displayName = `${authFirstName.trim()} ${authLastName.trim()}`;
@@ -7991,7 +7998,7 @@
                       <div style={{ flex: 1 }}>{field("su-last", "Last name",
                         <input id="su-last" value={authLastName} onChange={e => setAuthLastName(e.target.value)} autoComplete="family-name" style={inp} />)}</div>
                     </div>
-                    <div style={{ display: "flex", gap: 10 }}>
+                    {!isSpectator && <div style={{ display: "flex", gap: 10 }}>
                       <div style={{ flex: 1 }}>{field("su-bday", "Birthday",
                         <input id="su-bday" type="date" value={authBirthday} onChange={e => setAuthBirthday(e.target.value)} style={inp} />)}</div>
                       <div style={{ flex: 1 }}>{field("su-gender", "Gender",
@@ -8002,7 +8009,7 @@
                           <option value="Non-binary">Non-binary</option>
                           <option value="Prefer not to say">Prefer not to say</option>
                         </select>)}</div>
-                    </div>
+                    </div>}
                   </>)}
                   {field("au-email", "Email",
                     <input id="au-email" type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} autoComplete="email" style={inp} />)}
@@ -8500,7 +8507,7 @@
                   </div>
                 );
                 const statusOf = (a, course) => {
-                  if (!a.started) return "Hasn't started yet";
+                  if (!a.started) return "Counter shows up when they're sent off";
                   if (a.finished) return "Finished";
                   const nextSeg = a.splits.findIndex(s => s == null);
                   return `${SEGMENTS[nextSeg] || "Race"} — not counted by laps`;
@@ -8538,12 +8545,6 @@
                       <button onClick={() => setLapPicking(true)} style={{ ...btnStyle(TM.ink, true), marginTop: 16 }}>Switch athlete</button>
                     )}
 
-                    {flash && (
-                      <div role="status" style={{ ...rowStyle(flash.error ? TM.live : TM.run), marginTop: 14, display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ flex: 1, fontSize: 17, fontWeight: 800 }}>{flash.error ? flash.error : `✓ Lap counted for ${flash.name}`}</span>
-                        {!flash.error && <button onClick={() => undoLap(race.code, flash.idx, flash.id)} style={{ ...btnStyle(TM.ink, true), padding: "0 14px" }}>Undo</button>}
-                      </div>
-                    )}
 
                     {!(mode === "one" && (picked.length === 0 || lapPicking)) && shown.length === 1 && (() => {
                       const { a, i, course } = shown[0];
@@ -8661,6 +8662,12 @@
                       </div>
                     )}
 
+                    {flash && (
+                      <div role="status" style={{ ...rowStyle(flash.error ? TM.live : TM.run), marginTop: 14, display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ flex: 1, fontSize: 17, fontWeight: 800 }}>{flash.error ? flash.error : `✓ Lap counted for ${flash.name}`}</span>
+                        {!flash.error && <button onClick={() => undoLap(race.code, flash.idx, flash.id)} style={{ ...btnStyle(TM.ink, true), padding: "0 14px" }}>Undo</button>}
+                      </div>
+                    )}
                     {mode !== "host" && !(mode === "one" && (picked.length === 0 || lapPicking)) && shown.length === 1 && shown[0].a.started && (
                       <div style={{ marginTop: 18 }}>
                         <h2 style={{ ...TM_H2, fontSize: 18 }}>{mode === "self" ? "My times" : `${nameOf(shown[0].a)}'s times`}</h2>
@@ -8704,7 +8711,7 @@
                       {spectateBusy ? "Finding race…" : "Watch live →"}
                     </button>
                   </form>
-                  {spectateError && (
+                  {spectateError && !(spectateNeedsAccount && signedIn) && (
                     <div role="alert" style={{ marginTop: 16, fontSize: 16, fontWeight: 600, color: TM.ink, background: TM.bgAlt,
                       borderLeft: `8px solid ${TM.live}`, padding: "12px 14px" }}>
                       {spectateError}
@@ -10190,7 +10197,7 @@
                       <div>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                           <div>
-                            <div style={{ fontFamily: "var(--tm-font)", fontSize: 20, letterSpacing: 0.5, color: "#0B0D10", lineHeight: 1 }}>{liveRace.publisherName}'s Race</div>
+                            <div style={{ fontFamily: "var(--tm-font)", fontSize: 20, letterSpacing: 0.5, color: "#0B0D10", lineHeight: 1 }}>{liveRace.raceName || `${liveRace.publisherName}'s Race`}</div>
                             <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1, marginTop: 3 }}>
                               CODE: {liveRace.code}&nbsp;&nbsp;·&nbsp;&nbsp;{wFinished} finished&nbsp;&nbsp;·&nbsp;&nbsp;{wOnCourse} on course
                             </div>
@@ -10247,7 +10254,7 @@
                                   const curSegMs = isCur && myAth.startOffset !== null ? (si === 0 ? clock - myAth.startOffset : clock - myAth.splits[si - 1]) : null;
                                   return (
                                     <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCur ? `${col}10` : "#EFEDE8", border: `2px solid ${done ? col + "50" : isCur ? col + "40" : "#C9C5BC"}`, borderRadius: 5, padding: "5px 4px 6px", textAlign: "center" }}>
-                                      <div style={{ fontSize: 14, color: done ? col : isCur ? col : "#EFEDE8", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                      <div style={{ fontSize: 14, color: done ? col : isCur ? col : TM.inkMuted, letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
                                       <div style={{ fontSize: 14, color: done ? "#0B0D10" : isCur ? col : "#EFEDE8", fontFamily: (done || isCur) ? "var(--tm-font)" : "inherit", letterSpacing: (done || isCur) ? 1 : 0 }}>
                                         {done ? formatElapsed(mySplitDurs[si]) : isCur && curSegMs !== null ? formatElapsed(curSegMs) : "—"}
                                       </div>
@@ -10325,7 +10332,7 @@
                                       const curSegMs = isCurrent && prevMs !== null && prevMs !== undefined ? (spectatorClockMs || liveRace.clockMs || 0) - prevMs : null;
                                       return (
                                         <div key={seg} style={{ flex: "1 1 0", background: done ? `${col}15` : isCurrent ? `${col}10` : "#EFEDE8", border: `2px solid ${done ? col + "50" : isCurrent ? col + "40" : "#C9C5BC"}`, borderRadius: 5, padding: "4px 4px 5px", textAlign: "center", minWidth: 0 }}>
-                                          <div style={{ fontSize: 14, color: done ? col : isCurrent ? col : "#EFEDE8", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
+                                          <div style={{ fontSize: 14, color: done ? col : isCurrent ? col : TM.inkMuted, letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>{seg}</div>
                                           <div style={{ fontSize: 14, color: done ? "#0B0D10" : isCurrent ? col : "#EFEDE8", fontFamily: (done || isCurrent) ? "var(--tm-font)" : "inherit", letterSpacing: (done || isCurrent) ? 1 : 0 }}>
                                             {done ? formatElapsed(splitDurs[si]) : isCurrent && curSegMs !== null ? formatElapsed(curSegMs) : "—"}
                                           </div>
@@ -10414,6 +10421,8 @@
                         {(() => {
                           const wps = (liveRace.waypoints || []).filter(w => w.lat !== null && w.lng !== null);
                           const hasGps = rankedWatchAthletes.some(a => a.gps);
+                          // Lap-counted races have no one on a map — skip it.
+                          if (!wps.length && !asList(liveRace.courses).some(c => ["gps", "distance"].includes(c.bikeType || "gps"))) return null;
                           return (
                             <div style={{ marginTop: 16, borderRadius: 8, overflow: "hidden", border: "2px solid #C9C5BC", position: "relative", zIndex: 0, isolation: "isolate", contain: "layout paint" }}>
                               <div style={{ fontSize: 14, letterSpacing: 1.2, color: "#04613F", padding: "8px 12px", background: "#EFEDE8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
