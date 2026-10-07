@@ -3012,6 +3012,8 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
           style={{ width: 86, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "8px 8px", fontSize: 17, textAlign: "right", fontVariantNumeric: "tabular-nums", boxSizing: "border-box" }} />;
       }
       function SwimTimesEntry({ meet, setMeet }) {
+        const [watches, setWatchesRaw] = useState(() => { try { return +localStorage.getItem("swim-watch-count") || 1; } catch (_) { return 1; } });
+        const setWatches = n => { setWatchesRaw(n); try { localStorage.setItem("swim-watch-count", String(n)); } catch (_) {} };
         const [mode, setModeRaw] = useState(() => { try { return localStorage.getItem("swim-times-mode") || "lane"; } catch (_) { return "lane"; } });
         const setMode = m => { setModeRaw(m); try { localStorage.setItem("swim-times-mode", m); } catch (_) {} };
         const [lane, setLane] = useState(1);
@@ -3042,6 +3044,10 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
               <button onClick={() => setMode("lane")} aria-pressed={mode === "lane"} style={{ ...chip(mode === "lane"), flex: 1 }}>Lane by lane</button>
               <button onClick={() => setMode("event")} aria-pressed={mode === "event"} style={{ ...chip(mode === "event"), flex: 1 }}>Event by event</button>
             </div>
+            <div role="radiogroup" aria-label="Watches per lane" style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <b style={{ fontSize: 15 }}>Watches per lane</b>
+              {[1, 2, 3].map(n => <button key={n} role="radio" aria-checked={watches === n} onClick={() => setWatches(n)} style={{ ...chip(watches === n), minHeight: 40, padding: "0 14px" }}>{n}</button>)}
+            </div>
             {mode === "lane" ? (
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
                 {Array.from({ length: nLanes }, (_, i) => i + 1).map(n => {
@@ -3057,7 +3063,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
               </select>
             )}
             <div style={{ ...TM_CAPTION, marginBottom: 8 }}>
-              Type the watch times as digits — 2345 is 23.45, 10345 is 1:03.45. Enter goes to the next box. Two watches are averaged.
+              Type the watch times as digits — 2345 is 23.45, 10345 is 1:03.45. Enter goes to the next box.{watches === 2 ? " Two watches are averaged." : watches === 3 ? " With three watches the middle time counts." : ""}
               {rows.length > 0 && <b> {done} of {rows.length} done.</b>}
             </div>
             {rows.length === 0 && <div style={{ ...rowStyle(), ...TM_CAPTION }}>{mode === "lane" ? `Nobody is seeded in lane ${lane}.` : "Nobody is seeded in this event."} Seed the meet first.</div>}
@@ -3069,8 +3075,11 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                   <span style={TM_CAPTION}>{l.team}</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-                  <SwimTimeBox key={`w1-${l.watch1}`} idx={i * 2} value={l.watch1 ?? (l.watch2 == null ? l.finalMs : null)} label={`Watch 1, ${l.name}`} onCommit={ms => setWatch(ev, h, l, "watch1", ms)} />
-                  <SwimTimeBox key={`w2-${l.watch2}`} idx={i * 2 + 1} value={l.watch2} label={`Watch 2, ${l.name}`} onCommit={ms => setWatch(ev, h, l, "watch2", ms)} />
+                  {[1, 2, 3].slice(0, watches).map(k => (
+                    <SwimTimeBox key={`w${k}-${l["watch" + k]}`} idx={i * watches + k - 1}
+                      value={k === 1 ? (l.watch1 ?? (l.watch2 == null && l.watch3 == null ? l.finalMs : null)) : l["watch" + k]}
+                      label={`Watch ${k}, ${l.name}`} onCommit={ms => setWatch(ev, h, l, "watch" + k, ms)} />
+                  ))}
                   <span style={{ flex: 1, textAlign: "right", fontSize: 18, fontWeight: 900, fontVariantNumeric: "tabular-nums", color: l.dq ? TM.live : TM.ink }}>
                     {l.dq ? "DQ" : l.finalMs != null ? formatSwimTime(l.finalMs) : ""}
                   </span>
@@ -3397,22 +3406,49 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
       }
 
       // ── Ribbon labels: Avery 5160 / 8160 (3 across, 10 down, 1" × 2⅝") ──────
-      function ribbonLabelsHtml(meet, { team, maxPlace, sort }) {
-        let swims = meetSwims(meet).filter(s => !s.dq && s.timeMs != null && (!maxPlace || s.place <= maxPlace) && (!team || s.team === team));
+      // Every label to print: individual swims, plus one label per swimmer on
+      // a relay (the relay's place and time, with the relay letter).
+      function ribbonRows(meet, { team, maxPlace, sort }) {
+        const rows = meetSwims(meet).filter(s => !s.dq && s.timeMs != null).map(s => ({ ...s, ev: meet.events.find(ev => evLabel(ev) === s.eventLabel) || {} }));
+        meet.events.filter(isRelayEv).forEach(ev => {
+          const done = ev.heats.flatMap(h => h.lanes.filter(l => l.name && l.finalMs != null && !l.dq)).sort((x, y) => x.finalMs - y.finalMs);
+          done.forEach((l, i) => (l.legs || []).filter(Boolean).forEach(leg => {
+            const parts = String(leg.name || "").split(/\s+/);
+            rows.push({ name: leg.name, firstName: parts[0], lastName: parts.slice(1).join(" "), team: l.team, age: leg.age, relayLetter: l.lastName || "",
+              distance: ev.distance, stroke: ev.stroke, course: ev.course || meet.pool, timeMs: l.finalMs, place: i + 1, eventLabel: evLabel(ev), ev });
+          }));
+        });
+        let out = rows.filter(r => (!maxPlace || r.place <= maxPlace) && (!team || r.team === team));
         const evOrder = Object.fromEntries(meet.events.map((ev, i) => [evLabel(ev), i]));
-        swims.sort(sort === "event"
-          ? (a, b) => (evOrder[a.eventLabel] - evOrder[b.eventLabel]) || (a.place - b.place)
+        out.sort(sort === "event"
+          ? (a, b) => (evOrder[a.eventLabel] - evOrder[b.eventLabel]) || (a.place - b.place) || String(a.name).localeCompare(b.name)
           : (a, b) => String(a.team).localeCompare(b.team) || String(a.lastName || a.name).localeCompare(b.lastName || b.name) || String(a.name).localeCompare(b.name) || (evOrder[a.eventLabel] - evOrder[b.eventLabel]));
-        const evOf = lbl => meet.events.find(ev => evLabel(ev) === lbl);
-        const one = s => {
-          const ev = evOf(s.eventLabel) || {};
-          return `<div class="lab"><div class="pl">${escHtml(placeSuffix(s.place))} Place</div><div class="nm">${escHtml(s.name)} <span class="tm">${escHtml(s.team)}</span></div>
-            <div class="ev">E${escHtml(s.eventLabel)} · ${escHtml(ev.gender || "")} ${escHtml(ev.ageGroup || "")} ${escHtml(s.distance)} ${escHtml(strokeShort(s.stroke))}</div>
-            <div class="ft"><b>${escHtml(formatSwimTime(s.timeMs))}</b> · ${escHtml(meet.meetName || "")}${meet.date ? " · " + escHtml(meet.date) : ""}</div></div>`;
+        return out;
+      }
+      function ribbonLabelsHtml(meet, opts) {
+        const rows = ribbonRows(meet, opts);
+        const hytek = opts.style === "hytek";
+        const teamFull = code => ((meet.teams || []).find(t => t.code === code) || {}).name || code;
+        const dateUS = d => { const m = String(d || "").match(/^(\d{4})-(\d\d)-(\d\d)$/); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : ""; };
+        const bare = ms => formatSwimTime(ms).replace(/^:/, "");
+        const unit = c => (c === "25m" || c === "50m") ? "Meter" : "Yard";
+        const one = r => {
+          const ev = r.ev || {};
+          if (hytek) {
+            // Hy-Tek's award label: five plain lines.
+            return `<div class="lab hy"><div>Place:&nbsp; ${escHtml(placeSuffix(r.place))}&nbsp;&nbsp;&nbsp; Time:&nbsp; ${escHtml(bare(r.timeMs))}</div>
+              <div>#${escHtml(r.eventLabel)}&nbsp; ${escHtml(ev.gender || "")} ${escHtml(ev.ageGroup || "")} ${escHtml(r.distance)} ${unit(r.course)} ${escHtml(r.stroke)}</div>
+              <div>${escHtml(r.lastName ? `${r.lastName}, ${r.firstName}` : r.name)}&nbsp;&nbsp; ${escHtml(r.age || "")}</div>
+              <div>${escHtml(teamFull(r.team))}${r.relayLetter ? " - " + escHtml(r.relayLetter) : " -"}&nbsp;&nbsp; ${escHtml(dateUS(meet.date))}</div>
+              <div>${escHtml(meet.meetName || "")}</div></div>`;
+          }
+          return `<div class="lab"><div class="pl">${escHtml(placeSuffix(r.place))} Place</div><div class="nm">${escHtml(r.name)} <span class="tm">${escHtml(r.team)}${r.relayLetter ? " " + escHtml(r.relayLetter) : ""}</span></div>
+            <div class="ev">E${escHtml(r.eventLabel)} · ${escHtml(ev.gender || "")} ${escHtml(ev.ageGroup || "")} ${escHtml(r.distance)} ${escHtml(strokeShort(r.stroke))}</div>
+            <div class="ft"><b>${escHtml(formatSwimTime(r.timeMs))}</b> · ${escHtml(meet.meetName || "")}${meet.date ? " · " + escHtml(meet.date) : ""}</div></div>`;
         };
         const pages = [];
-        for (let i = 0; i < swims.length; i += 30) pages.push(`<div class="sheet">${swims.slice(i, i + 30).map(one).join("")}</div>`);
-        return { count: swims.length, html: pages.join("") };
+        for (let i = 0; i < rows.length; i += 30) pages.push(`<div class="sheet">${rows.slice(i, i + 30).map(one).join("")}</div>`);
+        return { count: rows.length, html: pages.join("") };
       }
       function openRibbonLabels(meet, opts) {
         const { count, html } = ribbonLabelsHtml(meet, opts);
@@ -3425,6 +3461,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
 .sheet{width:8.5in;height:11in;padding:0.5in 0.1875in 0;display:grid;grid-template-columns:repeat(3,2.625in);grid-auto-rows:1in;column-gap:0.125in;page-break-after:always;overflow:hidden}
 .lab{padding:0.07in 0.12in;overflow:hidden;line-height:1.18;font-size:8.5pt}.pl{font-weight:900;font-size:10pt}.nm{font-weight:800;font-size:10pt;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tm{font-weight:600;font-size:8pt}
 .ev{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ft{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:7.5pt}
+.lab.hy{font-family:"Times New Roman",Times,serif;font-size:8.5pt;line-height:1.22;padding:0.08in 0.14in}.lab.hy div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media screen{body{background:#888}.sheet{background:#fff;margin:12px auto;box-shadow:0 1px 6px rgba(0,0,0,.4)}.lab{outline:1px dashed #ccc}}
 @media print{.tip{display:none}}</style></head><body>
 <div class="tip"><button onclick="window.print()">Print</button> ${count} labels on Avery 5160 / 8160 sheets (30 per page). In the print box choose <b>Margins: None</b> and <b>Scale: 100%</b> (Actual size).</div>
@@ -3436,8 +3473,10 @@ ${html}</body></html>`);
         const [team, setTeam] = useState("");
         const [maxPlace, setMaxPlace] = useState(8);
         const [sort, setSort] = useState("team");
+        const [style, setStyleRaw] = useState(() => { try { return localStorage.getItem("swim-label-style") || "timeathon"; } catch (_) { return "timeathon"; } });
+        const setStyle = v => { setStyleRaw(v); try { localStorage.setItem("swim-label-style", v); } catch (_) {} };
         const sel = { background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 12px", fontSize: 16, flex: "1 1 140px" };
-        const count = ribbonLabelsHtml(meet, { team, maxPlace, sort }).count;
+        const count = ribbonRows(meet, { team, maxPlace, sort }).length;
         return (
           <div style={{ ...rowStyle(TM.warn), margin: "0 0 12px", display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ fontWeight: 900, fontSize: 16 }}>🎀 Ribbon labels</div>
@@ -3447,15 +3486,19 @@ ${html}</body></html>`);
                 {teams.map(t => <option key={t} value={t}>{t} only</option>)}
               </select>
               <select value={maxPlace} onChange={e => setMaxPlace(+e.target.value)} aria-label="Places" style={sel}>
-                {[3, 6, 8, 10].map(n => <option key={n} value={n}>1st–{n}th place</option>)}
+                {[3, 6, 8, 10].map(n => <option key={n} value={n}>1st–{placeSuffix(n)} place</option>)}
                 <option value={0}>Every swimmer</option>
               </select>
               <select value={sort} onChange={e => setSort(e.target.value)} aria-label="Order" style={sel}>
                 <option value="team">By team, then name</option>
                 <option value="event">By event</option>
               </select>
+              <select value={style} onChange={e => setStyle(e.target.value)} aria-label="Label style" style={sel}>
+                <option value="timeathon">Timeathon style</option>
+                <option value="hytek">Hy-Tek style</option>
+              </select>
             </div>
-            <button onClick={() => openRibbonLabels(meet, { team, maxPlace, sort })} disabled={!count} style={{ ...btnStyle(TM.ink), opacity: count ? 1 : 0.5 }}>
+            <button onClick={() => openRibbonLabels(meet, { team, maxPlace, sort, style })} disabled={!count} style={{ ...btnStyle(TM.ink), opacity: count ? 1 : 0.5 }}>
               Print {count} label{count === 1 ? "" : "s"}{team ? ` for ${team}` : ""}
             </button>
             <div style={TM_CAPTION}>Pick one team to make a sheet just for that coach.</div>
@@ -4979,7 +5022,7 @@ ${html}</body></html>`);
             if (triggered && !swimLaneFinished && swimLaneSession.status === "racing") {
               e.preventDefault();
               const finalMs = Math.max(0, Math.round(eventEpoch(e) + SERVER_CLOCK.offset - swimLaneSession.startedAt));
-              rtdb.ref(`swimLive/${code}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
+              rtdb.ref(`swimLive/${code}/results/${swimLaneNum}`).update({ finalMs }).catch(console.error);
               setSwimLaneFinished(true);
             }
           };
@@ -4999,6 +5042,10 @@ ${html}</body></html>`);
             if (!snap.exists()) return;
             const results = snap.val();
             Object.entries(results).forEach(([lane, data]) => {
+              if (data && data.dqFromLane != null) {
+                setSwimMeet(m => ({ ...m, events: m.events.map(ev => ev.eventNum !== swimActiveEvent ? ev : { ...ev,
+                  heats: ev.heats.map(h => h.heatNum !== swimActiveHeat ? h : { ...h, lanes: h.lanes.map(s => s.lane !== parseInt(lane) ? s : { ...s, dq: !!data.dqFromLane }) }) }) }));
+              }
               if (data && data.finalMs != null) {
                 setSwimMeet(m => ({
                   ...m,
@@ -9765,7 +9812,7 @@ ${html}</body></html>`);
 
         const [todayRaces, setTodayRaces] = useState(null);   // null while loading
         const [todayBusy, setTodayBusy] = useState(null);
-        const showToday = view === "spectate" || (view === "join" && !joinRace);
+        const showToday = view === "spectate" || (view === "join" && !joinRace) || (view === "swimlane" && !swimLaneSession);
         useEffect(() => {
           if (!showToday) return;
           let live = true;
@@ -16304,13 +16351,28 @@ ${html}</body></html>`);
                 if (status !== "racing" || swimLaneFinished || !swimLaneSession.startedAt) return;
                 const finalMs = Math.max(0, Math.round(eventEpoch(e) + SERVER_CLOCK.offset - swimLaneSession.startedAt));
                 if (navigator.vibrate) { try { navigator.vibrate(60); } catch (_) {} }
-                rtdb.ref(`swimLive/${swimLaneCode}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
+                rtdb.ref(`swimLive/${swimLaneCode}/results/${swimLaneNum}`).update({ finalMs }).catch(console.error);
                 setSwimLaneFinished(true);
               }
 
               return (
                 <div style={{ maxWidth:640, margin:"0 auto", padding:"0 16px 40px" }}>
                   <div style={{ padding:"20px 0 10px", fontSize:20, fontWeight:700, color:"#0B0D10" }}>🏊 Lane Timer</div>
+
+                  {/* Swim meets live right now: tap one instead of typing its code */}
+                  {!connected && (todayRaces || []).some(r => r.kind === "swim" && r.status === "live") && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ ...TM_LABEL, marginBottom: 6 }}>Swim meets happening now</div>
+                      {(todayRaces || []).filter(r => r.kind === "swim" && r.status === "live").map(r => (
+                        <button key={r.code} onClick={() => setSwimLaneCode(r.code)} aria-pressed={swimLaneCode === r.code}
+                          style={{ ...rowStyle(swimLaneCode === r.code ? TM.swim : undefined), display: "flex", width: "100%", alignItems: "center", gap: 10, marginBottom: 6, cursor: "pointer", textAlign: "left", color: TM.ink, minHeight: 56 }}>
+                          <span style={{ flex: 1 }}><span style={{ display: "block", fontSize: 16, fontWeight: 800 }}>{r.name || "Swim meet"}</span>
+                            <span style={TM_CAPTION}>Code {r.code}{r.hostName ? ` · ${r.hostName}` : ""}</span></span>
+                          {swimLaneCode === r.code && <span aria-hidden="true" style={{ fontSize: 20 }}>✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Join form */}
                   {!connected && (
@@ -16453,6 +16515,17 @@ ${html}</body></html>`);
                       <div style={{ ...TM_CAPTION, textAlign: "center", marginTop: -8, marginBottom: 14 }}>
                         {swimLaneClockErr ? `Clock matched to the host within ±${swimLaneClockErr} ms` : "Matching clock to the host…"}
                       </div>
+                      {(() => {
+                        const dq = !!(swimLaneSession.results && swimLaneSession.results[swimLaneNum] && swimLaneSession.results[swimLaneNum].dqFromLane);
+                        const can = status === "racing" || swimLaneFinished || dq;
+                        return (
+                          <button disabled={!can} onClick={() => rtdb.ref(`swimLive/${swimLaneCode}/results/${swimLaneNum}/dqFromLane`).set(!dq).catch(console.error)}
+                            aria-pressed={dq}
+                            style={{ ...btnStyle(TM.live, !dq), width: "100%", minHeight: 52, fontSize: 18, marginBottom: 16, opacity: can ? 1 : 0.4 }}>
+                            {dq ? "DQ sent to host — tap to undo" : "DQ this swimmer"}
+                          </button>
+                        );
+                      })()}
 
                       {/* Clicker configuration */}
                       <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"12px 14px" }}>
