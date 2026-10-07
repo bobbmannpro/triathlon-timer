@@ -2081,7 +2081,7 @@
             distance: parseInt(c[6], 10) || 25, stroke, relay, course, heats: [], entries: [] });
         }
         if (!events.length) throw new Error("No events found in that file. Pick the Meet Events file (.hyv, or the .zip it came in).");
-        return { meetName: (h[0] || "").trim(), date: usDate(h[1]), facility: (h[5] || "").trim(), course, events };
+        return { meetName: (h[0] || "").trim(), date: usDate(h[1]), ageUpDate: usDate(h[3]), facility: (h[5] || "").trim(), course, events };
       }
       // A Hy-Tek-style events file from this meet, so another host (or Meet
       // Manager) can start from the same events. Events only — no swimmers.
@@ -2147,7 +2147,7 @@
           for (let i = 0; i < 5; i++, k++) {
             const gi = nth[g]++;
             const fn = first[g][gi], ln = last[(gi * 3) % 10];
-            const team = i % 2 === 0 ? "Sharks" : "Dolphins";
+            const team = i % 2 === 0 ? "SHRK" : "DOLP";
             const age = ages[0] + Math.floor(rnd() * (ages[1] - ages[0] + 1));
             const evs = events.filter(ev => ev.gender === g && ev.ageGroup === ag).map(ev => {
               const [lo, hi] = seedRange[ag][ev.stroke];
@@ -2165,7 +2165,9 @@
           });
           ev.heats = autoSeedEvent(ev, lanes);
         });
-        return { meetName: "Sample Swim Meet", pool: "25y", lanes, events, meetEntries: entries };
+        const today = new Date().toLocaleDateString("en-CA");
+        return { meetName: "Sample Swim Meet", pool: "25y", lanes, events, meetEntries: entries, relays: [], meetUid: "sample",
+          teams: [{ code: "SHRK", name: "Sharks" }, { code: "DOLP", name: "Dolphins" }], date: today, ageUpDate: today };
       }
 
       // Meet Manager hands out events as a .zip: open it in the browser and
@@ -2314,20 +2316,35 @@
           window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
         } catch (_) {}
       }
-      function playStartTone() {
+      // Start sounds. Electronic start systems play one steady, clean tone (no
+      // buzz) that starts and stops sharply. Each sound here is built from sine
+      // waves, kept just under full scale so it's as loud as the speaker allows
+      // without the crackle of clipping, with a 5 ms fade in/out so it doesn't click.
+      const START_SOUNDS = {
+        classic: { label: "Electronic start", parts: [[1000, 0.62], [2000, 0.16], [3000, 0.07]], secs: 0.75 },
+        horn:    { label: "Deep horn",        parts: [[440, 0.5], [880, 0.24], [1320, 0.12], [1760, 0.06]], secs: 0.9 },
+        bright:  { label: "Bright beep",      parts: [[1400, 0.7], [2800, 0.12]], secs: 0.6 },
+      };
+      function startSoundChoice() {
+        try { const k = localStorage.getItem("swim-start-sound"); return START_SOUNDS[k] ? k : "classic"; } catch (_) { return "classic"; }
+      }
+      function playStartTone(kind) {
         primeStartAudio();
         try {
-          const ctx = startAudio, t = ctx.currentTime;
-          const gain = ctx.createGain();
-          gain.connect(ctx.destination);
-          gain.gain.setValueAtTime(0.0001, t);
-          gain.gain.exponentialRampToValueAtTime(1, t + 0.01);
-          gain.gain.setValueAtTime(1, t + 0.7);
-          gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
-          [1050, 1575].forEach(f => {   // two tones together: loud and clear over a pool deck
-            const o = ctx.createOscillator();
-            o.type = "square"; o.frequency.value = f;
-            o.connect(gain); o.start(t); o.stop(t + 0.8);
+          const snd = START_SOUNDS[kind || startSoundChoice()] || START_SOUNDS.classic;
+          const ctx = startAudio, t = ctx.currentTime + 0.005;
+          const out = ctx.createGain();
+          const comp = ctx.createDynamicsCompressor();   // catches any peak before it clips
+          comp.threshold.value = -3; comp.knee.value = 0; comp.ratio.value = 20; comp.attack.value = 0.001; comp.release.value = 0.05;
+          out.connect(comp); comp.connect(ctx.destination);
+          out.gain.setValueAtTime(0, t);
+          out.gain.linearRampToValueAtTime(1, t + 0.005);
+          out.gain.setValueAtTime(1, t + snd.secs - 0.005);
+          out.gain.linearRampToValueAtTime(0, t + snd.secs);
+          snd.parts.forEach(([f, amp]) => {
+            const o = ctx.createOscillator(), g = ctx.createGain();
+            o.type = "sine"; o.frequency.value = f; g.gain.value = amp;
+            o.connect(g); g.connect(out); o.start(t); o.stop(t + snd.secs + 0.02);
           });
         } catch (_) {}
       }
@@ -2393,6 +2410,7 @@
             age: sw.age || 0,
             seedTime: sw.seedMs ? formatSwimTime(sw.seedMs) : "NT",
             seedMs: sw.seedMs || null,
+            entryId: sw.id || null, legs: sw.legs || null,
             finalMs: null, dq: false, scratch: false
           })).sort((a, b) => a.lane - b.lane);
           heats.push({ heatNum: hi + 1, lanes });
@@ -2434,6 +2452,490 @@
       }
 
       // ── App ──────────────────────────────────────────────────────────────────
+      // ── Swim meet entries: teams, swimmers, relays, files, printouts ──────────
+      // A meet carries:
+      //   teams     [{ code: "COOP", name: "Cooper Cyclones" }]  (code = short name)
+      //   ageUpDate "YYYY-MM-DD" — swimmers' ages count as of this day
+      //   meetEntries [{ id, athleteId, name, team (code), gender, age, dob, events: [{ eventNum, seedMs, seedTime }] }]
+      //   relays    [{ id, eventNum, team, letter, legs: [{ id, name, age }], seedMs, seedTime }]
+      //   meetUid   random id, so entry files from coaches match the right meet
+      // Each event's `entries` are rebuilt from meetEntries + relays whenever
+      // they change, so 🌱 Seed always seeds what's entered.
+
+      function swimAgeOn(sw, dateStr) {
+        if (sw && sw.dob && dateStr) {
+          const b = new Date(sw.dob + "T12:00:00"), d = new Date(dateStr + "T12:00:00");
+          if (!isNaN(b) && !isNaN(d)) {
+            let a = d.getFullYear() - b.getFullYear();
+            if (d.getMonth() < b.getMonth() || (d.getMonth() === b.getMonth() && d.getDate() < b.getDate())) a--;
+            return a;
+          }
+        }
+        return sw && sw.age ? +sw.age : null;
+      }
+      function evAgeRange(ev) {
+        if (ev.minAge != null || ev.maxAge != null) return [ev.minAge || 0, ev.maxAge && ev.maxAge < 99 ? ev.maxAge : 0];
+        const [lo, hi] = ageRangeOf(ev.ageGroup);
+        return [lo || 0, hi >= 99 ? 0 : hi];
+      }
+      // Can this swimmer swim this event? Gender must match (mixed takes anyone);
+      // age must be in range — on a relay with age-up on, younger swimmers count too.
+      function swimQualifies(sw, ev, ageDate, ageUp) {
+        const g = (ev.gender || "").toLowerCase();
+        if (!g.startsWith("mix") && (sw.gender || "").toLowerCase() !== g) return false;
+        const age = swimAgeOn(sw, ageDate);
+        if (age == null) return true;   // no age on file: let the coach decide
+        const [lo, hi] = evAgeRange(ev);
+        if (hi && age > hi) return false;
+        if (!(ageUp && (ev.relay || /relay/i.test(ev.stroke || ""))) && lo && age < lo) return false;
+        return true;
+      }
+      function swimTeamName(meet, code) {
+        const t = (meet.teams || []).find(t => t.code === code);
+        return t ? t.name : code || "";
+      }
+      function sameTeam(a, code) {
+        const x = String(a || "").trim().toLowerCase(), y = String(code || "").trim().toLowerCase();
+        return !!x && x === y;
+      }
+      function newId(p) { return p + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+      function isRelayEv(ev) { return !!(ev.relay || /relay/i.test(ev.stroke || "")); }
+
+      // What 🌱 Seed puts in an event: entered swimmers, or relay teams.
+      function swimEntriesForEvent(meet, ev) {
+        if (isRelayEv(ev)) {
+          return (meet.relays || []).filter(r => r.eventNum === ev.eventNum).map(r => ({
+            id: r.id, name: `${r.team} ${r.letter}`, firstName: r.team, lastName: r.letter, team: r.team, age: 0,
+            legs: r.legs || [], seedMs: r.seedMs || null, seedTime: r.seedMs ? formatSwimTime(r.seedMs) : "NT" }));
+        }
+        return (meet.meetEntries || []).filter(s => (s.events || []).some(e => e.eventNum === ev.eventNum)).map(s => {
+          const e = s.events.find(x => x.eventNum === ev.eventNum);
+          return { id: s.id, name: s.name, firstName: s.firstName || "", lastName: s.lastName || "", team: s.team || "",
+            age: swimAgeOn(s, meet.ageUpDate || meet.date) || s.age || 0, seedMs: e.seedMs || null, seedTime: e.seedMs ? formatSwimTime(e.seedMs) : "NT" };
+        });
+      }
+      function syncEventEntries(meet) {
+        return { ...meet, events: meet.events.map(ev => ({ ...ev, entries: swimEntriesForEvent(meet, ev) })) };
+      }
+      function seedWholeMeet(meet) {
+        const m = syncEventEntries(meet);
+        return { ...m, events: m.events.map(ev => ({ ...ev, heats: ev.entries.length ? autoSeedEvent(ev, m.lanes || 8) : ev.heats })) };
+      }
+
+      // ── Files between the host and coaches ──
+      // One JSON file type; "kind" says what it is:
+      //   "meet"    host → coaches: events, teams, ages-as-of date (no swimmers)
+      //   "entries" coach → host: one team's swimmers, events and relays
+      //   "program" host → coaches: the whole seeded meet (heats and lanes)
+      function meetFileText(meet, kind, team) {
+        const base = { app: "Timeathon", kind, version: 1, savedAt: new Date().toISOString(),
+          meet: { meetUid: meet.meetUid, meetName: meet.meetName || "Swim Meet", date: meet.date || null, facility: meet.facility || null,
+            pool: meet.pool || "25y", lanes: meet.lanes || 8, ageUpDate: meet.ageUpDate || meet.date || null, teams: meet.teams || [],
+            events: meet.events.map(ev => kind === "program" ? ev : { ...ev, entries: [], heats: [{ heatNum: 1, lanes: [] }] }) } };
+        if (kind === "entries") {
+          base.team = (meet.teams || []).find(t => t.code === team) || { code: team, name: team };
+          base.meetEntries = (meet.meetEntries || []).filter(s => s.team === team);
+          base.relays = (meet.relays || []).filter(r => r.team === team);
+        }
+        if (kind === "program") { base.meetEntries = meet.meetEntries || []; base.relays = meet.relays || []; }
+        return JSON.stringify(base, null, 1);
+      }
+      async function shareOrDownload(filename, text) {
+        const file = new File([text], filename, { type: "application/json" });
+        try {
+          if (navigator.canShare && navigator.canShare({ files: [file] }) && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)) {
+            await navigator.share({ files: [file], title: filename });
+            return "shared";
+          }
+        } catch (e) { if (e && e.name === "AbortError") return "cancelled"; }
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(file); a.download = filename;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+        return "downloaded";
+      }
+      function safeFileName(s) { return String(s || "Swim Meet").replace(/[\\/:*?"<>|]/g, "").trim() || "Swim Meet"; }
+
+      // ── Printouts: heat sheet, psych sheet, lane timer sheets, team list ──
+      function escHtml(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+      function openPrintout(title, subtitle, body) {
+        const win = window.open("", "_blank");
+        if (!win) { alert("Allow pop-ups for this site to open the printout."); return; }
+        win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(title)}</title>
+<style>*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#0B0D10;margin:0;padding:16px;font-size:14px}
+h1{font-size:22px;margin:0}.sub{color:#3D434B;margin:4px 0 14px}.bar{display:flex;gap:8px;margin-bottom:14px}.bar button{font:700 15px Arial;padding:10px 16px;border:2px solid #0B0D10;background:#0B0D10;color:#fff;border-radius:6px}
+.ev{margin:0 0 14px;break-inside:avoid}.evh{font-weight:800;font-size:15px;border-bottom:3px solid #0B0D10;padding:4px 0;margin-bottom:4px}.ht{font-weight:700;color:#0B3FCC;margin:6px 0 2px}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;border-bottom:1px solid #C9C5BC;vertical-align:top}th{font-size:12px;text-transform:uppercase;color:#3D434B}
+.n{width:40px}.t{white-space:nowrap}.legs{color:#3D434B;font-size:12px}.page{break-after:page;margin-bottom:24px}.w{width:70px;border-bottom:1px solid #0B0D10}
+.sw{padding:8px 0;border-bottom:2px solid #C9C5BC;break-inside:avoid}.swn{font-weight:800;font-size:16px}.swe{margin:2px 0 0 0;font-size:15px}
+@media(min-width:800px){.cols{columns:2;column-gap:28px}}@media print{.bar{display:none}body{padding:0}}</style></head><body>
+<div class="bar"><button onclick="window.print()">Print</button><button onclick="window.close()" style="background:#fff;color:#0B0D10">Close</button></div>
+<h1>${escHtml(title)}</h1><div class="sub">${escHtml(subtitle)}</div>${body}</body></html>`);
+        win.document.close();
+      }
+      function evTitle(ev) { return `Event ${evLabel(ev)} — ${ev.gender} ${ev.ageGroup} ${ev.distance} ${ev.stroke}`; }
+      function legsLine(sw) { return sw.legs && sw.legs.length ? `<div class="legs">${sw.legs.map(l => escHtml(l.name) + (l.age ? ` (${l.age})` : "")).join(", ")}</div>` : ""; }
+      function meetSubtitle(meet) { return [meet.facility, meet.date, meet.pool].filter(Boolean).join(" · "); }
+      function seededEvents(meet) { return meet.events.filter(ev => ev.heats.some(h => h.lanes.some(l => l.name))); }
+      function heatSheetHtml(meet) {
+        return `<div class="cols">${seededEvents(meet).map(ev => `<div class="ev"><div class="evh">${escHtml(evTitle(ev))}</div>${ev.heats.map(h => `
+          <div class="ht">Heat ${h.heatNum} of ${ev.heats.length}</div><table>${h.lanes.filter(l => l.name).map(l => `<tr><td class="n">${l.lane}</td><td>${escHtml(l.name)}${legsLine(l)}</td><td class="t">${l.age || ""}</td><td class="t">${escHtml(l.team)}</td><td class="t">${escHtml(l.seedTime || "NT")}</td></tr>`).join("")}</table>`).join("")}</div>`).join("")}</div>`;
+      }
+      function psychSheetHtml(meet) {
+        return `<div class="cols">${meet.events.map(ev => {
+          const list = swimEntriesForEvent(meet, ev).sort((a, b) => (a.seedMs || Infinity) - (b.seedMs || Infinity));
+          if (!list.length) return "";
+          return `<div class="ev"><div class="evh">${escHtml(evTitle(ev))}</div><table>${list.map((e, i) => `<tr><td class="n">${i + 1}</td><td>${escHtml(e.name)}${legsLine(e)}</td><td class="t">${e.age || ""}</td><td class="t">${escHtml(e.team)}</td><td class="t">${escHtml(e.seedTime || "NT")}</td></tr>`).join("")}</table></div>`;
+        }).join("")}</div>`;
+      }
+      function laneSheetsHtml(meet) {
+        const lanes = Array.from({ length: meet.lanes || 8 }, (_, i) => i + 1);
+        return lanes.map(n => {
+          const rows = [];
+          seededEvents(meet).forEach(ev => ev.heats.forEach(h => {
+            const l = h.lanes.find(x => x.lane === n && x.name);
+            rows.push(`<tr><td class="t">${escHtml(evLabel(ev))}</td><td class="t">${h.heatNum}</td><td>${l ? escHtml(l.name) + legsLine(l) : "<span style='color:#3D434B'>— empty —</span>"}</td><td class="t">${l ? escHtml(l.team) : ""}</td><td class="w"></td><td class="w"></td></tr>`);
+          }));
+          return `<div class="page"><h1 style="font-size:28px">Lane ${n}</h1><div class="sub">${escHtml(meet.meetName || "")} — lane timer sheet</div>
+            <table><tr><th>Event</th><th>Heat</th><th>Swimmer</th><th>Team</th><th>Watch 1</th><th>Watch 2</th></tr>${rows.join("")}</table></div>`;
+        }).join("");
+      }
+      // Every swimmer on one team with event, heat and lane — what coaches write on arms.
+      function teamAssignments(meet, team) {
+        const byName = {};
+        seededEvents(meet).forEach(ev => ev.heats.forEach(h => h.lanes.forEach(l => {
+          if (!l.name) return;
+          const names = l.legs && l.legs.length ? l.legs.map(x => x.name) : [l.name];
+          if (!sameTeam(l.team, team)) return;
+          names.forEach(nm => { (byName[nm] = byName[nm] || []).push({ ev, heat: h.heatNum, lane: l.lane, relay: !!(l.legs && l.legs.length) }); });
+        })));
+        return Object.keys(byName).sort((a, b) => a.localeCompare(b)).map(name => ({ name, rows: byName[name] }));
+      }
+      function teamListHtml(meet, team) {
+        const list = teamAssignments(meet, team);
+        if (!list.length) return `<p>No ${escHtml(team)} swimmers are in heats yet. Seed the meet first.</p>`;
+        return `<div class="cols">${list.map(s => `<div class="sw"><div class="swn">${escHtml(s.name)}</div>${s.rows.map(r =>
+          `<div class="swe"><b>E${escHtml(evLabel(r.ev))} · H${r.heat} · L${r.lane}</b> — ${escHtml(r.ev.distance + " " + r.ev.stroke)}${r.relay ? " (relay)" : ""}</div>`).join("")}</div>`).join("")}</div>`;
+      }
+
+      // A seed-time box: keeps what's typed, saves when you leave the box.
+      function SwimSeedBox({ initial, label, onCommit }) {
+        const [txt, setTxt] = useState(initial);
+        return <input value={txt} placeholder="NT" inputMode="decimal" aria-label={label}
+          onChange={e => setTxt(e.target.value)} onBlur={() => { if (txt !== initial) onCommit(txt); }}
+          style={{ background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, color: TM.ink, fontSize: 16, width: 96, padding: "8px 10px", textAlign: "right", boxSizing: "border-box" }} />;
+      }
+
+      // ── Who's swimming: teams, swimmers, events and relays (phone-first) ──
+      function SwimEntriesPanel({ meet, setMeet, athletes, saveAthletes }) {
+        const teams = meet.teams || [];
+        const [team, setTeamRaw] = useState(() => { try { return localStorage.getItem("swim-my-team") || ""; } catch (_) { return ""; } });
+        const setTeam = c => { setTeamRaw(c); try { localStorage.setItem("swim-my-team", c); } catch (_) {} };
+        const cur = teams.find(t => t.code === team) ? team : (teams[0] ? teams[0].code : "");
+        const [tab, setTab] = useState("swimmers");
+        const [newTeam, setNewTeam] = useState(null);       // { code, name } while adding
+        const [openSw, setOpenSw] = useState(null);         // swimmer key expanded
+        const [newSw, setNewSw] = useState(null);           // add-swimmer form
+        const [evPick, setEvPick] = useState(null);
+        const [relayPick, setRelayPick] = useState(null);
+        const [ageUp, setAgeUp] = useState(false);
+        const ageDate = meet.ageUpDate || meet.date || new Date().toLocaleDateString("en-CA");
+        const input = { width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 12px", color: TM.ink, fontSize: 16, boxSizing: "border-box" };
+        const chip = on => ({ ...btnStyle(TM.ink, !on), minHeight: 40, padding: "0 14px", fontSize: 15 });
+
+        const update = fn => setMeet(m => syncEventEntries(fn(m)));
+
+        // The team's swimmers: anyone entered in this meet plus the team's saved swimmers.
+        const entries = (meet.meetEntries || []).filter(s => s.team === cur);
+        const lib = (athletes || []).filter(a => sameTeam(a.team, cur) || sameTeam(a.team, swimTeamName(meet, cur)));
+        const roster = [...entries.map(e => ({ key: e.id, entry: e, sw: e })),
+          ...lib.filter(a => !entries.some(e => e.athleteId === a.id || e.name.toLowerCase() === (a.name || "").toLowerCase()))
+                .map(a => ({ key: "a_" + a.id, entry: null, sw: { ...a, team: cur, athleteId: a.id } }))]
+          .sort((x, y) => (x.sw.name || "").localeCompare(y.sw.name || ""));
+
+        function bestSeed(sw, ev) {
+          const a = (athletes || []).find(x => x.id === sw.athleteId);
+          const pb = a && (a.personalBests || {})[eventKey(ev)];
+          return pb ? pb.ms : null;
+        }
+        function setEntry(sw, ev, on, seedText) {
+          update(m => {
+            const list = [...(m.meetEntries || [])];
+            let i = list.findIndex(e => (sw.id && e.id === sw.id) || (sw.athleteId && e.athleteId === sw.athleteId && e.team === cur));
+            if (i < 0) {
+              const parts = (sw.name || "").trim().split(/\s+/);
+              list.push({ id: newId("me"), athleteId: sw.athleteId || null, name: sw.name, firstName: parts[0] || "", lastName: parts.slice(1).join(" "),
+                team: cur, gender: sw.gender, age: sw.age || null, dob: sw.dob || null, events: [] });
+              i = list.length - 1;
+            }
+            const e = { ...list[i], events: [...(list[i].events || [])] };
+            const j = e.events.findIndex(x => x.eventNum === ev.eventNum);
+            if (!on) { if (j >= 0) e.events.splice(j, 1); }
+            else {
+              const ms = seedText !== undefined ? (parseSeedTime(seedText) || null) : (j >= 0 ? e.events[j].seedMs : bestSeed(sw, ev));
+              const row = { eventNum: ev.eventNum, seedMs: ms, seedTime: ms ? formatSwimTime(ms) : "NT" };
+              if (j >= 0) e.events[j] = row; else e.events.push(row);
+            }
+            list[i] = e;
+            return { ...m, meetEntries: list };
+          });
+        }
+        function entryOf(sw) { return (meet.meetEntries || []).find(e => (sw.id && e.id === sw.id) || (sw.athleteId && e.athleteId === sw.athleteId && e.team === cur)); }
+        function enteredIn(sw, ev) { const e = entryOf(sw); return e && (e.events || []).find(x => x.eventNum === ev.eventNum); }
+
+        function addTeam() {
+          const code = (newTeam.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+          const name = (newTeam.name || "").trim() || code;
+          if (!code) return;
+          setMeet(m => ({ ...m, teams: [...(m.teams || []).filter(t => t.code !== code), { code, name }] }));
+          setTeam(code); setNewTeam(null);
+        }
+        function addSwimmer() {
+          const f = newSw; if (!f || !f.name.trim() || !cur) return;
+          const a = { id: newId("swa"), name: f.name.trim(), firstName: f.name.trim().split(/\s+/)[0], lastName: f.name.trim().split(/\s+/).slice(1).join(" "),
+            team: cur, gender: f.gender, age: f.age ? +f.age : null, dob: f.dob || null, ageGroup: "", personalBests: {}, timeHistory: [] };
+          saveAthletes([...(athletes || []), a]);
+          setNewSw(null); setOpenSw("a_" + a.id);
+        }
+
+        const indivEvents = meet.events.filter(ev => !isRelayEv(ev));
+        const relayEvents = meet.events.filter(isRelayEv);
+
+        const seedBox = (sw, ev, ent) => (
+          <SwimSeedBox key={`${ev.eventNum}-${ent.seedMs || "nt"}`} initial={ent.seedMs ? formatSwimTime(ent.seedMs) : ""}
+            label={`Seed time, event ${evLabel(ev)}`} onCommit={txt => setEntry(sw, ev, true, txt)} />
+        );
+        const eventRow = (sw, ev) => {
+          const ent = enteredIn(sw, ev);
+          return (
+            <label key={ev.eventNum} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${TM.line}`, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!ent} onChange={e => setEntry(sw, ev, e.target.checked)} style={{ width: 22, height: 22, flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 15 }}><b>#{evLabel(ev)}</b> {ev.ageGroup} {ev.distance} {ev.stroke}</span>
+              {ent && seedBox(sw, ev, ent)}
+            </label>
+          );
+        };
+
+        return (
+          <div>
+            {/* Teams */}
+            <div style={{ ...rowStyle(), marginBottom: 12 }}>
+              <div style={TM_LABEL}>Teams in this meet</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                {teams.map(t => (
+                  <button key={t.code} onClick={() => setTeam(t.code)} aria-pressed={cur === t.code} style={chip(cur === t.code)} title={t.name}>{t.code}</button>
+                ))}
+                <button onClick={() => setNewTeam({ code: "", name: "" })} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>+ Team</button>
+              </div>
+              {cur && <div style={{ ...TM_CAPTION, marginTop: 6 }}>Working on <b>{swimTeamName(meet, cur)}</b> ({cur})</div>}
+              {newTeam && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                  <input value={newTeam.code} onChange={e => setNewTeam(t => ({ ...t, code: e.target.value.toUpperCase() }))} placeholder="Short: COOP" maxLength={8} aria-label="Team short name" style={{ ...input, flex: "0 1 110px" }} />
+                  <input value={newTeam.name} onChange={e => setNewTeam(t => ({ ...t, name: e.target.value }))} placeholder="Full: Cooper Cyclones" aria-label="Team full name" style={{ ...input, flex: "1 1 180px" }} />
+                  <button onClick={addTeam} style={{ ...btnStyle(TM.swim), flex: "1 1 100%", fontSize: 15 }}>Add team</button>
+                </div>
+              )}
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 15, fontWeight: 700 }}>Ages as of</span>
+                <input type="date" value={ageDate} onChange={e => setMeet(m => syncEventEntries({ ...m, ageUpDate: e.target.value }))} style={{ ...input, width: "auto" }} />
+              </label>
+            </div>
+
+            {!cur ? (
+              <div style={{ ...rowStyle(TM.warn), fontSize: 15, fontWeight: 700 }}>Add your team first (+ Team), e.g. COOP — Cooper Cyclones.</div>
+            ) : (<>
+              <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {[["swimmers", "By swimmer"], ["events", "By event"], ["relays", "Relays"]].map(([k, l]) => (
+                  <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} style={{ ...chip(tab === k), flex: 1 }}>{l}</button>
+                ))}
+              </div>
+
+              {tab === "swimmers" && (
+                <div>
+                  {roster.length === 0 && <div style={{ ...rowStyle(), ...TM_CAPTION, marginBottom: 10 }}>No {cur} swimmers yet. Add them below — they're saved for next meet too.</div>}
+                  {roster.map(({ key, sw }) => {
+                    const open = openSw === key;
+                    const age = swimAgeOn(sw, ageDate);
+                    const ent = entryOf(sw);
+                    const n = ent ? (ent.events || []).length : 0;
+                    const quals = indivEvents.filter(ev => swimQualifies(sw, ev, ageDate, false));
+                    return (
+                      <div key={key} style={{ ...rowStyle(open ? TM.swim : undefined), marginBottom: 8 }}>
+                        <button onClick={() => setOpenSw(open ? null : key)} aria-expanded={open} style={{ all: "unset", cursor: "pointer", display: "flex", width: "100%", alignItems: "center", gap: 8 }}>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontSize: 16, fontWeight: 800 }}>{sw.name}</span>
+                            <span style={{ ...TM_CAPTION }}>{sw.gender || "?"}{age != null ? ` · ${age}` : " · age?"} · {n} event{n === 1 ? "" : "s"}</span>
+                          </span>
+                          <span aria-hidden="true">{open ? "▲" : "▼"}</span>
+                        </button>
+                        {open && (
+                          <div style={{ marginTop: 8 }}>
+                            {quals.length === 0
+                              ? <div style={TM_CAPTION}>No events in this meet fit a {age ?? "?"}-year-old {String(sw.gender || "").toLowerCase()}.</div>
+                              : <div style={TM_CAPTION}>Events {sw.name.split(" ")[0]} can swim — tick to enter. Seed fills from best times.</div>}
+                            {quals.map(ev => eventRow(ent || sw, ev))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {newSw ? (
+                    <div style={{ ...rowStyle(TM.swim), display: "flex", flexDirection: "column", gap: 8 }}>
+                      <input value={newSw.name} onChange={e => setNewSw(f => ({ ...f, name: e.target.value }))} placeholder="First and last name" aria-label="Swimmer name" style={input} autoFocus />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {["Girls", "Boys"].map(g => <button key={g} onClick={() => setNewSw(f => ({ ...f, gender: g }))} aria-pressed={newSw.gender === g} style={{ ...chip(newSw.gender === g), flex: 1 }}>{g === "Girls" ? "Girl" : "Boy"}</button>)}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input value={newSw.age} onChange={e => setNewSw(f => ({ ...f, age: e.target.value.replace(/\D/g, "").slice(0, 2) }))} inputMode="numeric" placeholder="Age" aria-label="Age" style={{ ...input, width: 80 }} />
+                        <span style={TM_CAPTION}>or birthday</span>
+                        <input type="date" value={newSw.dob} onChange={e => setNewSw(f => ({ ...f, dob: e.target.value }))} aria-label="Birthday" style={{ ...input, flex: 1 }} />
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={addSwimmer} disabled={!newSw.name.trim()} style={{ ...btnStyle(TM.swim), flex: 1, fontSize: 15, opacity: newSw.name.trim() ? 1 : 0.5 }}>Add swimmer</button>
+                        <button onClick={() => setNewSw(null)} style={{ ...btnStyle(TM.ink, true), fontSize: 15, padding: "0 16px" }}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setNewSw({ name: "", gender: "Girls", age: "", dob: "" })} style={{ ...btnStyle(TM.ink, true), width: "100%", fontSize: 15 }}>+ New {cur} swimmer</button>
+                  )}
+                </div>
+              )}
+
+              {tab === "events" && (
+                <div>
+                  <select value={evPick ?? ""} onChange={e => setEvPick(e.target.value ? +e.target.value : null)} aria-label="Event" style={{ ...input, marginBottom: 10 }}>
+                    <option value="">Pick an event…</option>
+                    {indivEvents.map(ev => <option key={ev.eventNum} value={ev.eventNum}>#{evLabel(ev)} {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</option>)}
+                  </select>
+                  {evPick != null && (() => {
+                    const ev = meet.events.find(x => x.eventNum === evPick);
+                    if (!ev) return null;
+                    const q = roster.filter(r => swimQualifies(r.sw, ev, ageDate, false));
+                    return (
+                      <div style={rowStyle(TM.swim)}>
+                        <div style={{ fontWeight: 800, marginBottom: 4 }}>{q.length} {cur} swimmer{q.length === 1 ? "" : "s"} can swim this</div>
+                        {q.map(({ key, sw, entry }) => {
+                          const s = entry || sw, ent = enteredIn(s, ev);
+                          const age = swimAgeOn(sw, ageDate);
+                          return (
+                            <label key={key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${TM.line}`, cursor: "pointer" }}>
+                              <input type="checkbox" checked={!!ent} onChange={e => setEntry(s, ev, e.target.checked)} style={{ width: 22, height: 22 }} />
+                              <span style={{ flex: 1, fontSize: 15 }}><b>{sw.name}</b> <span style={TM_CAPTION}>{age ?? ""}</span></span>
+                              {ent && seedBox(s, ev, ent)}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {tab === "relays" && (
+                <div>
+                  {relayEvents.length === 0 ? <div style={{ ...rowStyle(), ...TM_CAPTION }}>This meet has no relay events.</div> : (<>
+                    <select value={relayPick ?? ""} onChange={e => setRelayPick(e.target.value ? +e.target.value : null)} aria-label="Relay event" style={{ ...input, marginBottom: 10 }}>
+                      <option value="">Pick a relay…</option>
+                      {relayEvents.map(ev => <option key={ev.eventNum} value={ev.eventNum}>#{evLabel(ev)} {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</option>)}
+                    </select>
+                    <label style={{ display: "flex", alignItems: "center", gap: 10, ...rowStyle(ageUp ? TM.warn : undefined), marginBottom: 10, cursor: "pointer" }}>
+                      <input type="checkbox" checked={ageUp} onChange={e => setAgeUp(e.target.checked)} style={{ width: 22, height: 22 }} />
+                      <span><b>Age up</b><span style={{ display: "block", ...TM_CAPTION }}>Let younger swimmers fill an older relay</span></span>
+                    </label>
+                    {relayPick != null && (() => {
+                      const ev = meet.events.find(x => x.eventNum === relayPick);
+                      if (!ev) return null;
+                      const elig = roster.filter(r => swimQualifies(r.sw, ev, ageDate, ageUp));
+                      const mine = (meet.relays || []).filter(r => r.eventNum === ev.eventNum && r.team === cur);
+                      const setRelay = (id, fn) => update(m => ({ ...m, relays: (m.relays || []).map(r => r.id === id ? fn(r) : r) }));
+                      return (<>
+                        {mine.map(r => {
+                          const used = new Set(mine.flatMap(x => x.legs.map(l => l && l.id)).filter(Boolean));
+                          return (
+                            <div key={r.id} style={{ ...rowStyle(TM.swim), marginBottom: 8 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <b style={{ flex: 1, fontSize: 16 }}>{cur} {r.letter}</b>
+                                <button onClick={() => update(m => ({ ...m, relays: (m.relays || []).filter(x => x.id !== r.id) }))} style={{ ...btnStyle(TM.live, true), minHeight: 36, fontSize: 14, padding: "0 10px" }}>Remove</button>
+                              </div>
+                              {[0, 1, 2, 3].map(i => (
+                                <select key={i} value={(r.legs[i] && r.legs[i].id) || ""} aria-label={`Leg ${i + 1}`}
+                                  onChange={e => { const s = elig.find(x => x.key === e.target.value); setRelay(r.id, x => { const legs = [...x.legs]; legs[i] = s ? { id: s.key, name: s.sw.name, age: swimAgeOn(s.sw, ageDate) } : null; return { ...x, legs }; }); }}
+                                  style={{ ...input, marginTop: 6 }}>
+                                  <option value="">Leg {i + 1} — pick a swimmer</option>
+                                  {elig.filter(s => !used.has(s.key) || (r.legs[i] && r.legs[i].id === s.key)).map(s => <option key={s.key} value={s.key}>{s.sw.name} ({swimAgeOn(s.sw, ageDate) ?? "?"})</option>)}
+                                </select>
+                              ))}
+                              <input defaultValue={r.seedMs ? formatSwimTime(r.seedMs) : ""} placeholder="Relay seed time (NT)" aria-label="Relay seed time"
+                                onBlur={e => { const ms = parseSeedTime(e.target.value) || null; setRelay(r.id, x => ({ ...x, seedMs: ms, seedTime: ms ? formatSwimTime(ms) : "NT" })); }}
+                                style={{ ...input, marginTop: 6 }} />
+                            </div>
+                          );
+                        })}
+                        <button onClick={() => update(m => ({ ...m, relays: [...(m.relays || []), { id: newId("rl"), eventNum: ev.eventNum, team: cur,
+                            letter: String.fromCharCode(65 + mine.length), legs: [null, null, null, null], seedMs: null, seedTime: "NT" }] }))}
+                          style={{ ...btnStyle(TM.ink, true), width: "100%", fontSize: 15 }}>+ {cur} relay {String.fromCharCode(65 + mine.length)}</button>
+                        <div style={{ ...TM_CAPTION, marginTop: 6 }}>{elig.length} {cur} swimmer{elig.length === 1 ? "" : "s"} can swim this relay{ageUp ? " with age-up" : ""}.</div>
+                      </>);
+                    })()}
+                  </>)}
+                </div>
+              )}
+            </>)}
+          </div>
+        );
+      }
+
+      // ── Send / receive files and print (phone-first) ──
+      function SwimShareCard({ meet, setMeet, onImport, onSeed }) {
+        const teams = meet.teams || [];
+        const [team, setTeam] = useState(() => { try { return localStorage.getItem("swim-my-team") || ""; } catch (_) { return ""; } });
+        const cur = teams.find(t => t.code === team) ? team : (teams[0] ? teams[0].code : "");
+        const [msg, setMsg] = useState(null);
+        const fileRef = useRef(null);
+        const seeded = meet.events.some(ev => ev.heats.some(h => h.lanes.some(l => l.name)));
+        const nm = safeFileName(meet.meetName);
+        const ensureUid = () => { if (meet.meetUid) return meet; const m = { ...meet, meetUid: newId("meet") }; setMeet(() => m); return m; };
+        const send = async (kind) => {
+          const m = ensureUid();
+          const label = kind === "meet" ? "events" : kind === "entries" ? `${cur} entries` : "program";
+          const how = await shareOrDownload(`${nm} - ${label}.json`, meetFileText(m, kind, cur));
+          if (how !== "cancelled") setMsg({ ok: true, text: how === "shared" ? `Shared the ${label} file.` : `Saved “${nm} - ${label}.json” — send it by text or email.` });
+        };
+        const btn = (primary) => ({ ...btnStyle(TM.ink, !primary), width: "100%", fontSize: 15, minHeight: 48 });
+        const step = { fontSize: 13, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: TM.inkMuted, margin: "12px 0 6px" };
+        return (
+          <div style={{ ...rowStyle(TM.swim), display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 17, fontWeight: 900 }}>Share &amp; print</div>
+            <div style={step}>Host</div>
+            <button onClick={() => send("meet")} disabled={!meet.events.length} style={btn(false)}>1 · Send events to coaches</button>
+            <div style={TM_CAPTION}>When the coaches' entry files come back, open each one below, then seed.</div>
+            <button onClick={() => { onSeed(); setMsg({ ok: true, text: "Heats and lanes are set from everyone's entries." }); }} disabled={!meet.events.length} style={btn(false)}>3 · 🌱 Seed heats from all entries</button>
+            <button onClick={() => send("program")} disabled={!seeded} style={{ ...btn(false), opacity: seeded ? 1 : 0.5 }}>4 · Send the program to coaches</button>
+            <div style={step}>Coach</div>
+            {teams.length > 1 && (
+              <select value={cur} onChange={e => { setTeam(e.target.value); try { localStorage.setItem("swim-my-team", e.target.value); } catch (_) {} }} aria-label="Your team"
+                style={{ background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 12px", fontSize: 16 }}>
+                {teams.map(t => <option key={t.code} value={t.code}>{t.code} — {t.name}</option>)}
+              </select>
+            )}
+            <button onClick={() => send("entries")} disabled={!cur} style={{ ...btn(false), opacity: cur ? 1 : 0.5 }}>2 · Send {cur || "my team's"} entries to the host</button>
+            <div style={step}>Anyone</div>
+            <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }}
+              onChange={async e => { const f = e.target.files[0]; e.target.value = ""; if (f) setMsg(await onImport(f)); }} />
+            <button onClick={() => fileRef.current && fileRef.current.click()} style={btn(true)}>📂 Open a file from the host or a coach</button>
+            {msg && <div role="status" style={{ ...rowStyle(msg.ok ? TM.run : TM.live), fontSize: 15, fontWeight: 700 }}>{msg.ok ? "✓ " : "✕ "}{msg.text}</div>}
+            <div style={step}>Print (opens a page to print or save as PDF)</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button disabled={!seeded} onClick={() => openPrintout(`${meet.meetName || "Swim Meet"} — Heat sheet`, meetSubtitle(meet), heatSheetHtml(meet))} style={{ ...btn(false), flex: "1 1 45%", opacity: seeded ? 1 : 0.5 }}>Heat sheet</button>
+              <button onClick={() => openPrintout(`${meet.meetName || "Swim Meet"} — Psych sheet`, meetSubtitle(meet), psychSheetHtml(meet))} style={{ ...btn(false), flex: "1 1 45%" }}>Psych sheet</button>
+              <button disabled={!seeded} onClick={() => openPrintout(`${meet.meetName || "Swim Meet"} — Lane timer sheets`, meetSubtitle(meet), laneSheetsHtml(meet))} style={{ ...btn(false), flex: "1 1 45%", opacity: seeded ? 1 : 0.5 }}>Lane timer sheets</button>
+              <button disabled={!seeded || !cur} onClick={() => openPrintout(`${swimTeamName(meet, cur)} — events, heats & lanes`, meet.meetName || "", teamListHtml(meet, cur))} style={{ ...btn(false), flex: "1 1 45%", opacity: seeded && cur ? 1 : 0.5 }}>{cur || "Team"} list</button>
+            </div>
+            {!seeded && <div style={TM_CAPTION}>Heat sheet, lane sheets and team list need the meet seeded first (Events & heats → 🌱 Seed All).</div>}
+          </div>
+        );
+      }
+
       function App() {
         const [view, setView] = useState("myraces");
         const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
@@ -4370,6 +4872,21 @@
                   localStorage.setItem("bike-riders", JSON.stringify(data.bikeRiders));
                 } else {
                   try { const c = localStorage.getItem("bike-riders"); if (c) { const b = JSON.parse(c); if (b.length > 0) { setBikeRiders(b); rtdb.ref("users/" + user.uid + "/bikeRiders").set(b).catch(console.error); } } } catch(_) {}
+                }
+
+                // Swim meets and swimmers: the account's copy wins, so a meet set up
+                // on a phone opens on the laptop; anything only on this device goes up.
+                if (data.swimMeets && asList(data.swimMeets).length > 0) {
+                  const sm = normSavedMeets(data.swimMeets);
+                  setSwimSavedMeets(sm); localStorage.setItem("swim-saved-meets", JSON.stringify(sm));
+                } else {
+                  try { const c = JSON.parse(localStorage.getItem("swim-saved-meets") || "[]"); if (c.length) rtdb.ref("users/" + user.uid + "/swimMeets").set(c).catch(() => {}); } catch (_) {}
+                }
+                if (data.swimAthletes && asList(data.swimAthletes).length > 0) {
+                  const sa = asList(data.swimAthletes);
+                  setSwimAthletes(sa); localStorage.setItem("swim-athletes", JSON.stringify(sa));
+                } else {
+                  try { const c = JSON.parse(localStorage.getItem("swim-athletes") || "[]"); if (c.length) rtdb.ref("users/" + user.uid + "/swimAthletes").set(c).catch(() => {}); } catch (_) {}
                 }
 
                 // Archive: RTDB → localStorage fallback
@@ -9029,7 +9546,8 @@
                 const openTri = (race) => { selectMode("triathlon"); loadRace(race); };
                 const openSwim = (meet) => {
                   selectMode("swim");
-                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode() });
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode(),
+                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null });
                   setSwimLiveCode(null); setSwimHomeSection(null); setSwimSetupStep(0);
                   setView("swim"); setSwimView("setup");
                 };
@@ -13301,6 +13819,7 @@
                     lanes: swimMeet.lanes || 8,
                     meetEntries: swimMeet.meetEntries || [],
                     date: swimMeet.date || null, facility: swimMeet.facility || null,
+                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null,
                     // A code parents already have (the meet went live) never changes;
                     // before that, the one chosen in step 1 is kept.
                     code: (existing?.live && existing.code) || swimMeet.code || existing?.code,
@@ -13319,7 +13838,8 @@
                   const code = existing?.code || swimMeet.code || generateSwimCode();
                   const id = swimMeet._id || `meet_${Date.now()}`;
                   const entry = { id, meetName: name, pool: swimMeet.pool, lanes: swimMeet.lanes || 8, savedAt: new Date().toLocaleDateString(), events: swimMeet.events,
-                    meetEntries: swimMeet.meetEntries || [], date: swimMeet.date || null, facility: swimMeet.facility || null, code };
+                    meetEntries: swimMeet.meetEntries || [], date: swimMeet.date || null, facility: swimMeet.facility || null,
+                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null, code };
                   if (existing) {
                     persistSwimMeets(swimSavedMeets.map(m => m.id === id ? entry : m));
                   } else {
@@ -13339,7 +13859,8 @@
                   setSwimLiveCode(code);
                 }
                 function loadSwimMeet(meet) {
-                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode() });
+                  setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode(),
+                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null });
                   setSwimLiveCode(null);
                   setSwimSetupStep(0);
                   setSwimView("setup");
@@ -13348,26 +13869,25 @@
                 function persistSwimAthletes(athletes) {
                   setSwimAthletes(athletes);
                   localStorage.setItem("swim-athletes", JSON.stringify(athletes));
+                  if (currentUser) rtdb.ref("users/" + currentUser.uid + "/swimAthletes").set(athletes).catch(console.error);
                 }
 
                 function seedOneEvent(eventNum) {
                   const numLanes = swimMeet.lanes || 8;
                   setSwimExpandedEvents(x => ({ ...x, [eventNum]: true }));
-                  setSwimMeet(m => ({
-                    ...m,
-                    events: m.events.map(ev => ev.eventNum === eventNum
-                      ? { ...ev, heats: autoSeedEvent(ev, numLanes) }
-                      : ev)
-                  }));
+                  setSwimMeet(m0 => {
+                    const m = (m0.meetEntries || []).length || (m0.relays || []).length ? syncEventEntries(m0) : m0;
+                    return { ...m, events: m.events.map(ev => ev.eventNum === eventNum ? { ...ev, heats: autoSeedEvent(ev, numLanes) } : ev) };
+                  });
                 }
 
                 function seedAllEvents() {
                   const numLanes = swimMeet.lanes || 8;
                   setSwimExpandedEvents(Object.fromEntries(swimMeet.events.map(ev => [ev.eventNum, true])));
-                  setSwimMeet(m => ({
-                    ...m,
-                    events: m.events.map(ev => ({ ...ev, heats: autoSeedEvent(ev, numLanes) }))
-                  }));
+                  setSwimMeet(m0 => {
+                    const m = (m0.meetEntries || []).length || (m0.relays || []).length ? syncEventEntries(m0) : m0;
+                    return { ...m, events: m.events.map(ev => ({ ...ev, heats: autoSeedEvent(ev, numLanes) })) };
+                  });
                 }
 
                 function addSwimmerEntry(eventNum) {
@@ -13466,6 +13986,7 @@
 
                 async function importMeetFile(file) {
                   setSwimImportMsg(null);
+                  if (/\.json$/i.test(file.name)) { setSwimImportMsg(await importMeetJson(file)); return; }
                   let name = file.name, text;
                   try {
                     if (/\.zip$/i.test(name)) ({ name, text } = await fileFromZip(file));
@@ -13525,9 +14046,10 @@
                   const blankHeat = () => ({ heatNum: 1, lanes: Array.from({ length: lanes }, (_, li) => ({
                     lane: li + 1, lastName: "", firstName: "", name: "", age: 0, team: "", seedTime: "NT", seedMs: null, finalMs: null, dq: false, scratch: false })) });
                   setSwimMeet(m => ({ ...m,
-                    meetName: m.meetName || hv.meetName, date: hv.date || m.date, facility: hv.facility || m.facility, pool: hv.course || m.pool,
+                    meetName: m.meetName || hv.meetName, date: hv.date || m.date, ageUpDate: hv.ageUpDate || m.ageUpDate || hv.date || m.date,
+                    facility: hv.facility || m.facility, pool: hv.course || m.pool, meetUid: newId("meet"),
                     events: hv.events.map((ev, i) => ({ ...ev, eventNum: i + 1, heats: [blankHeat()] })),
-                    meetEntries: had ? [] : (m.meetEntries || []) }));
+                    meetEntries: had ? [] : (m.meetEntries || []), relays: had ? [] : (m.relays || []) }));
                   setSwimExpandedEvents({});
                   const relays = hv.events.filter(ev => ev.relay).length;
                   setSwimImportMsg({ ok: true, text: `${verb} ${hv.events.length} events from “${source}”${relays ? ` (${relays} relays)` : ""}. Tap an event to edit or delete it. Next: add swimmers, then 🌱 Seed.` });
@@ -13547,6 +14069,45 @@
                     eventLabel: (f.eventLabel || "").trim() || evLabel(e), gender: f.gender, ageGroup: (f.ageGroup || "").trim() || "Open",
                     minAge, maxAge: maxAge >= 99 ? 0 : maxAge, distance: +f.distance || e.distance, stroke: f.stroke, relay: /relay/i.test(f.stroke) }) }));
                   setSwimEditEvt(null); setSwimEditForm(null);
+                }
+
+                // A Timeathon meet file: events from the host, a team's entries
+                // from a coach, or the seeded program. Returns a message to show.
+                async function importMeetJson(file) {
+                  let d;
+                  try { d = JSON.parse(await file.text()); } catch (_) { return { ok: false, text: "That isn't a Timeathon meet file." }; }
+                  if (!d || d.app !== "Timeathon" || !d.meet) return { ok: false, text: "That isn't a Timeathon meet file." };
+                  const fm = d.meet;
+                  const evs = asList(fm.events).map(ev => ({ ...ev, entries: asList(ev.entries), heats: asList(ev.heats).map(h => ({ ...h, lanes: asList(h.lanes).map(l => ({ ...l, legs: l.legs ? asList(l.legs) : null })) })) }));
+                  const relaysOf = list => asList(list).map(r => ({ ...r, legs: asList(r.legs) }));
+                  const entriesOf = list => asList(list).map(e => ({ ...e, events: asList(e.events) }));
+                  const info = { meetName: fm.meetName, date: fm.date, facility: fm.facility, pool: fm.pool, lanes: fm.lanes, ageUpDate: fm.ageUpDate, meetUid: fm.meetUid, teams: asList(fm.teams) };
+                  if (d.kind === "entries") {
+                    if (!swimMeet.events.length) return { ok: false, text: "Open or set up the meet first, then open the coaches' entry files." };
+                    if (swimMeet.meetUid && fm.meetUid && swimMeet.meetUid !== fm.meetUid && !window.confirm(`These entries are for “${fm.meetName}”, not this meet. Add them anyway?`)) return { ok: false, text: "Not added." };
+                    const t = d.team || {}, code = t.code;
+                    const ents = entriesOf(d.meetEntries), rels = relaysOf(d.relays);
+                    setSwimMeet(m => syncEventEntries({ ...m,
+                      teams: [...(m.teams || []).filter(x => x.code !== code), { code, name: t.name || code }],
+                      meetEntries: [...(m.meetEntries || []).filter(e => e.team !== code), ...ents],
+                      relays: [...(m.relays || []).filter(r => r.team !== code), ...rels] }));
+                    const n = ents.reduce((k, e) => k + asList(e.events).length, 0);
+                    return { ok: true, text: `Added ${t.name || code}: ${ents.length} swimmers, ${n} entries, ${rels.length} relays. Open the other teams' files, then seed.` };
+                  }
+                  if (d.kind === "meet" || d.kind === "program") {
+                    const prog = d.kind === "program";
+                    if (swimMeet.events.length && swimMeet.meetUid !== fm.meetUid && !window.confirm(`Replace the meet on screen with “${fm.meetName}”?`)) return { ok: false, text: "Not opened." };
+                    const keep = !prog && swimMeet.meetUid && swimMeet.meetUid === fm.meetUid;
+                    setSwimMeet(m => syncEventEntries({ ...m, ...info, _id: prog ? m._id : (keep ? m._id : undefined),
+                      events: prog ? evs : evs.map(ev => ({ ...ev, heats: [{ heatNum: 1, lanes: [] }] })),
+                      meetEntries: prog ? entriesOf(d.meetEntries) : (keep ? m.meetEntries : []),
+                      relays: prog ? relaysOf(d.relays) : (keep ? m.relays : []) }));
+                    setSwimExpandedEvents({});
+                    return { ok: true, text: prog
+                      ? `Opened the program for “${fm.meetName}” — print your team list, heat sheet or lane sheets below.`
+                      : `Opened “${fm.meetName}”: ${evs.length} events. Add your swimmers in Who's swimming, then send your entries back.` };
+                  }
+                  return { ok: false, text: "That file type isn't supported." };
                 }
 
                 function exportMeetEvents() {
@@ -13880,7 +14441,7 @@
                             </div>
                           )}
                           <div style={S.label}>Or start from a meet file</div>
-                          <input ref={swimFileInputRef} type="file" accept=".zip,.hyv,.ev3,.hy3,.cl2,.csv,.ZIP,.HYV,.HY3,.CL2" style={{ display:"none" }}
+                          <input ref={swimFileInputRef} type="file" accept=".zip,.hyv,.ev3,.hy3,.cl2,.csv,.json,.ZIP,.HYV,.HY3,.CL2" style={{ display:"none" }}
                             onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importMeetFile(f); }} />
                           <button onClick={() => swimFileInputRef.current && swimFileInputRef.current.click()}
                             style={{ ...btnStyle("#04613F"), fontSize:15, width:"100%", marginBottom:6 }}>
@@ -14122,139 +14683,7 @@
                           )}
                           {st === 4 && (
                             <>
-                        {/* ── Meet Roster ── */}
-                        <div style={S.card}>
-                          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: swimRosterOpen || (swimMeet.meetEntries||[]).length > 0 ? 10 : 0 }}>
-                            <div style={S.label}>Meet Roster {(swimMeet.meetEntries||[]).length > 0 ? `(${swimMeet.meetEntries.length})` : ""}</div>
-                            <div style={{ display:"flex", gap:8 }}>
-                              {(swimMeet.meetEntries||[]).length > 0 && swimMeet.events.length > 0 && (
-                                <button onClick={autoSeedFromRoster}
-                                  style={{ fontSize:14, color:"#04613F", background:"none", border:"none", cursor:"pointer" }}>🌱 Seed from Roster</button>
-                              )}
-                              <button onClick={() => { setSwimRosterOpen(o => !o); setSwimRosterEditId(null); setSwimNewEntry({ name:"", team:"", age:"", gender:"Girls", ageGroup:"Open", events:{} }); }}
-                                style={{ fontSize:14, color:"#0B3FCC", background:"none", border:"none", cursor:"pointer" }}>
-                                {swimRosterOpen ? "✕ Cancel" : "+ Add Swimmer"}
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Roster list */}
-                          {(swimMeet.meetEntries||[]).map(s => (
-                            <div key={s.id} style={{ display:"flex", gap:8, padding:"7px 0", alignItems:"flex-start", borderBottom:"2px solid #C9C5BC" }}>
-                              <div style={{ flex:1 }}>
-                                <span style={{ fontSize:14, color:"#0B0D10", fontWeight:600 }}>{s.name}</span>
-                                {s.team ? <span style={{ fontSize:14, color:"#3D434B", marginLeft:8 }}>{s.team}</span> : null}
-                                {s.age ? <span style={{ fontSize:14, color:"#3D434B", marginLeft:6 }}>age {s.age}</span> : null}
-                                <div style={{ fontSize:14, color:"#3D434B", marginTop:2 }}>
-                                  {s.events.length > 0
-                                    ? `Events: ${s.events.map(e => `${evLabel(swimMeet.events.find(ev => ev.eventNum === e.eventNum)) || e.eventNum} (${e.seedTime})`).join(", ")}`
-                                    : <span style={{ color:"#B3001B" }}>No events selected</span>}
-                                </div>
-                              </div>
-                              <button onClick={() => {
-                                const evts = {};
-                                s.events.forEach(e => { evts[e.eventNum] = { checked:true, seedTime: e.seedTime === "NT" ? "" : e.seedTime }; });
-                                setSwimNewEntry({ name:s.name, team:s.team, age:String(s.age||""), gender:s.gender||"Girls", ageGroup:s.ageGroup||"Open", events:evts });
-                                setSwimRosterEditId(s.id);
-                                setSwimRosterOpen(true);
-                              }} style={{ background:"none", border:"none", color:"#3D434B", cursor:"pointer", fontSize:14, padding:"2px 4px" }}>✏️</button>
-                              <button onClick={() => removeMeetEntry(s.id)}
-                                style={{ background:"none", border:"none", color:"#B3001B", cursor:"pointer", fontSize:16, padding:"0 4px" }}>×</button>
-                            </div>
-                          ))}
-
-                          {/* Add / edit form */}
-                          {swimRosterOpen && (
-                            <div style={{ marginTop:10, padding:"12px", background:"#EFEDE8", borderRadius:6, border:"2px solid #C9C5BC" }}>
-                              {/* Pick from global roster */}
-                              {swimAthletes.length > 0 && !swimRosterEditId && (
-                                <div style={{ marginBottom:8 }}>
-                                  <select onChange={e => {
-                                    if (!e.target.value) return;
-                                    const a = swimAthletes.find(x => x.id === e.target.value);
-                                    if (a) {
-                                      // Auto-fill seed times from athlete's personal bests for any already-checked events
-                                      const updatedEvts = {};
-                                      Object.entries(swimNewEntry.events).forEach(([evNum, val]) => {
-                                        const meetEv = swimMeet.events.find(ev => ev.eventNum === parseInt(evNum));
-                                        const pb = meetEv && (a.personalBests||{})[eventKey(meetEv)];
-                                        updatedEvts[evNum] = val.checked ? { ...val, seedTime: pb ? pb.time : (val.seedTime||"") } : val;
-                                      });
-                                      setSwimNewEntry(f => ({ ...f, name:a.name, team:a.team||"", gender:a.gender||"Girls", ageGroup:a.ageGroup||"Open", age:String(a.age||""), athleteId:a.id, events:updatedEvts }));
-                                    }
-                                    e.target.value = "";
-                                  }} style={{ ...S.input, marginBottom:0 }}>
-                                    <option value="">— Pick from athlete roster —</option>
-                                    {swimAthletes.map(a => <option key={a.id} value={a.id}>{a.name} ({a.team || "no team"})</option>)}
-                                  </select>
-                                </div>
-                              )}
-                              {/* Swimmer info */}
-                              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
-                                <input placeholder="Full name *" value={swimNewEntry.name}
-                                  onChange={e => setSwimNewEntry(f => ({...f, name:e.target.value, athleteId:null}))}
-                                  style={{ ...S.input, flex:2, minWidth:140, marginBottom:0 }} />
-                                <input placeholder="Team" value={swimNewEntry.team}
-                                  onChange={e => setSwimNewEntry(f => ({...f, team:e.target.value}))}
-                                  style={{ ...S.input, flex:1, minWidth:90, marginBottom:0 }} />
-                                <input placeholder="Age" type="number" min={1} max={99} value={swimNewEntry.age}
-                                  onChange={e => setSwimNewEntry(f => ({...f, age:e.target.value}))}
-                                  style={{ ...S.input, width:60, marginBottom:0 }} />
-                                <select value={swimNewEntry.gender} onChange={e => setSwimNewEntry(f => ({...f, gender:e.target.value}))}
-                                  style={{ ...S.input, marginBottom:0 }}>
-                                  {["Girls","Boys","Mixed"].map(g => <option key={g} value={g}>{g}</option>)}
-                                </select>
-                              </div>
-                              {/* Event entries */}
-                              {swimMeet.events.length > 0 ? (
-                                <div style={{ marginBottom:8 }}>
-                                  <div style={{ ...S.label, marginBottom:6 }}>Events &amp; Seed Times</div>
-                                  {swimMeet.events.map(ev => {
-                                    const checked = !!(swimNewEntry.events[ev.eventNum]?.checked);
-                                    const seedVal = swimNewEntry.events[ev.eventNum]?.seedTime || "";
-                                    return (
-                                      <div key={ev.eventNum} style={{ display:"flex", gap:8, alignItems:"center", padding:"4px 0", borderBottom:"2px solid #C9C5BC" }}>
-                                        <input type="checkbox" checked={checked}
-                                          onChange={e => {
-                                            // Auto-fill seed time from PB when checking an event
-                                            let autoSeed = "";
-                                            if (e.target.checked && swimNewEntry.athleteId) {
-                                              const ath = swimAthletes.find(a => a.id === swimNewEntry.athleteId);
-                                              const pb = ath && (ath.personalBests||{})[eventKey(ev)];
-                                              if (pb) autoSeed = pb.time;
-                                            }
-                                            setSwimNewEntry(f => ({
-                                              ...f,
-                                              events: { ...f.events, [ev.eventNum]: { ...(f.events[ev.eventNum]||{}), checked:e.target.checked, seedTime: e.target.checked ? (autoSeed || f.events[ev.eventNum]?.seedTime || "") : "" } }
-                                            }));
-                                          }} style={{ accentColor:"#0B3FCC", width:16, height:16, cursor:"pointer" }} />
-                                        <span style={{ fontSize:14, color: checked ? "#0B0D10" : "#3D434B", flex:1 }}>
-                                          <span style={{ color:"#0B3FCC", marginRight:4 }}>#{evLabel(ev)}</span>
-                                          {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}
-                                        </span>
-                                        {checked && (
-                                          <input placeholder="Seed time (NT or 1:23.45)" value={seedVal}
-                                            onChange={e => setSwimNewEntry(f => ({
-                                              ...f,
-                                              events: { ...f.events, [ev.eventNum]: { ...(f.events[ev.eventNum]||{}), seedTime:e.target.value } }
-                                            }))}
-                                            style={{ ...S.input, width:140, marginBottom:0, fontSize:14 }} />
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div style={{ fontSize:14, color:"#3D434B", marginBottom:8 }}>Add events first, then assign them here.</div>
-                              )}
-                              <button onClick={addToMeetRoster} disabled={!swimNewEntry.name.trim()}
-                                style={{ ...btnStyle("#0B3FCC"), padding:"8px 20px", fontSize:14, opacity: swimNewEntry.name.trim() ? 1 : 0.4 }}>
-                                {swimRosterEditId ? "Save Changes" : "Add to Meet"}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
+                        <SwimEntriesPanel meet={swimMeet} setMeet={setSwimMeet} athletes={swimAthletes} saveAthletes={persistSwimAthletes} />
                             </>
                           )}
                           {st === 5 && (
@@ -14274,6 +14703,9 @@
                                   onClick={() => { persistSwimArchive(swimMeet); alert("Meet saved to archive!"); }}>Save to archive</button>
                               </div>
                               {nEvents === 0 && <div style={{ ...TM_CAPTION, marginTop: 8 }}>Add at least one event (step 3) before saving.</div>}
+                              <div style={{ marginTop: 18 }}>
+                                <SwimShareCard meet={swimMeet} setMeet={setSwimMeet} onImport={importMeetJson} onSeed={seedAllEvents} />
+                              </div>
                             </div>
                           )}
                         </>
@@ -14283,6 +14715,9 @@
                           <WizardStepList heading="Meet setup" subheading={swimMeet.meetName || "Swim meet"} steps={summaries} onJump={setSwimSetupStep}>
                             <button onClick={() => setSwimView("race")} disabled={nEvents === 0}
                               style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24, opacity: nEvents === 0 ? 0.45 : 1 }}>Go to race →</button>
+                            <div style={{ marginTop: 16 }}>
+                              <SwimShareCard meet={swimMeet} setMeet={setSwimMeet} onImport={importMeetJson} onSeed={seedAllEvents} />
+                            </div>
                           </WizardStepList>
                         );
                       }
@@ -14349,8 +14784,17 @@
                               <div style={{ fontSize:52, fontWeight:700, letterSpacing:1.2, color: swimClockRunning ? "#0B3FCC" : "#0B0D10", fontVariantNumeric:"tabular-nums" }}>
                                 {formatSwimTime(swimClockMs)}
                               </div>
-                              <div style={{ display:"flex", gap:10, justifyContent:"center", marginTop:12 }}>
+                              <div style={{ display:"flex", gap:10, justifyContent:"center", marginTop:12, flexWrap:"wrap" }}>
                                 {!swimClockStarted ? (<>
+                                  <div style={{ width: "100%", display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                                    <label style={{ fontSize: 14, fontWeight: 700 }}>Start sound{" "}
+                                      <select defaultValue={startSoundChoice()} onChange={e => { try { localStorage.setItem("swim-start-sound", e.target.value); } catch (_) {} }}
+                                        style={{ fontSize: 15, padding: "6px 8px", borderRadius: 6, border: `2px solid ${TM.line}` }}>
+                                        {Object.entries(START_SOUNDS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                                      </select>
+                                    </label>
+                                    <button onClick={() => playStartTone()} style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 12px", fontSize: 14 }}>🔈 Test</button>
+                                  </div>
                                   <button onClick={sayTakeYourMarks}
                                     style={{ ...btnStyle(TM.ink, true), fontSize:16, padding:"12px 18px" }}>
                                     🔊 Take your marks
