@@ -2295,8 +2295,34 @@
       // in server time, so a phone whose clock is a second off still gets the
       // right swim time. (Firebase keeps the offset to its clock up to date.)
       const SERVER_CLOCK = { offset: 0 };
-      try { rtdb.ref(".info/serverTimeOffset").on("value", sn => { SERVER_CLOCK.offset = sn.val() || 0; }); } catch (_) {}
+      try { rtdb.ref(".info/serverTimeOffset").on("value", sn => { if (!SERVER_CLOCK.synced) SERVER_CLOCK.offset = sn.val() || 0; }); } catch (_) {}
       function serverNow() { return Date.now() + SERVER_CLOCK.offset; }
+      // Firebase's own offset is a one-shot guess that can be off by the network
+      // delay. This measures it: write the server's timestamp, note how long the
+      // round trip took, and keep the quickest of six tries. The server's time
+      // falls inside that round trip, so the offset is good to half of it
+      // (SERVER_CLOCK.err, usually 10-30 ms on deck Wi-Fi or LTE).
+      async function syncServerClock(path) {
+        let best = null;
+        const ref = rtdb.ref(path);
+        for (let i = 0; i < 6; i++) {
+          const t0 = Date.now();
+          try { await ref.set(firebase.database.ServerValue.TIMESTAMP); } catch (_) { return null; }
+          const t1 = Date.now();
+          const v = await ref.once("value").then(sn => sn.val()).catch(() => null);
+          if (typeof v !== "number" || v < 1e12) return null;
+          const rtt = t1 - t0;
+          if (!best || rtt < best.rtt) best = { rtt, off: v - (t0 + t1) / 2 };
+        }
+        ref.remove().catch(() => {});
+        SERVER_CLOCK.offset = best.off; SERVER_CLOCK.err = Math.max(1, Math.round(best.rtt / 2)); SERVER_CLOCK.synced = Date.now();
+        return SERVER_CLOCK.err;
+      }
+      // When an input actually happened (finger down, key down), in epoch ms —
+      // not when the code got round to handling it.
+      function eventEpoch(e) {
+        return e && e.timeStamp > 0 && performance.timeOrigin ? performance.timeOrigin + e.timeStamp : Date.now();
+      }
 
       // The start: "Take your marks" spoken from the host device, then the
       // start tone out of its speaker at the moment the clock starts. The audio
@@ -3922,6 +3948,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
         const [swimLaneCode, setSwimLaneCode] = useState("");
         const [swimLaneNum, setSwimLaneNum] = useState(1);
         const [swimLaneSession, setSwimLaneSession] = useState(null);
+        const [swimLaneClockErr, setSwimLaneClockErr] = useState(null);   // ± ms of the last clock sync
         const [swimLaneFinished, setSwimLaneFinished] = useState(false);
         const [swimLaneError, setSwimLaneError] = useState("");
         const [swimLaneConnecting, setSwimLaneConnecting] = useState(false);
@@ -4168,8 +4195,21 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
           // Ready for a new start (next heat, a restart, or the host reopening
           // the meet): this lane's Stop button comes back.
           if (curr === "waiting") setSwimLaneFinished(false);
+          if (curr === "waiting" && prev && prev !== "waiting" && swimLaneCode)
+            syncServerClock(`swimLive/${swimLaneCode}/clock/lane${swimLaneNum}`).then(err => { if (err) setSwimLaneClockErr(err); });
           if (curr === "racing" && prev !== "racing" && !(swimLaneSession.results && swimLaneSession.results[swimLaneNum])) setSwimLaneFinished(false);
         }, [swimLaneSession?.status, swimLaneSession?.startedAt]);
+
+        // Lane timer: keep the phone's screen on while it's timing a lane.
+        useEffect(() => {
+          if (view !== "swimlane" || !swimLaneSession || !navigator.wakeLock) return;
+          let lock = null, gone = false;
+          const take = () => navigator.wakeLock.request("screen").then(l => { if (gone) l.release(); else lock = l; }).catch(() => {});
+          take();
+          const vis = () => { if (document.visibilityState === "visible") take(); };
+          document.addEventListener("visibilitychange", vis);
+          return () => { gone = true; document.removeEventListener("visibilitychange", vis); if (lock) lock.release().catch(() => {}); };
+        }, [view, !!swimLaneSession]);
 
         // Lane timer local clock driven by Firebase startedAt
         useEffect(() => {
@@ -4194,7 +4234,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
             const triggered = e.key === swimClickerKey || VOLUME_KEYS.includes(e.key);
             if (triggered && !swimLaneFinished && swimLaneSession.status === "racing") {
               e.preventDefault();
-              const finalMs = serverNow() - swimLaneSession.startedAt;
+              const finalMs = Math.max(0, Math.round(eventEpoch(e) + SERVER_CLOCK.offset - swimLaneSession.startedAt));
               rtdb.ref(`swimLive/${code}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
               setSwimLaneFinished(true);
             }
@@ -4311,7 +4351,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
               || (/^[0-9]$/.test(e.key) && !swimHostClickers.some(c => c.key === e.key) ? { lane: e.key === "0" ? 10 : +e.key, key: e.key } : null);
             if (!clicker || e.repeat) return;
             e.preventDefault();
-            const t = swimStartRef.current != null ? Date.now() - swimStartRef.current : swimClockMsRef.current;
+            const t = swimStartRef.current != null ? Math.max(0, Math.round(eventEpoch(e) - swimStartRef.current)) : swimClockMsRef.current;
             const { lane } = clicker;
             setSwimMeet(m => {
               const ev = m.events.find(ev2 => ev2.eventNum === swimActiveEvent);
@@ -13795,8 +13835,8 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
             {/* ── SWIM MEET TIMER ── */}
             {view === "swim" && (() => {
 
-                function recordFinish(eventNum, heatNum, lane) {
-                  const t = swimNowMs();
+                function recordFinish(eventNum, heatNum, lane, at) {
+                  const t = at && swimStartRef.current != null ? Math.max(0, Math.round(at - swimStartRef.current)) : swimNowMs();
                   setSwimMeet(m => ({
                     ...m,
                     events: m.events.map(ev => ev.eventNum !== eventNum ? ev : {
@@ -13838,6 +13878,24 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                   setSwimMeet(m => ({ ...m, events: m.events.map(ev => ev.eventNum !== swimActiveEvent ? ev : {
                     ...ev, heats: ev.heats.map(h => h.heatNum !== swimActiveHeat ? h : { ...h, lanes: h.lanes.map(l => ({ ...l, finalMs: null })) }) }) }));
                   if (swimLiveCode) rtdb.ref(`swimLive/${swimLiveCode}`).update({ status: "waiting", startedAt: null, results: null }).catch(console.error);
+                }
+
+                // ▶ START ALL — the clock starts the instant the button is touched.
+                function startAll(e) {
+                  if (swimClockStarted) return;
+                  playStartTone();
+                  swimStartAtRef.current = eventEpoch(e);
+                  setSwimClockStarted(true);
+                  setSwimClockRunning(true);
+                  if (swimLiveCode) {
+                    rtdb.ref(`swimLive/${swimLiveCode}`).update({
+                      status: "racing",
+                      startedAt: Math.round(swimStartAtRef.current + SERVER_CLOCK.offset),
+                      activeEvent: swimActiveEvent,
+                      activeHeat: swimActiveHeat,
+                      results: null,
+                    }).catch(console.error);
+                  }
                 }
 
                 function persistSwimArchive(updatedMeet) {
@@ -13911,6 +13969,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                     events: swimMeet.events, results: null, heatResults: null,
                   }).catch(console.error);
                   setSwimLiveCode(code);
+                  syncServerClock(`swimLive/${code}/clock/host`);
                 }
                 function loadSwimMeet(meet) {
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode(),
@@ -14817,21 +14876,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                                     style={{ ...btnStyle(TM.ink, true), fontSize:16, padding:"12px 18px" }}>
                                     🔊 Take your marks
                                   </button>
-                                  <button onClick={() => {
-                                    playStartTone();
-                                    swimStartAtRef.current = Date.now();
-                                    setSwimClockStarted(true);
-                                    setSwimClockRunning(true);
-                                    if (swimLiveCode) {
-                                      rtdb.ref(`swimLive/${swimLiveCode}`).update({
-                                        status: "racing",
-                                        startedAt: serverNow(),
-                                        activeEvent: swimActiveEvent,
-                                        activeHeat: swimActiveHeat,
-                                        results: null,
-                                      }).catch(console.error);
-                                    }
-                                  }} style={{ ...btnStyle("#0B3FCC"), fontSize:16, padding:"12px 40px", letterSpacing:1.2 }}>
+                                  <button onPointerDown={e => startAll(e)} onClick={e => { if (e.detail === 0) startAll(e); }} style={{ ...btnStyle("#0B3FCC"), fontSize:16, padding:"12px 40px", letterSpacing:1.2 }}>
                                     ▶ START ALL
                                   </button>
                                 </>) : (
@@ -14876,6 +14921,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                                     heatResults: null,
                                   }).catch(console.error);
                                   setSwimLiveCode(code);
+                                  syncServerClock(`swimLive/${code}/clock/host`);
                                 }}>
                                   Start Live Session
                                 </button>
@@ -14943,7 +14989,8 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                                   </div>
                                   <div style={{ display:"flex", gap:8 }}>
                                     <button
-                                      onClick={() => { if (!sw.scratch) recordFinish(activeEv.eventNum, activeHt.heatNum, sw.lane); }}
+                                      onPointerDown={e => { if (!sw.scratch) recordFinish(activeEv.eventNum, activeHt.heatNum, sw.lane, eventEpoch(e)); }}
+                                      onClick={e => { if (e.detail === 0 && !sw.scratch) recordFinish(activeEv.eventNum, activeHt.heatNum, sw.lane, eventEpoch(e)); }}
                                       disabled={sw.scratch || isDq}
                                       style={{ flex:1, padding:"10px", fontSize:14, fontWeight:700, letterSpacing:1, borderRadius:6, cursor: sw.scratch || isDq ? "default" : "pointer", background: finished ? "#EFEDE8" : "#EFEDE8", border: `2px solid ${finished ? "#0B3FCC" : "#C9C5BC"}`, color: finished ? "#0B3FCC" : "#0B0D10", opacity: sw.scratch || isDq ? 0.4 : 1 }}>
                                       {finished ? `✓ ${formatSwimTime(sw.finalMs)}` : "FINISH"}
@@ -15467,10 +15514,18 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                 ref.on("value", fn, errFn);
                 swimLaneListenerRef.current = { ref, fn };
                 setSwimLaneCode(code);
+                syncServerClock(`swimLive/${code}/clock/lane${swimLaneNum}`).then(err => setSwimLaneClockErr(err));
               }
 
               const connected = !!swimLaneSession;
               const status = swimLaneSession?.status || "waiting";
+              function laneStop(e) {
+                if (status !== "racing" || swimLaneFinished || !swimLaneSession.startedAt) return;
+                const finalMs = Math.max(0, Math.round(eventEpoch(e) + SERVER_CLOCK.offset - swimLaneSession.startedAt));
+                if (navigator.vibrate) { try { navigator.vibrate(60); } catch (_) {} }
+                rtdb.ref(`swimLive/${swimLaneCode}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
+                setSwimLaneFinished(true);
+              }
 
               return (
                 <div style={{ maxWidth:640, margin:"0 auto", padding:"0 16px 40px" }}>
@@ -15586,12 +15641,8 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                       {/* STOP button — big phone-friendly */}
                       <button
                         disabled={status !== "racing" || swimLaneFinished}
-                        onClick={() => {
-                          if (status !== "racing" || swimLaneFinished) return;
-                          const finalMs = serverNow() - swimLaneSession.startedAt;
-                          rtdb.ref(`swimLive/${swimLaneCode}/results/${swimLaneNum}`).set({ finalMs, dq: false }).catch(console.error);
-                          setSwimLaneFinished(true);
-                        }}
+                        onPointerDown={e => laneStop(e)}
+                        onClick={e => { if (e.detail === 0) laneStop(e); }}
                         style={{
                           width:"100%", padding:"32px 20px", fontSize:22, fontWeight:900, letterSpacing:1.2,
                           borderRadius:8, marginBottom:16, userSelect:"none", WebkitUserSelect:"none",
@@ -15604,6 +15655,9 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                         }}>
                         {swimLaneFinished ? "✓ FINISH RECORDED" : status === "racing" ? "⏹ STOP" : "■ STOP"}
                       </button>
+                      <div style={{ ...TM_CAPTION, textAlign: "center", marginTop: -8, marginBottom: 14 }}>
+                        {swimLaneClockErr ? `Clock matched to the host within ±${swimLaneClockErr} ms` : "Matching clock to the host…"}
+                      </div>
 
                       {/* Clicker configuration */}
                       <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"12px 14px" }}>
