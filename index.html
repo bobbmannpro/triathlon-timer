@@ -3712,6 +3712,132 @@ ${html}</body></html>`);
           onChange={e => { setTxt(e.target.value); if (onChange) onChange(e); }} />;
       }
 
+      // ── Share a finisher's certificate (Instagram, Facebook, Messages…) ───────
+      // The certificate is drawn as an image (11 × 8.5 at 150 dpi, like the
+      // printed one) and handed to the phone's share sheet. Websites can't post
+      // to Instagram or Facebook directly; the share sheet is how a phone does
+      // it, and in those apps people can add their own race photos to the post.
+      function certDataFromLive(race, ath) {
+        const all = asList(race.athletes);
+        const finishOf = a => (a && a.finished && a.startOffset != null && a.splits) ? a.splits[a.splits.length - 1] - a.startOffset : null;
+        const finishers = all.filter(a => finishOf(a) != null).sort((x, y) => finishOf(x) - finishOf(y));
+        const overall = finishers.findIndex(a => a.id === ath.id) + 1 || null;
+        const agList = finishers.filter(a => a.ageGroup && a.ageGroup === ath.ageGroup);
+        const agPlace = ath.ageGroup ? agList.findIndex(a => a.id === ath.id) + 1 || null : null;
+        const segs = asList(race.segments).length ? asList(race.segments) : SEGMENTS;
+        const sp = ath.splits || [];
+        const legs = segs.map((seg, i) => {
+          const prev = i === 0 ? ath.startOffset : sp[i - 1];
+          return { seg, ms: sp[i] != null && prev != null ? sp[i] - prev : null };
+        });
+        const crs = asList(race.courses);
+        const c = crs.find(x => x.id === ath.courseId) || crs[0] || null;
+        const u = race.units || {};
+        const paces = c ? [calcSwimPace(legs[0] && legs[0].ms, c.swimYards, u.swim), calcBikeMph(legs[2] && legs[2].ms, c.bikeMiles, u.bike), calcRunPace(legs[4] && legs[4].ms, c.runMiles, u.run)] : [];
+        const cert = race.cert || {};
+        return {
+          eventName: race.raceName || "Race", orgName: cert.orgName || "", accent: cert.accentColor || "#0B3FCC", logo: cert.logo || LOGO_B64,
+          name: ath.name || "", bib: ath.raceNumber, overall, gender: ath.gender || "", ageGroup: ath.ageGroup || "", agPlace,
+          chipMs: finishOf(ath), legs, paces: paces.map((p, i) => p ? ["🏊", "🚴", "🏃"][i] + " " + p : null).filter(Boolean),
+          course: c ? `${c.name || "Course"} — Swim ${c.swimYards}y · Bike ${c.bikeMiles}mi · Run ${c.runMiles}mi` : "",
+        };
+      }
+      function loadImg(src) {
+        return new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+      }
+      async function drawCertificatePng(d) {
+        const W = 1650, H = 1275, cv = document.createElement("canvas");
+        cv.width = W; cv.height = H;
+        const g = cv.getContext("2d");
+        try { await Promise.all([document.fonts.load("900 60px Archivo"), document.fonts.load("700 30px Archivo")]); } catch (_) {}
+        const F = (w, px) => `${w} ${px}px Archivo, Arial, sans-serif`;
+        // shrink a line until it fits
+        const fit = (txt, w, px, max) => { let s = px; g.font = F(w, s); while (s > 12 && g.measureText(txt).width > max) { s -= 2; g.font = F(w, s); } return s; };
+        const center = (txt, y, w, px, color, max = W - 220) => { fit(txt, w, px, max); g.fillStyle = color; g.textAlign = "center"; g.fillText(txt, W / 2, y); };
+        // paper
+        const bg = g.createLinearGradient(0, 0, W, H);
+        bg.addColorStop(0, "#EFEDE8"); bg.addColorStop(0.55, "#FFFFFF"); bg.addColorStop(1, "#EFEDE8");
+        g.fillStyle = bg; g.fillRect(0, 0, W, H);
+        g.strokeStyle = d.accent; g.lineWidth = 12; g.strokeRect(18, 18, W - 36, H - 36);
+        g.lineWidth = 3; g.strokeRect(38, 38, W - 76, H - 76);
+        const logo = await loadImg(d.logo);
+        if (logo) {
+          const bw = 1100, bh = bw * (logo.height || 1) / (logo.width || 1);
+          g.globalAlpha = 0.05; g.drawImage(logo, (W - bw) / 2, (H - bh) / 2, bw, bh); g.globalAlpha = 1;
+          const lh = 110, lw = Math.min(520, lh * (logo.width || 1) / (logo.height || 1));
+          g.drawImage(logo, (W - lw) / 2, 70, lw, lw * (logo.height || 1) / (logo.width || 1));
+        }
+        let y = 245;
+        g.fillStyle = d.accent; g.fillRect(W / 2 - 260, y - 40, 520, 6);
+        center(d.eventName, y + 30, 900, 62, "#0B0D10"); y += 30;
+        if (d.orgName) { center(d.orgName, y + 44, 700, 28, "#3D434B"); y += 44; }
+        const medals = ["🥇", "🥈", "🥉"], mcol = ["#8A5A00", "#3D434B", "#B44A00"];
+        const top3 = d.overall && d.overall <= 3;
+        g.font = "88px serif"; g.textAlign = "center"; g.fillText(top3 ? medals[d.overall - 1] : "🏅", W / 2, y + 110); y += 110;
+        center(d.overall ? `${placeSuffix(d.overall)} Place Overall` : "Finisher", y + 58, 800, 40, top3 ? mcol[d.overall - 1] : "#3D434B"); y += 58;
+        center(d.name, y + 104, 900, 98, "#0B0D10"); y += 104;
+        if (d.bib != null) { center(`Bib #${d.bib}`, y + 40, 700, 26, "#3D434B"); y += 40; }
+        if (d.agPlace) { center(`${[d.gender, d.ageGroup].filter(Boolean).join(" ")} — ${placeSuffix(d.agPlace)} in Age Group`, y + 48, 700, 30, d.accent); y += 48; }
+        center("CHIP TIME", y + 54, 800, 22, "#3D434B"); y += 54;
+        center(d.chipMs != null ? formatElapsed(d.chipMs) : "--", y + 96, 900, 100, "#0B0D10"); y += 96;
+        // leg pills
+        const legs = d.legs.filter(l => l.ms != null);
+        if (legs.length) {
+          const pw = 210, ph = 86, gap = 18, tw = legs.length * pw + (legs.length - 1) * gap;
+          let x = (W - tw) / 2; const py = y + 34;
+          legs.forEach(l => {
+            g.fillStyle = "#FFFFFF"; g.strokeStyle = "#C9C5BC"; g.lineWidth = 3;
+            g.beginPath(); if (g.roundRect) g.roundRect(x, py, pw, ph, 12); else g.rect(x, py, pw, ph); g.fill(); g.stroke();
+            g.fillStyle = "#3D434B"; g.font = F(800, 20); g.textAlign = "center"; g.fillText(l.seg.toUpperCase(), x + pw / 2, py + 30);
+            g.fillStyle = "#0B0D10"; g.font = F(900, 34); g.fillText(formatElapsed(l.ms), x + pw / 2, py + 70);
+            x += pw + gap;
+          });
+          y = py + ph;
+        }
+        if (d.paces.length) { g.font = F(700, 28); g.fillStyle = "#3D434B"; g.textAlign = "center"; g.fillText(d.paces.join("     "), W / 2, y + 52); y += 52; }
+        g.fillStyle = d.accent; g.fillRect(W / 2 - 260, H - 120, 520, 6);
+        if (d.course) center(d.course, H - 78, 700, 22, "#3D434B");
+        g.font = F(800, 18); g.fillStyle = "#3D434B"; g.textAlign = "right"; g.fillText("TIMEATHON", W - 64, H - 58);
+        return await new Promise(res => cv.toBlob(res, "image/png"));
+      }
+
+      // Preview + share. Built before the Share tap so the phone's share sheet
+      // opens straight from that tap (iPhones require it).
+      function CertShareModal({ state, onClose }) {
+        if (!state) return null;
+        const canShare = !!(state.file && navigator.canShare && navigator.canShare({ files: [state.file] }));
+        const share = async () => {
+          try { await navigator.share({ files: [state.file], title: state.title, text: state.text }); } catch (_) {}
+        };
+        const save = () => {
+          const a = document.createElement("a"); a.href = state.url; a.download = state.file.name;
+          document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 500);
+        };
+        return (
+          <div role="dialog" aria-modal="true" aria-label="Share certificate" onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+            style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(11,13,16,0.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div style={{ background: "#FFFFFF", borderRadius: 10, padding: 16, width: "100%", maxWidth: 560 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Share {state.name}'s certificate</div>
+              {state.url
+                ? <img src={state.url} alt={`${state.name}'s certificate`} style={{ width: "100%", borderRadius: 4, border: `2px solid ${TM.line}` }} />
+                : <div style={{ ...rowStyle(), textAlign: "center", padding: 40, fontWeight: 700 }}>Making the certificate…</div>}
+              {state.url && (<>
+                {canShare && (
+                  <button onClick={share} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 12, fontSize: 17, minHeight: 54 }}>
+                    📤 Share — Instagram, Facebook, Messages…
+                  </button>
+                )}
+                <button onClick={save} style={{ ...btnStyle(TM.ink, canShare), width: "100%", marginTop: 8, fontSize: 16 }}>⬇ Save image</button>
+                <div style={{ ...TM_CAPTION, marginTop: 8 }}>
+                  {canShare ? "Pick Instagram or Facebook in the list. You can add your own race photos to the post there." : "Saved images can be posted from your phone's photos, or uploaded to Facebook or Instagram."}
+                </div>
+              </>)}
+              <button onClick={onClose} style={{ ...btnStyle(TM.ink, true), width: "100%", marginTop: 10 }}>Close</button>
+            </div>
+          </div>
+        );
+      }
+
       function App() {
         const [view, setView] = useState("myraces");
         const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
@@ -3736,6 +3862,19 @@ ${html}</body></html>`);
 
         // Age groups — fully customizable per race
         const [ageGroups, setAgeGroups] = useState(DEFAULT_AGE_GROUPS);
+        const [certShare, setCertShare] = useState(null);   // { name, title, url, file, text } while the share preview is open
+        async function openCertShare(race, ath) {
+          if (!race || !ath) return;
+          const d = certDataFromLive(race, ath);
+          setCertShare({ name: ath.name || "Athlete", title: d.eventName });
+          let blob = null;
+          try { blob = await drawCertificatePng(d); } catch (e) { console.error(e); }
+          if (!blob) { setCertShare(null); alert("Couldn't make the certificate."); return; }
+          const file = new File([blob], safeFileName(`${d.name} - ${d.eventName}`) + ".png", { type: "image/png" });
+          setCertShare(cur => cur && { ...cur, url: URL.createObjectURL(blob), file,
+            text: `${d.name} finished ${d.eventName}${d.chipMs != null ? " in " + formatElapsed(d.chipMs) : ""}! 🏊🚴🏃` });
+        }
+        function closeCertShare() { setCertShare(cur => { if (cur && cur.url) URL.revokeObjectURL(cur.url); return null; }); }
         const [certConfig, setCertConfig] = useState({ eventName: "Timeathon Race Event", accentColor: "#0B3FCC", orgName: "", customLogoB64: null });
         const [units, setUnits] = useState({ swim: "yards", bike: "miles", run: "miles" });
         const [loadedRaceId, setLoadedRaceId] = useState(null);
@@ -5962,6 +6101,8 @@ ${html}</body></html>`);
             publisherName: userProfile?.displayName || userProfile?.firstName || currentUser.email,
             status: "registration",
             raceName: certConfig.eventName || "Timeathon Race",
+            cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
+                    logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
             courses: courses.map(c => ({ id: c.id, name: c.name, swimYards: c.swimYards, bikeMiles: c.bikeMiles, runMiles: c.runMiles, bikeType: c.bikeType || "gps", lapMi: c.lapMi ?? null, minLapSec: c.minLapSec ?? null,
               swimByLaps: !!c.swimByLaps, swimLap: c.swimLap ?? null, swimMinLapSec: c.swimMinLapSec ?? null,
               runByLaps: !!c.runByLaps, runLap: c.runLap ?? null, runMinLapSec: c.runMinLapSec ?? null })),
@@ -6117,6 +6258,8 @@ ${html}</body></html>`);
             publisherName: userProfile?.displayName || userProfile?.firstName || currentUser.email,
             startedAt: Date.now(), clockMs, clockRunning: false, clockStarted: false, status: "live",
             raceName: certConfig.eventName || "Race",
+            cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
+                    logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
             courses, units, autoSplits, ageGroups, courseMap: courseMapOn,
@@ -10302,6 +10445,7 @@ ${html}</body></html>`);
 
         return (
           <div style={{ minHeight: "100vh", background: TM.bg, fontFamily: "var(--tm-font)", color: TM.ink }}>
+            {certShare && <CertShareModal state={certShare} onClose={closeCertShare} />}
             {pocketOn && (() => {
               const liveAth = joinLiveData?.athletes?.[joinAthIdx];
               const miles = joinBikeStats && joinBikeStats.onBike ? joinBikeStats.distMi
@@ -11953,6 +12097,9 @@ ${html}</body></html>`);
                                 <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2, color: TM.run }}>🏁 FINISHED</div>
                                 <div className="tm-metric" style={{ fontSize: 48, letterSpacing: 0, color: TM.ink, lineHeight: 1.1 }}>{chip != null ? fmtSplit(chip) : "—"}</div>
                                 {place && <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{place <= 3 ? ["🥇","🥈","🥉"][place - 1] + " " : ""}{ord(place)} in {feed.label}</div>}
+                                <button onClick={() => openCertShare(joinLiveData, me)} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 12, fontSize: 16 }}>
+                                  📤 Share my certificate
+                                </button>
                               </div>
                             );
                           })()}
@@ -12794,6 +12941,8 @@ ${html}</body></html>`);
                                       <div>
                                         <div style={{ fontSize: 14, fontWeight: 700, color: "#04613F", letterSpacing: 1 }}>FINISHED</div>
                                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 24, color: "#04613F", letterSpacing: 0.5, lineHeight: 1.2 }}>{formatElapsed(ath.finishMs)}</div>
+                                        <button onClick={e => { e.stopPropagation(); openCertShare(liveRace, ath); }} aria-label={`Share ${ath.name}'s certificate`}
+                                          style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 10px", fontSize: 14, marginTop: 4 }}>📤 Share</button>
                                       </div>
                                     ) : ath.started ? (
                                       <div>
