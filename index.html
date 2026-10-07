@@ -2962,6 +2962,110 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
         );
       }
 
+      // ── Typing in times from the timers' sheets ──────────────────────────────
+      // Digits only is quickest on a keypad: 2345 → 23.45, 10345 → 1:03.45.
+      // "23.45" and "1:03.45" work too.
+      function parseTypedTime(str) {
+        const s = String(str || "").trim();
+        if (!s) return null;
+        if (/[:.]/.test(s)) return parseSeedTime(s) || null;
+        const d = s.replace(/\D/g, "");
+        if (!d) return null;
+        const hund = +d.slice(-2), rest = d.slice(0, -2) || "0";
+        const secs = +rest.slice(-2), mins = +(rest.slice(0, -2) || "0");
+        if (secs >= 60) return null;
+        return ((mins * 60 + secs) * 100 + hund) * 10;
+      }
+      // Official time from the watches: one watch is the time; two are averaged
+      // and cut to the hundredth; three use the middle time.
+      function officialTime(watches) {
+        const w = watches.filter(x => x != null).sort((a, b) => a - b);
+        if (!w.length) return null;
+        if (w.length === 1) return w[0];
+        if (w.length === 2) return Math.floor((w[0] + w[1]) / 2 / 10) * 10;
+        return w[1];
+      }
+      function SwimTimeBox({ value, label, onCommit, idx }) {
+        const [txt, setTxt] = useState(value != null ? formatSwimTime(value) : "");
+        const commit = () => { const ms = parseTypedTime(txt); setTxt(ms != null ? formatSwimTime(ms) : ""); if (ms !== value) onCommit(ms); };
+        return <input value={txt} inputMode="numeric" placeholder="—" aria-label={label} data-timebox={idx}
+          onChange={e => setTxt(e.target.value)} onBlur={commit}
+          onFocus={e => e.target.select()}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commit(); const next = document.querySelector(`[data-timebox="${idx + 1}"]`); if (next) next.focus(); else e.target.blur(); } }}
+          style={{ width: 86, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "8px 8px", fontSize: 17, textAlign: "right", fontVariantNumeric: "tabular-nums", boxSizing: "border-box" }} />;
+      }
+      function SwimTimesEntry({ meet, setMeet }) {
+        const [mode, setModeRaw] = useState(() => { try { return localStorage.getItem("swim-times-mode") || "lane"; } catch (_) { return "lane"; } });
+        const setMode = m => { setModeRaw(m); try { localStorage.setItem("swim-times-mode", m); } catch (_) {} };
+        const [lane, setLane] = useState(1);
+        const [evNum, setEvNum] = useState(() => (meet.events[0] || {}).eventNum);
+        const nLanes = meet.lanes || 8;
+        const chip = on => ({ ...btnStyle(TM.ink, !on), minHeight: 44, padding: "0 12px", fontSize: 16 });
+        const patchLane = (en, hn, ln, fn) => setMeet(m => ({ ...m, events: m.events.map(ev => ev.eventNum !== en ? ev : {
+          ...ev, heats: ev.heats.map(h => h.heatNum !== hn ? h : { ...h, lanes: h.lanes.map(l => l.lane !== ln ? l : fn(l)) }) }) }));
+        const setWatch = (ev, h, l, k, ms) => patchLane(ev.eventNum, h.heatNum, l.lane, x => {
+          const nx = { ...x, [k]: ms };
+          return { ...nx, finalMs: officialTime([nx.watch1, nx.watch2, nx.watch3]) };
+        });
+
+        // rows in the order they're on the timer sheets
+        let rows = [];
+        if (mode === "lane") {
+          meet.events.forEach(ev => ev.heats.forEach(h => { const l = h.lanes.find(x => x.lane === lane && x.name); if (l) rows.push({ ev, h, l }); }));
+        } else {
+          const ev = meet.events.find(e => e.eventNum === evNum);
+          if (ev) ev.heats.forEach(h => h.lanes.filter(l => l.name).sort((a, b) => a.lane - b.lane).forEach(l => rows.push({ ev, h, l })));
+        }
+        const done = rows.filter(r => r.l.finalMs != null || r.l.dq || r.l.scratch).length;
+        const laneDone = n => { let t = 0, d = 0; meet.events.forEach(ev => ev.heats.forEach(h => { const l = h.lanes.find(x => x.lane === n && x.name); if (l) { t++; if (l.finalMs != null || l.dq || l.scratch) d++; } })); return [d, t]; };
+
+        return (
+          <div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <button onClick={() => setMode("lane")} aria-pressed={mode === "lane"} style={{ ...chip(mode === "lane"), flex: 1 }}>Lane by lane</button>
+              <button onClick={() => setMode("event")} aria-pressed={mode === "event"} style={{ ...chip(mode === "event"), flex: 1 }}>Event by event</button>
+            </div>
+            {mode === "lane" ? (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                {Array.from({ length: nLanes }, (_, i) => i + 1).map(n => {
+                  const [d, t] = laneDone(n);
+                  return <button key={n} onClick={() => setLane(n)} aria-pressed={lane === n} style={{ ...chip(lane === n), flexDirection: "column", lineHeight: 1.1, padding: "4px 12px" }}>
+                    <span>Lane {n}</span><span style={{ fontSize: 12, fontWeight: 700 }}>{t ? `${d}/${t}` : "—"}</span></button>;
+                })}
+              </div>
+            ) : (
+              <select value={evNum ?? ""} onChange={e => setEvNum(+e.target.value)} aria-label="Event"
+                style={{ width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 12px", fontSize: 16, marginBottom: 10 }}>
+                {meet.events.map(ev => <option key={ev.eventNum} value={ev.eventNum}>#{evLabel(ev)} {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</option>)}
+              </select>
+            )}
+            <div style={{ ...TM_CAPTION, marginBottom: 8 }}>
+              Type the watch times as digits — 2345 is 23.45, 10345 is 1:03.45. Enter goes to the next box. Two watches are averaged.
+              {rows.length > 0 && <b> {done} of {rows.length} done.</b>}
+            </div>
+            {rows.length === 0 && <div style={{ ...rowStyle(), ...TM_CAPTION }}>{mode === "lane" ? `Nobody is seeded in lane ${lane}.` : "Nobody is seeded in this event."} Seed the meet first.</div>}
+            {rows.map(({ ev, h, l }, i) => (
+              <div key={`${ev.eventNum}-${h.heatNum}-${l.lane}`} style={{ ...rowStyle(l.finalMs != null ? TM.run : l.dq ? TM.live : undefined), marginBottom: 6, padding: "8px 10px" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <b style={{ fontSize: 15, whiteSpace: "nowrap" }}>{mode === "lane" ? `E${evLabel(ev)} · H${h.heatNum}` : `H${h.heatNum} · L${l.lane}`}</b>
+                  <span style={{ flex: 1, fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span>
+                  <span style={TM_CAPTION}>{l.team}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                  <SwimTimeBox key={`w1-${l.watch1}`} idx={i * 2} value={l.watch1 ?? (l.watch2 == null ? l.finalMs : null)} label={`Watch 1, ${l.name}`} onCommit={ms => setWatch(ev, h, l, "watch1", ms)} />
+                  <SwimTimeBox key={`w2-${l.watch2}`} idx={i * 2 + 1} value={l.watch2} label={`Watch 2, ${l.name}`} onCommit={ms => setWatch(ev, h, l, "watch2", ms)} />
+                  <span style={{ flex: 1, textAlign: "right", fontSize: 18, fontWeight: 900, fontVariantNumeric: "tabular-nums", color: l.dq ? TM.live : TM.ink }}>
+                    {l.dq ? "DQ" : l.finalMs != null ? formatSwimTime(l.finalMs) : ""}
+                  </span>
+                  <button onClick={() => patchLane(ev.eventNum, h.heatNum, l.lane, x => ({ ...x, dq: !x.dq }))} aria-pressed={!!l.dq}
+                    style={{ ...btnStyle(TM.live, !l.dq), minHeight: 38, padding: "0 10px", fontSize: 14 }}>DQ</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+
       function App() {
         const [view, setView] = useState("myraces");
         const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
@@ -15049,7 +15153,9 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                             <div style={{ display:"flex", gap:6, marginBottom:12 }}>
                               <button style={swimTabStyle(swimResultsTab === "results")} onClick={() => setSwimResultsTab("results")}>Event Results</button>
                               <button style={swimTabStyle(swimResultsTab === "scores")} onClick={() => setSwimResultsTab("scores")}>Team Scores</button>
+                              <button style={swimTabStyle(swimResultsTab === "enter")} onClick={() => setSwimResultsTab("enter")}>✍️ Enter times</button>
                             </div>
+                            {swimResultsTab === "enter" && <SwimTimesEntry meet={swimMeet} setMeet={setSwimMeet} />}
 
                             {swimResultsTab === "results" && (() => {
                               const selEv = swimMeet.events.find(e => e.eventNum === swimResultsEvent);
