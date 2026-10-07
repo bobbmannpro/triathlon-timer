@@ -3803,33 +3803,35 @@ ${html}</body></html>`);
 
       // Preview + share. Built before the Share tap so the phone's share sheet
       // opens straight from that tap (iPhones require it).
+      const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
       function CertShareModal({ state, onClose }) {
         if (!state) return null;
         const canShare = !!(state.file && navigator.canShare && navigator.canShare({ files: [state.file] }));
-        const share = async () => {
-          try { await navigator.share({ files: [state.file], title: state.title, text: state.text }); } catch (_) {}
-        };
-        const save = () => {
+        const share = async () => { try { await navigator.share({ files: [state.file], title: state.title, text: state.text }); } catch (_) {} };
+        // A website can't write to the photo gallery itself. On an iPhone the
+        // share sheet's first option is "Save Image" (to Photos); on Android a
+        // download lands in the Download folder, which Photos/Gallery shows.
+        const save = async () => {
+          if (IS_IOS && canShare) { try { await navigator.share({ files: [state.file] }); } catch (_) {} return; }
           const a = document.createElement("a"); a.href = state.url; a.download = state.file.name;
           document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 500);
         };
+        const saveFirst = state.mode === "save";
+        const saveBtn = <button key="save" onClick={save} style={{ ...btnStyle(TM.ink, !saveFirst), width: "100%", marginTop: saveFirst ? 12 : 8, fontSize: 17, minHeight: 54 }}>⬇ Save to Photos</button>;
+        const shareBtn = canShare ? <button key="share" onClick={share} style={{ ...btnStyle(TM.ink, saveFirst), width: "100%", marginTop: saveFirst ? 8 : 12, fontSize: 17, minHeight: 54 }}>📤 Share — Instagram, Facebook, Messages…</button> : null;
         return (
-          <div role="dialog" aria-modal="true" aria-label="Share certificate" onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+          <div role="dialog" aria-modal="true" aria-label="Certificate" onClick={e => { if (e.target === e.currentTarget) onClose(); }}
             style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(11,13,16,0.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-            <div style={{ background: "#FFFFFF", borderRadius: 10, padding: 16, width: "100%", maxWidth: 560 }}>
-              <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Share {state.name}'s certificate</div>
+            <div style={{ background: "#FFFFFF", borderRadius: 10, padding: 16, width: "100%", maxWidth: 560, maxHeight: "100%", overflowY: "auto" }}>
+              <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>{state.name}’s certificate</div>
               {state.url
-                ? <img src={state.url} alt={`${state.name}'s certificate`} style={{ width: "100%", borderRadius: 4, border: `2px solid ${TM.line}` }} />
+                ? <img src={state.url} alt={`${state.name}’s certificate`} style={{ width: "100%", borderRadius: 4, border: `2px solid ${TM.line}`, WebkitTouchCallout: "default" }} />
                 : <div style={{ ...rowStyle(), textAlign: "center", padding: 40, fontWeight: 700 }}>Making the certificate…</div>}
               {state.url && (<>
-                {canShare && (
-                  <button onClick={share} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 12, fontSize: 17, minHeight: 54 }}>
-                    📤 Share — Instagram, Facebook, Messages…
-                  </button>
-                )}
-                <button onClick={save} style={{ ...btnStyle(TM.ink, canShare), width: "100%", marginTop: 8, fontSize: 16 }}>⬇ Save image</button>
+                {saveFirst ? [saveBtn, shareBtn] : [shareBtn, saveBtn]}
                 <div style={{ ...TM_CAPTION, marginTop: 8 }}>
-                  {canShare ? "Pick Instagram or Facebook in the list. You can add your own race photos to the post there." : "Saved images can be posted from your phone's photos, or uploaded to Facebook or Instagram."}
+                  {IS_IOS ? "Save to Photos: tap Save Image at the top of the list. " : "Saved certificates show up in your Photos / Gallery (Download folder). "}
+                  Or press and hold the picture to save it. To post, pick Instagram or Facebook under Share — you can add your own race photos there.
                 </div>
               </>)}
               <button onClick={onClose} style={{ ...btnStyle(TM.ink, true), width: "100%", marginTop: 10 }}>Close</button>
@@ -3863,18 +3865,22 @@ ${html}</body></html>`);
         // Age groups — fully customizable per race
         const [ageGroups, setAgeGroups] = useState(DEFAULT_AGE_GROUPS);
         const [certShare, setCertShare] = useState(null);   // { name, title, url, file, text } while the share preview is open
-        async function openCertShare(race, ath) {
+        async function openCertShare(race, ath, mode = "share") {
           if (!race || !ath) return;
           const d = certDataFromLive(race, ath);
-          setCertShare({ name: ath.name || "Athlete", title: d.eventName });
+          setCertShare({ name: ath.name || "Athlete", title: d.eventName, mode });
           let blob = null;
           try { blob = await drawCertificatePng(d); } catch (e) { console.error(e); }
           if (!blob) { setCertShare(null); alert("Couldn't make the certificate."); return; }
           const file = new File([blob], safeFileName(`${d.name} - ${d.eventName}`) + ".png", { type: "image/png" });
-          setCertShare(cur => cur && { ...cur, url: URL.createObjectURL(blob), file,
+          const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
+          setCertShare(cur => cur && { ...cur, url: dataUrl, file,
             text: `${d.name} finished ${d.eventName}${d.chipMs != null ? " in " + formatElapsed(d.chipMs) : ""}! 🏊🚴🏃` });
         }
-        function closeCertShare() { setCertShare(cur => { if (cur && cur.url) URL.revokeObjectURL(cur.url); return null; }); }
+        function closeCertShare() { setCertShare(null); }
+        // The host's own race, shaped like a live race, for certificates from the Results tab.
+        const hostCertRace = () => ({ raceName: certConfig.eventName || "Race", athletes, courses, units, ageGroups, segments: SEGMENTS,
+          cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC", logo: certConfig.customLogoB64 || null } });
         const [certConfig, setCertConfig] = useState({ eventName: "Timeathon Race Event", accentColor: "#0B3FCC", orgName: "", customLogoB64: null });
         const [units, setUnits] = useState({ swim: "yards", bike: "miles", run: "miles" });
         const [loadedRaceId, setLoadedRaceId] = useState(null);
@@ -12097,9 +12103,10 @@ ${html}</body></html>`);
                                 <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2, color: TM.run }}>🏁 FINISHED</div>
                                 <div className="tm-metric" style={{ fontSize: 48, letterSpacing: 0, color: TM.ink, lineHeight: 1.1 }}>{chip != null ? fmtSplit(chip) : "—"}</div>
                                 {place && <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{place <= 3 ? ["🥇","🥈","🥉"][place - 1] + " " : ""}{ord(place)} in {feed.label}</div>}
-                                <button onClick={() => openCertShare(joinLiveData, me)} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 12, fontSize: 16 }}>
-                                  📤 Share my certificate
-                                </button>
+                                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                                  <button onClick={() => openCertShare(joinLiveData, me, "share")} style={{ ...btnStyle(TM.ink), flex: 1, fontSize: 16 }}>📤 Share certificate</button>
+                                  <button onClick={() => openCertShare(joinLiveData, me, "save")} style={{ ...btnStyle(TM.ink, true), flex: 1, fontSize: 16 }}>⬇ Save certificate</button>
+                                </div>
                               </div>
                             );
                           })()}
@@ -12941,8 +12948,12 @@ ${html}</body></html>`);
                                       <div>
                                         <div style={{ fontSize: 14, fontWeight: 700, color: "#04613F", letterSpacing: 1 }}>FINISHED</div>
                                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 24, color: "#04613F", letterSpacing: 0.5, lineHeight: 1.2 }}>{formatElapsed(ath.finishMs)}</div>
-                                        <button onClick={e => { e.stopPropagation(); openCertShare(liveRace, ath); }} aria-label={`Share ${ath.name}'s certificate`}
-                                          style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 10px", fontSize: 14, marginTop: 4 }}>📤 Share</button>
+                                        <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 4 }}>
+                                          <button onClick={e => { e.stopPropagation(); openCertShare(liveRace, ath, "share"); }} aria-label={`Share ${ath.name}’s certificate`}
+                                            style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 10px", fontSize: 14 }}>📤 Share</button>
+                                          <button onClick={e => { e.stopPropagation(); openCertShare(liveRace, ath, "save"); }} aria-label={`Save ${ath.name}’s certificate`}
+                                            style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 10px", fontSize: 14 }}>⬇ Save</button>
+                                        </div>
                                       </div>
                                     ) : ath.started ? (
                                       <div>
@@ -14536,7 +14547,17 @@ ${html}</body></html>`);
                               <tr key={ath.id} style={{ borderBottom: "2px solid #C9C5BC", background: place === 0 && chip !== null ? "#EFEDE8" : "transparent" }}>
                                 <td style={{ padding: "10px 8px", fontFamily: "var(--tm-font)", fontSize: 20, color: placeColor }}>{place + 1}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#0B3FCC", fontFamily: "var(--tm-font)", fontSize: 14, whiteSpace: "nowrap" }}>{ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
-                                <td style={{ padding: "10px 8px", fontWeight: 700, color: "#0B0D10", whiteSpace: "nowrap" }}>{ath.name}</td>
+                                <td style={{ padding: "10px 8px", fontWeight: 700, color: "#0B0D10", whiteSpace: "nowrap" }}>
+                                  {ath.name}
+                                  {chip !== null && (
+                                    <span style={{ display: "inline-flex", gap: 4, marginLeft: 8, verticalAlign: "middle" }}>
+                                      <button onClick={() => openCertShare(hostCertRace(), ath, "share")} aria-label={`Share ${ath.name}’s certificate`} title="Share certificate"
+                                        style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 8px", fontSize: 13 }}>📤 Share</button>
+                                      <button onClick={() => openCertShare(hostCertRace(), ath, "save")} aria-label={`Save ${ath.name}’s certificate`} title="Save certificate"
+                                        style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 8px", fontSize: 13 }}>⬇ Save</button>
+                                    </span>
+                                  )}
+                                </td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: ath.gender === "Female" ? "#B3001B" : "#04613F", fontSize: 14, whiteSpace: "nowrap" }}>{ath.gender}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#04613F", fontSize: 14, whiteSpace: "nowrap" }}>{ath.ageGroup}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#04613F", fontWeight: 700, whiteSpace: "nowrap" }}>{agp !== null ? agp : "--"}</td>
