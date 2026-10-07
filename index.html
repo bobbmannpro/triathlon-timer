@@ -936,7 +936,7 @@
               <div>
                 <label htmlFor={idBase + "-len"} style={lbl}>One lap is</label>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input id={idBase + "-len"} type="number" min="0.01" step="any"
+                  <NumInput id={idBase + "-len"} type="number" min="0.01" step="any"
                     value={value == null ? "" : String(value).length > 7 ? +Number(value).toFixed(4) : value}
                     onChange={e => onChange(e.target.value === "" ? null : Number(e.target.value))} style={box} />
                   <span style={{ fontWeight: 800, fontSize: 17 }}>{short}</span>
@@ -945,7 +945,7 @@
               {perLabel && (
                 <div>
                   <label htmlFor={idBase + "-per"} style={lbl}>{perLabel}</label>
-                  <input id={idBase + "-per"} type="number" min="0.1" step="any" value={perUnit}
+                  <NumInput id={idBase + "-per"} type="number" min="0.1" step="any" value={perUnit}
                     onChange={e => { const n = Number(e.target.value); onChange(n > 0 ? 1 / n : null); }} style={box} />
                 </div>
               )}
@@ -2298,6 +2298,20 @@
       const SERVER_CLOCK = { offset: 0 };
       try { rtdb.ref(".info/serverTimeOffset").on("value", sn => { if (!SERVER_CLOCK.synced) SERVER_CLOCK.offset = sn.val() || 0; }); } catch (_) {}
       function serverNow() { return Date.now() + SERVER_CLOCK.offset; }
+      // Connection lights. Each side writes a heartbeat (server time) every
+      // second; the other side shows green only while the latest heartbeat is
+      // under HEARTBEAT_STALE_MS old by the shared clock, re-checked 4× a
+      // second — so a dropped phone or host goes grey within ~2 s on both ends,
+      // even on the side that lost signal and can't hear anything.
+      const HEARTBEAT_STALE_MS = 2200;
+      SERVER_CLOCK.connected = false;
+      try { rtdb.ref(".info/connected").on("value", sn => { SERVER_CLOCK.connected = !!sn.val(); }); } catch (_) {}
+      function heartbeatFresh(at) { return !!at && SERVER_CLOCK.connected && serverNow() - at < HEARTBEAT_STALE_MS; }
+      // Re-render every 250 ms while some screen needs live connection lights.
+      function useTicker(on, ms = 250) {
+        const [, setT] = useState(0);
+        useEffect(() => { if (!on) return; const id = setInterval(() => setT(t => t + 1), ms); return () => clearInterval(id); }, [on, ms]);
+      }
       // Firebase's own offset is a one-shot guess that can be off by the network
       // delay. This measures it: write the server's timestamp, note how long the
       // round trip took, and keep the quickest of six tries. The server's time
@@ -3639,6 +3653,22 @@ ${html}</body></html>`);
         );
       }
 
+      // A number box you can clear and retype. A plain controlled number input
+      // snaps straight back to a number (0, 1, the old value…) the moment it's
+      // emptied, so a new number can't be typed in its place. This keeps what's
+      // typed while the box has focus, tells the screen about each change as
+      // usual, and shows the screen's value again when you leave the box.
+      function NumInput({ value, onChange, onFocus, onBlur, ...rest }) {
+        const shown = v => (v == null || (typeof v === "number" && isNaN(v)) ? "" : String(v));
+        const [txt, setTxt] = useState(shown(value));
+        const focused = useRef(false);
+        useEffect(() => { if (!focused.current) setTxt(shown(value)); }, [value]);
+        return <input {...rest} value={txt}
+          onFocus={e => { focused.current = true; if (onFocus) onFocus(e); }}
+          onBlur={e => { focused.current = false; setTxt(shown(value)); if (onBlur) onBlur(e); }}
+          onChange={e => { setTxt(e.target.value); if (onChange) onChange(e); }} />;
+      }
+
       function App() {
         const [view, setView] = useState("myraces");
         const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
@@ -4627,6 +4657,22 @@ ${html}</body></html>`);
         // Live session state (host side)
         const [swimLiveCode, setSwimLiveCode] = useState(null);
         const swimLiveRef = useRef(null);
+        const [swimTimersLive, setSwimTimersLive] = useState({});   // { lane: { at, name } } from the lane phones
+        useEffect(() => {
+          if (!swimLiveCode) { setSwimTimersLive({}); return; }
+          const base = `swimLive/${swimLiveCode}`;
+          const hostRef = rtdb.ref(`${base}/hostAt`);
+          const beat = () => hostRef.set(firebase.database.ServerValue.TIMESTAMP).catch(() => {});
+          try { hostRef.onDisconnect().remove(); } catch (_) {}
+          beat();
+          const id = setInterval(beat, 1000);
+          const tRef = rtdb.ref(`${base}/timers`);
+          const fn = sn => setSwimTimersLive(sn.val() || {});
+          tRef.on("value", fn);
+          return () => { clearInterval(id); tRef.off("value", fn); hostRef.remove().catch(() => {}); };
+        }, [swimLiveCode]);
+        useTicker(!!swimLiveCode);
+        const timerOn = lane => { const t = swimTimersLive[lane] || (Array.isArray(swimTimersLive) ? swimTimersLive[lane] : null); return !!(t && heartbeatFresh(t.at)); };
 
         // Lane timer state (all roles)
         const swimLaneListenerRef = useRef(null);
@@ -4884,6 +4930,19 @@ ${html}</body></html>`);
             syncServerClock(`swimLive/${swimLaneCode}/clock/lane${swimLaneNum}`).then(err => { if (err) setSwimLaneClockErr(err); });
           if (curr === "racing" && prev !== "racing" && !(swimLaneSession.results && swimLaneSession.results[swimLaneNum])) setSwimLaneFinished(false);
         }, [swimLaneSession?.status, swimLaneSession?.startedAt]);
+
+        // Lane timer: tell the host this lane is covered, every second.
+        useEffect(() => {
+          if (view !== "swimlane" || !swimLaneSession || !swimLaneCode) return;
+          const ref = rtdb.ref(`swimLive/${swimLaneCode}/timers/${swimLaneNum}`);
+          const who = (userProfile && (userProfile.firstName || "")) || (currentUser && (currentUser.displayName || (currentUser.email || "").split("@")[0])) || "Timer";
+          const beat = () => ref.set({ at: firebase.database.ServerValue.TIMESTAMP, name: who }).catch(() => {});
+          try { ref.onDisconnect().remove(); } catch (_) {}
+          beat();
+          const id = setInterval(beat, 1000);
+          return () => { clearInterval(id); ref.remove().catch(() => {}); };
+        }, [view, !!swimLaneSession, swimLaneCode, swimLaneNum]);
+        useTicker(view === "swimlane" && !!swimLaneSession);
 
         // Lane timer: keep the phone's screen on while it's timing a lane.
         useEffect(() => {
@@ -11026,15 +11085,15 @@ ${html}</body></html>`);
                         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             <label style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1 }}>{manualUnits.swim === "meters" ? "SWIM (meters)" : "SWIM (yards)"}</label>
-                            <input type="number" min="1" value={manualCourse.swimYards} onChange={e => setManualCourse(c => ({ ...c, swimYards: +e.target.value }))} style={distInputStyle} />
+                            <NumInput type="number" min="1" value={manualCourse.swimYards} onChange={e => setManualCourse(c => ({ ...c, swimYards: +e.target.value }))} style={distInputStyle} />
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             <label style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>{manualUnits.bike === "km" ? "BIKE (km)" : "BIKE (miles)"}</label>
-                            <input type="number" min="0.1" step="0.1" value={manualCourse.bikeMiles} onChange={e => setManualCourse(c => ({ ...c, bikeMiles: +e.target.value }))} style={distInputStyle} />
+                            <NumInput type="number" min="0.1" step="0.1" value={manualCourse.bikeMiles} onChange={e => setManualCourse(c => ({ ...c, bikeMiles: +e.target.value }))} style={distInputStyle} />
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             <label style={{ fontSize: 14, color: "#04613F", letterSpacing: 1 }}>{manualUnits.run === "km" ? "RUN (km)" : "RUN (miles)"}</label>
-                            <input type="number" min="0.1" step="0.1" value={manualCourse.runMiles} onChange={e => setManualCourse(c => ({ ...c, runMiles: +e.target.value }))} style={distInputStyle} />
+                            <NumInput type="number" min="0.1" step="0.1" value={manualCourse.runMiles} onChange={e => setManualCourse(c => ({ ...c, runMiles: +e.target.value }))} style={distInputStyle} />
                           </div>
                         </div>
                       </div>
@@ -11068,15 +11127,15 @@ ${html}</body></html>`);
                               </select>
                               {s.type === "range" ? (
                                 <>
-                                  <input type="number" value={s.a} min={0} max={s.b - 1} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
+                                  <NumInput type="number" value={s.a} min={0} max={s.b - 1} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
                                     style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                                   <span style={{ color: "#3D434B", fontSize: 14 }}>–</span>
-                                  <input type="number" value={s.b} min={s.a + 1} max={199} onChange={e => updateAg(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
+                                  <NumInput type="number" value={s.b} min={s.a + 1} max={199} onChange={e => updateAg(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
                                     style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                                 </>
                               ) : (
                                 <>
-                                  <input type="number" value={s.a} min={0} max={199} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
+                                  <NumInput type="number" value={s.a} min={0} max={199} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
                                     style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                                   <span style={{ fontSize: 14, color: "#3D434B" }}>{s.type === "under" ? "and under" : "and over"}</span>
                                 </>
@@ -13175,7 +13234,7 @@ ${html}</body></html>`);
                             {courses.map(course => (
                               <div key={course.id} style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
                                 <label htmlFor={`d-${seg}-${course.id}`} style={{ flex: 1, minWidth: 0, fontWeight: 800, fontSize: 16 }}>{course.name || "Course"}</label>
-                                <input id={`d-${seg}-${course.id}`} type="number" min={step} step={step} value={course[field]}
+                                <NumInput id={`d-${seg}-${course.id}`} type="number" min={step} step={step} value={course[field]}
                                   onChange={e => updateCourse(course.id, field, Number(e.target.value))}
                                   style={{ width: 130, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px",
                                            color: TM.ink, textAlign: "center", outline: "none" }} />
@@ -13307,17 +13366,17 @@ ${html}</body></html>`);
                             </select>
                             {s.type === "range" ? (
                               <>
-                                <input type="number" value={s.a} min={0} max={s.b - 1}
+                                <NumInput type="number" value={s.a} min={0} max={s.b - 1}
                                   onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
                                   style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                                 <span style={{ color: "#3D434B", fontSize: 14 }}>–</span>
-                                <input type="number" value={s.b} min={s.a + 1} max={199}
+                                <NumInput type="number" value={s.b} min={s.a + 1} max={199}
                                   onChange={e => update(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
                                   style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                               </>
                             ) : (
                               <>
-                                <input type="number" value={s.a} min={0} max={199}
+                                <NumInput type="number" value={s.a} min={0} max={199}
                                   onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
                                   style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
                                 <span style={{ fontSize: 14, color: "#3D434B" }}>{s.type === "under" ? "and under" : "and over"}</span>
@@ -13627,7 +13686,7 @@ ${html}</body></html>`);
                           </button>
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <span style={{ fontSize: 14, color: "#3D434B" }}>±</span>
-                            <input type="number" min="5" max="500" value={wp.radiusM}
+                            <NumInput type="number" min="5" max="500" value={wp.radiusM}
                               onChange={e => setWaypoints(wps => wps.map((w, i) => i === wi ? { ...w, radiusM: +e.target.value } : w))}
                               style={{ width: 52, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 6px", color: "#0B0D10", fontSize: 14, outline: "none", textAlign: "center" }} />
                             <span style={{ fontSize: 14, color: "#3D434B" }}>m</span>
@@ -13665,7 +13724,7 @@ ${html}</body></html>`);
                         {waypoints.filter(w => w.action === "lap").map(w => (
                           <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                             <span style={{ fontSize: 14, color: "#0B0D10" }}>{w.label} loop length</span>
-                            <input type="number" step="0.01" min="0" value={w.lapMi ?? ""}
+                            <NumInput type="number" step="0.01" min="0" value={w.lapMi ?? ""}
                               onChange={e => setWaypoints(wps => wps.map(x => x.id === w.id
                                 ? { ...x, lapMi: e.target.value === "" ? null : +e.target.value } : x))}
                               style={{ ...editInputStyle, width: 80 }} />
@@ -15140,7 +15199,7 @@ ${html}</body></html>`);
                                 return (<>
                                   <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
                                     <button type="button" onClick={() => setLanes(n - 1)} disabled={n <= 1} aria-label="One lane fewer" style={{ ...step, opacity: n <= 1 ? 0.4 : 1 }}>−</button>
-                                    <input id="swim-lanes" type="number" inputMode="numeric" min="1" max="20" value={n} aria-label="Number of lanes"
+                                    <NumInput id="swim-lanes" type="number" inputMode="numeric" min="1" max="20" value={n} aria-label="Number of lanes"
                                       onChange={e => { if (e.target.value !== "") setLanes(+e.target.value); }}
                                       style={{ width: 90, minHeight: 56, borderRadius: 6, border: "none", background: "#FFFFFF", color: TM.swim,
                                                fontSize: 30, fontWeight: 900, textAlign: "center", outline: "none" }} />
@@ -15418,13 +15477,13 @@ ${html}</body></html>`);
                                 </div>
                                 <div style={{ flex:1, minWidth:80 }}>
                                   <div style={S.label}>Heats</div>
-                                  <input type="number" min={1} max={99} value={swimNewEvent.heats}
+                                  <NumInput type="number" min={1} max={99} value={swimNewEvent.heats}
                                     onChange={e => setSwimNewEvent(x => ({...x, heats:parseInt(e.target.value)||1}))}
                                     style={{...S.input}} />
                                 </div>
                                 <div style={{ flex:1, minWidth:80 }}>
                                   <div style={S.label}>Lanes</div>
-                                  <input type="number" min={1} max={10} value={swimNewEvent.lanes}
+                                  <NumInput type="number" min={1} max={10} value={swimNewEvent.lanes}
                                     onChange={e => setSwimNewEvent(x => ({...x, lanes:parseInt(e.target.value)||8}))}
                                     style={{...S.input}} />
                                 </div>
@@ -15635,7 +15694,15 @@ ${html}</body></html>`);
                                       Stop
                                     </button>
                                   </div>
-                                  <div style={{ fontSize:14, color:"#3D434B" }}>Lane operators: open app → 🏁 Lane tab → enter this code</div>
+                                  <div style={{ fontSize:14, color:"#3D434B" }}>Lane timers: open the app → <b>Lane timer</b> → this code → their lane.</div>
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }} aria-label="Lane timers connected">
+                                    {Array.from({ length: swimMeet.lanes || 8 }, (_, i) => i + 1).map(n => {
+                                      const on = timerOn(n), t = swimTimersLive[n];
+                                      return <div key={n} title={on && t && t.name ? t.name : ""} style={{ minWidth: 52, textAlign: "center", borderRadius: 6, padding: "6px 8px", fontWeight: 900, fontSize: 15,
+                                        background: on ? "#04613F" : "#FFFFFF", color: on ? "#FFFFFF" : "#3D434B", border: `2px solid ${on ? "#04613F" : "#C9C5BC"}` }}>
+                                        {n}<div style={{ fontSize: 11, fontWeight: 700 }}>{on ? (t && t.name ? String(t.name).slice(0, 8) : "on") : "—"}</div></div>;
+                                    })}
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -15644,11 +15711,13 @@ ${html}</body></html>`);
                             {activeHt.lanes.sort((a,b) => a.lane - b.lane).map(sw => {
                               const finished = sw.finalMs != null;
                               const isDq = sw.dq;
+                              const tOn = swimLiveCode && timerOn(sw.lane);
                               return (
-                                <div key={sw.lane} style={{ background: finished ? "#EFEDE8" : "#EFEDE8", border: `2px solid ${swimHostClickerDetecting === sw.lane ? "#8A5A00" : finished ? "#C9C5BC" : isDq ? "#C9C5BC" : "#C9C5BC"}`, borderRadius:8, padding:"12px 14px", marginBottom:8 }}>
+                                <div key={sw.lane} style={{ background: tOn ? "#CDEFD8" : "#EFEDE8", boxShadow: tOn ? "inset 0 0 0 3px #04613F" : "none", border: `2px solid ${swimHostClickerDetecting === sw.lane ? "#8A5A00" : finished ? "#C9C5BC" : isDq ? "#C9C5BC" : "#C9C5BC"}`, borderRadius:8, padding:"12px 14px", marginBottom:8 }}>
                                   <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
-                                    <div style={{ background:"#EFEDE8", borderRadius:4, padding:"4px 10px", fontSize:14, fontWeight:700, color:"#04613F" }}>
+                                    <div style={{ background: swimLiveCode && timerOn(sw.lane) ? "#04613F" : "#EFEDE8", borderRadius:4, padding:"4px 10px", fontSize:14, fontWeight:700, color: swimLiveCode && timerOn(sw.lane) ? "#FFFFFF" : "#04613F", textAlign: "center" }}>
                                       Lane {sw.lane}
+                                      {swimLiveCode && <div style={{ fontSize: 11, fontWeight: 800 }}>{timerOn(sw.lane) ? "● timer" : "no timer"}</div>}
                                     </div>
                                     <div style={{ flex:1 }}>
                                       <div style={{ fontSize:14, fontWeight:600, color: isDq ? "#B3001B" : "#0B0D10" }}>
@@ -16261,7 +16330,7 @@ ${html}</body></html>`);
                         </div>
                         <div style={{ flex:1, minWidth:70 }}>
                           <div style={{ fontSize:14, color:"#3D434B", marginBottom:3 }}>Lane #</div>
-                          <input
+                          <NumInput
                             type="number" min={1} max={10}
                             value={swimLaneNum}
                             onChange={e => setSwimLaneNum(parseInt(e.target.value) || 1)}
@@ -16303,6 +16372,20 @@ ${html}</body></html>`);
                           setSwimLaneFinished(false);
                         }}>Leave</button>
                       </div>
+
+                      {/* Connected to the host? Green only while the host's heartbeat is fresh. */}
+                      {(() => {
+                        const on = heartbeatFresh(swimLaneSession.hostAt);
+                        return (
+                          <div role="status" aria-live="polite" style={{ borderRadius: 8, padding: "12px 16px", marginBottom: 14, fontSize: 18, fontWeight: 900,
+                            background: on ? "#04613F" : "#EFEDE8", color: on ? "#FFFFFF" : "#B3001B", border: `3px solid ${on ? "#04613F" : "#B3001B"}` }}>
+                            {on ? `✓ Connected to host — Lane ${swimLaneNum}` : "✕ Not connected to the host"}
+                            <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2, opacity: 0.9 }}>
+                              {on ? "Keep this screen open." : "Keep this screen open — it reconnects by itself. Use your stopwatch until this is green."}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Lane + event/heat pill row */}
                       <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
@@ -17130,7 +17213,7 @@ ${html}</body></html>`);
                                   color: (cp.kind || "checkpoint") === k ? col : "#3D434B" }}>{label}</button>
                               ))}
                               {bikeDraft.multiDay && (
-                                <input value={cp.day ?? ""} onChange={e => setBikeDraft(d => {
+                                <NumInput value={cp.day ?? ""} onChange={e => setBikeDraft(d => {
                                   const c = [...d.checkpoints];
                                   c[i] = { ...c[i], day: e.target.value === "" ? null : Math.max(1, parseInt(e.target.value, 10) || 1) };
                                   return { ...d, checkpoints: c };
