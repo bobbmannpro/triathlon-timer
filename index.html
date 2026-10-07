@@ -3384,7 +3384,13 @@
         const swimLanePrevStatusRef = useRef(null);
 
         // Host clicker state
-        const [swimHostClickers, setSwimHostClickers] = useState([]);
+        // Lane buttons that act as a keyboard: { lane, key } chosen on this device,
+        // kept across reloads. Keys 1-9 (and 0 = lane 10) always work for their
+        // lane with no setup, so a wired button box needs no pairing.
+        const [swimHostClickers, setSwimHostClickers] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("swim-host-clickers") || "[]"); } catch (_) { return []; }
+        });
+        useEffect(() => { try { localStorage.setItem("swim-host-clickers", JSON.stringify(swimHostClickers)); } catch (_) {} }, [swimHostClickers]);
         const [swimHostClickerDetecting, setSwimHostClickerDetecting] = useState(null);
         const swimClockMsRef = useRef(0);
 
@@ -3749,11 +3755,13 @@
 
         // Host clicker trigger — fires finish for assigned lane during active race
         useEffect(() => {
-          if (view !== "swim" || swimView !== "race" || !swimClockStarted || swimHostClickers.length === 0) return;
+          if (view !== "swim" || swimView !== "race" || !swimClockStarted) return;
           const handler = (e) => {
             if (swimHostClickerDetecting !== null) return;
-            const clicker = swimHostClickers.find(c => c.key === e.key);
-            if (!clicker) return;
+            if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "")) return;   // typing, not a lane button
+            const clicker = swimHostClickers.find(c => c.key === e.key)
+              || (/^[0-9]$/.test(e.key) && !swimHostClickers.some(c => c.key === e.key) ? { lane: e.key === "0" ? 10 : +e.key, key: e.key } : null);
+            if (!clicker || e.repeat) return;
             e.preventDefault();
             const t = swimStartRef.current != null ? Date.now() - swimStartRef.current : swimClockMsRef.current;
             const { lane } = clicker;
@@ -14636,7 +14644,7 @@
                         <div style={S.card}>
                           <div style={{ fontSize:14, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", marginBottom:10 }}>📡 Clicker Assignments</div>
                           {swimHostClickers.length === 0 ? (
-                            <div style={{ fontSize:14, color:"#3D434B", marginBottom:10 }}>No clickers assigned yet.</div>
+                            <div style={{ fontSize:14, color:"#3D434B", marginBottom:10 }}>No custom buttons. Keys 1–9 finish lanes 1–9 (0 = lane 10) — a wired button box works with no setup.</div>
                           ) : (
                             <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 }}>
                               {swimHostClickers.map(c => (
