@@ -2516,6 +2516,9 @@
         if (!(ageUp && (ev.relay || /relay/i.test(ev.stroke || ""))) && lo && age < lo) return false;
         return true;
       }
+      // The day ages count from: the meet's age-up date, else its date, else today —
+      // the same day the entry screen uses, so printed ages match.
+      function meetAgeDate(meet) { return meet.ageUpDate || meet.date || new Date().toLocaleDateString("en-CA"); }
       function swimTeamName(meet, code) {
         const t = (meet.teams || []).find(t => t.code === code);
         return t ? t.name : code || "";
@@ -2537,7 +2540,7 @@
         return (meet.meetEntries || []).filter(s => (s.events || []).some(e => e.eventNum === ev.eventNum)).map(s => {
           const e = s.events.find(x => x.eventNum === ev.eventNum);
           return { id: s.id, name: s.name, firstName: s.firstName || "", lastName: s.lastName || "", team: s.team || "",
-            age: swimAgeOn(s, meet.ageUpDate || meet.date) || s.age || 0, seedMs: e.seedMs || null, seedTime: e.seedMs ? formatSwimTime(e.seedMs) : "NT" };
+            age: swimAgeOn(s, meetAgeDate(meet)) || s.age || 0, seedMs: e.seedMs || null, seedTime: e.seedMs ? formatSwimTime(e.seedMs) : "NT" };
         });
       }
       function syncEventEntries(meet) {
@@ -2665,7 +2668,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
         const [evPick, setEvPick] = useState(null);
         const [relayPick, setRelayPick] = useState(null);
         const [ageUp, setAgeUp] = useState(false);
-        const ageDate = meet.ageUpDate || meet.date || new Date().toLocaleDateString("en-CA");
+        const ageDate = meetAgeDate(meet);
         const input = { width: "100%", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 12px", color: TM.ink, fontSize: 16, boxSizing: "border-box" };
         const chip = on => ({ ...btnStyle(TM.ink, !on), minHeight: 40, padding: "0 14px", fontSize: 15 });
 
