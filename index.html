@@ -3763,11 +3763,11 @@ ${html}</body></html>`);
         const logo = await loadImg(d.logo);
         if (logo) {
           const bw = 1100, bh = bw * (logo.height || 1) / (logo.width || 1);
-          g.globalAlpha = 0.05; g.drawImage(logo, (W - bw) / 2, (H - bh) / 2, bw, bh); g.globalAlpha = 1;
+          g.globalAlpha = 0.03; g.drawImage(logo, (W - bw) / 2, (H - bh) / 2, bw, bh); g.globalAlpha = 1;
           const lh = 110, lw = Math.min(520, lh * (logo.width || 1) / (logo.height || 1));
-          g.drawImage(logo, (W - lw) / 2, 70, lw, lw * (logo.height || 1) / (logo.width || 1));
+          g.drawImage(logo, (W - lw) / 2, 95, lw, lw * (logo.height || 1) / (logo.width || 1));
         }
-        let y = 245;
+        let y = 280;
         g.fillStyle = d.accent; g.fillRect(W / 2 - 260, y - 40, 520, 6);
         center(d.eventName, y + 30, 900, 62, "#0B0D10"); y += 30;
         if (d.orgName) { center(d.orgName, y + 44, 700, 28, "#3D434B"); y += 44; }
