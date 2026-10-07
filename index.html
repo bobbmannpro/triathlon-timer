@@ -3575,19 +3575,29 @@
           return () => clearInterval(clockRef.current);
         }, [clockRunning]);
 
-        // Swim meet clock — 10ms interval for hundredths precision
+        // Swim meet clock — 10ms interval for hundredths precision. The start is
+        // the moment START ALL was tapped (swimStartAtRef), not when this runs.
+        const swimStartAtRef = useRef(null);
         useEffect(() => {
           if (swimClockRunning) {
-            swimStartRef.current = Date.now() - swimOffsetRef.current;
+            swimStartRef.current = (swimStartAtRef.current != null ? swimStartAtRef.current : Date.now()) - swimOffsetRef.current;
+            swimStartAtRef.current = null;
             swimClockRef.current = setInterval(() => {
               setSwimClockMs(Date.now() - swimStartRef.current);
             }, 10);
           } else {
             clearInterval(swimClockRef.current);
             swimOffsetRef.current = swimClockMs;
+            swimStartRef.current = null;   // paused or reset: finishes use the stopped clock
           }
           return () => clearInterval(swimClockRef.current);
         }, [swimClockRunning]);
+        // The swim clock at this instant, for stamping a finish: worked out from
+        // the start time, not the last number drawn on screen (which lags, and
+        // lags a lot when the screen is busy or the tab is in the background).
+        function swimNowMs() {
+          return swimStartRef.current != null ? Date.now() - swimStartRef.current : swimClockMs;
+        }
 
         // Beep when host's swim race starts
         useEffect(() => {
@@ -3745,7 +3755,7 @@
             const clicker = swimHostClickers.find(c => c.key === e.key);
             if (!clicker) return;
             e.preventDefault();
-            const t = swimClockMsRef.current;
+            const t = swimStartRef.current != null ? Date.now() - swimStartRef.current : swimClockMsRef.current;
             const { lane } = clicker;
             setSwimMeet(m => {
               const ev = m.events.find(ev2 => ev2.eventNum === swimActiveEvent);
@@ -13152,7 +13162,7 @@
             {view === "swim" && (() => {
 
                 function recordFinish(eventNum, heatNum, lane) {
-                  const t = swimClockMs;
+                  const t = swimNowMs();
                   setSwimMeet(m => ({
                     ...m,
                     events: m.events.map(ev => ev.eventNum !== eventNum ? ev : {
@@ -14281,6 +14291,7 @@
                                   </button>
                                   <button onClick={() => {
                                     playStartTone();
+                                    swimStartAtRef.current = Date.now();
                                     setSwimClockStarted(true);
                                     setSwimClockRunning(true);
                                     if (swimLiveCode) {
