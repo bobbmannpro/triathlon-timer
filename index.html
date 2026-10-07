@@ -3902,6 +3902,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
         const [swimSavedAt, setSwimSavedAt] = useState(null);
         const [swimImportMsg, setSwimImportMsg] = useState(null);
+        const [swimFileMsg, setSwimFileMsg] = useState(null);     // after opening a file from My Races
         const [swimTplOpen, setSwimTplOpen] = useState(false);     // ready-made meets list showing
         const [swimTplPick, setSwimTplPick] = useState(null);      // template id being previewed
         const [swimTplOff, setSwimTplOff] = useState({});          // { eventLabel: true } = left out
@@ -9246,6 +9247,45 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
           localStorage.setItem("swim-saved-meets", JSON.stringify(meets));
           if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimMeets").set(meets).catch(console.error);
         }
+        // A Timeathon meet file: events from the host, a team's entries
+        // from a coach, or the seeded program. Returns a message to show.
+        async function importMeetJson(file) {
+          let d;
+          try { d = JSON.parse(await file.text()); } catch (_) { return { ok: false, text: "That isn't a Timeathon meet file." }; }
+          if (!d || d.app !== "Timeathon" || !d.meet) return { ok: false, text: "That isn't a Timeathon meet file." };
+          const fm = d.meet;
+          const evs = asList(fm.events).map(ev => ({ ...ev, entries: asList(ev.entries), heats: asList(ev.heats).map(h => ({ ...h, lanes: asList(h.lanes).map(l => ({ ...l, legs: l.legs ? asList(l.legs) : null })) })) }));
+          const relaysOf = list => asList(list).map(r => ({ ...r, legs: asList(r.legs) }));
+          const entriesOf = list => asList(list).map(e => ({ ...e, events: asList(e.events) }));
+          const info = { meetName: fm.meetName, date: fm.date, facility: fm.facility, pool: fm.pool, lanes: fm.lanes, ageUpDate: fm.ageUpDate, meetUid: fm.meetUid, teams: asList(fm.teams) };
+          if (d.kind === "entries") {
+            if (!swimMeet.events.length) return { ok: false, text: "Open or set up the meet first, then open the coaches' entry files." };
+            if (swimMeet.meetUid && fm.meetUid && swimMeet.meetUid !== fm.meetUid && !window.confirm(`These entries are for “${fm.meetName}”, not this meet. Add them anyway?`)) return { ok: false, text: "Not added." };
+            const t = d.team || {}, code = t.code;
+            const ents = entriesOf(d.meetEntries), rels = relaysOf(d.relays);
+            setSwimMeet(m => syncEventEntries({ ...m,
+              teams: [...(m.teams || []).filter(x => x.code !== code), { code, name: t.name || code }],
+              meetEntries: [...(m.meetEntries || []).filter(e => e.team !== code), ...ents],
+              relays: [...(m.relays || []).filter(r => r.team !== code), ...rels] }));
+            const n = ents.reduce((k, e) => k + asList(e.events).length, 0);
+            return { ok: true, text: `Added ${t.name || code}: ${ents.length} swimmers, ${n} entries, ${rels.length} relays. Open the other teams' files, then seed.` };
+          }
+          if (d.kind === "meet" || d.kind === "program") {
+            const prog = d.kind === "program";
+            if (swimMeet.events.length && swimMeet.meetUid !== fm.meetUid && !window.confirm(`Replace the meet on screen with “${fm.meetName}”?`)) return { ok: false, text: "Not opened." };
+            const keep = !prog && swimMeet.meetUid && swimMeet.meetUid === fm.meetUid;
+            setSwimMeet(m => syncEventEntries({ ...m, ...info, _id: prog ? m._id : (keep ? m._id : undefined),
+              events: prog ? evs : evs.map(ev => ({ ...ev, heats: [{ heatNum: 1, lanes: [] }] })),
+              meetEntries: prog ? entriesOf(d.meetEntries) : (keep ? m.meetEntries : []),
+              relays: prog ? relaysOf(d.relays) : (keep ? m.relays : []) }));
+            setSwimExpandedEvents({});
+            return { ok: true, text: prog
+              ? `Opened the program for “${fm.meetName}” — print your team list, heat sheet or lane sheets below.`
+              : `Opened “${fm.meetName}”: ${evs.length} events. Add your swimmers in Who's swimming, then send your entries back.` };
+          }
+          return { ok: false, text: "That file type isn't supported." };
+        }
+
         function joinSwimWatchCode(codeIn) {
           const code = normCode(codeIn);
           if (!code) return;
@@ -9655,6 +9695,20 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
 
                     <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>More</h2>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <label style={{ ...rowStyle(RACE_KINDS.swim.colour), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
+                        <input type="file" accept=".json,application/json" style={{ display: "none" }} onChange={async e => {
+                          const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+                          const r = await importMeetJson(f);
+                          if (!r.ok) { alert(r.text); return; }
+                          selectMode("swim"); setView("swim"); setSwimView("setup"); setSwimSetupStep(0); setSwimHomeSection(null);
+                          setSwimFileMsg(r);
+                        }} />
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>📂 Open a swim meet file</span>
+                          <span style={{ display: "block", ...TM_CAPTION }}>From the host (events or program) or a coach (entries)</span>
+                        </span>
+                        <ArrowIcon size={24} />
+                      </label>
                       <button onClick={() => { selectMode("triathlon"); setView("manual"); }}
                         style={{ ...rowStyle(), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
                         <span style={{ flex: 1 }}>
@@ -14071,45 +14125,6 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                   setSwimEditEvt(null); setSwimEditForm(null);
                 }
 
-                // A Timeathon meet file: events from the host, a team's entries
-                // from a coach, or the seeded program. Returns a message to show.
-                async function importMeetJson(file) {
-                  let d;
-                  try { d = JSON.parse(await file.text()); } catch (_) { return { ok: false, text: "That isn't a Timeathon meet file." }; }
-                  if (!d || d.app !== "Timeathon" || !d.meet) return { ok: false, text: "That isn't a Timeathon meet file." };
-                  const fm = d.meet;
-                  const evs = asList(fm.events).map(ev => ({ ...ev, entries: asList(ev.entries), heats: asList(ev.heats).map(h => ({ ...h, lanes: asList(h.lanes).map(l => ({ ...l, legs: l.legs ? asList(l.legs) : null })) })) }));
-                  const relaysOf = list => asList(list).map(r => ({ ...r, legs: asList(r.legs) }));
-                  const entriesOf = list => asList(list).map(e => ({ ...e, events: asList(e.events) }));
-                  const info = { meetName: fm.meetName, date: fm.date, facility: fm.facility, pool: fm.pool, lanes: fm.lanes, ageUpDate: fm.ageUpDate, meetUid: fm.meetUid, teams: asList(fm.teams) };
-                  if (d.kind === "entries") {
-                    if (!swimMeet.events.length) return { ok: false, text: "Open or set up the meet first, then open the coaches' entry files." };
-                    if (swimMeet.meetUid && fm.meetUid && swimMeet.meetUid !== fm.meetUid && !window.confirm(`These entries are for “${fm.meetName}”, not this meet. Add them anyway?`)) return { ok: false, text: "Not added." };
-                    const t = d.team || {}, code = t.code;
-                    const ents = entriesOf(d.meetEntries), rels = relaysOf(d.relays);
-                    setSwimMeet(m => syncEventEntries({ ...m,
-                      teams: [...(m.teams || []).filter(x => x.code !== code), { code, name: t.name || code }],
-                      meetEntries: [...(m.meetEntries || []).filter(e => e.team !== code), ...ents],
-                      relays: [...(m.relays || []).filter(r => r.team !== code), ...rels] }));
-                    const n = ents.reduce((k, e) => k + asList(e.events).length, 0);
-                    return { ok: true, text: `Added ${t.name || code}: ${ents.length} swimmers, ${n} entries, ${rels.length} relays. Open the other teams' files, then seed.` };
-                  }
-                  if (d.kind === "meet" || d.kind === "program") {
-                    const prog = d.kind === "program";
-                    if (swimMeet.events.length && swimMeet.meetUid !== fm.meetUid && !window.confirm(`Replace the meet on screen with “${fm.meetName}”?`)) return { ok: false, text: "Not opened." };
-                    const keep = !prog && swimMeet.meetUid && swimMeet.meetUid === fm.meetUid;
-                    setSwimMeet(m => syncEventEntries({ ...m, ...info, _id: prog ? m._id : (keep ? m._id : undefined),
-                      events: prog ? evs : evs.map(ev => ({ ...ev, heats: [{ heatNum: 1, lanes: [] }] })),
-                      meetEntries: prog ? entriesOf(d.meetEntries) : (keep ? m.meetEntries : []),
-                      relays: prog ? relaysOf(d.relays) : (keep ? m.relays : []) }));
-                    setSwimExpandedEvents({});
-                    return { ok: true, text: prog
-                      ? `Opened the program for “${fm.meetName}” — print your team list, heat sheet or lane sheets below.`
-                      : `Opened “${fm.meetName}”: ${evs.length} events. Add your swimmers in Who's swimming, then send your entries back.` };
-                  }
-                  return { ok: false, text: "That file type isn't supported." };
-                }
-
                 function exportMeetEvents() {
                   const text = buildHyv(swimMeet);
                   const d = new Date((swimMeet.date || new Date().toLocaleDateString("en-CA")) + "T12:00:00");
@@ -14713,6 +14728,9 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                       if (st === 0) {
                         return (
                           <WizardStepList heading="Meet setup" subheading={swimMeet.meetName || "Swim meet"} steps={summaries} onJump={setSwimSetupStep}>
+                            {swimFileMsg && (
+                              <div role="status" style={{ ...rowStyle(TM.run), marginTop: 16, fontSize: 15, fontWeight: 700 }}>✓ {swimFileMsg.text}</div>
+                            )}
                             <button onClick={() => setSwimView("race")} disabled={nEvents === 0}
                               style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24, opacity: nEvents === 0 ? 0.45 : 1 }}>Go to race →</button>
                             <div style={{ marginTop: 16 }}>
