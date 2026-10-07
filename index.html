@@ -2086,7 +2086,7 @@
       // A Hy-Tek-style events file from this meet, so another host (or Meet
       // Manager) can start from the same events. Events only — no swimmers.
       function buildHyv(meet) {
-        const d = (meet.date || new Date().toISOString().slice(0, 10)).split("-");
+        const d = (meet.date || new Date().toLocaleDateString("en-CA")).split("-");   // en-CA = YYYY-MM-DD, local day
         const us = `${d[1]}/${d[2]}/${d[0]}`;
         const clean = v => String(v == null ? "" : v).replace(/[;\r\n]/g, " ").trim();
         const courseCode = { "25y": "Y", "25m": "S", "50m": "L" }[meet.pool || "25y"] || "Y";
@@ -2105,6 +2105,24 @@
         });
         return out.join("\r\n") + "\r\n";
       }
+      // Ready-made meets: events only, from the league's own Hy-Tek meets with
+      // club and pool names taken out, plus a few simple formats. Each is also
+      // a .hyv in meet-templates/ for coaches to download. "events" holds the
+      // .hyv event lines (number;F;sex;I/R;min;max;distance;stroke).
+      const SWIM_TEMPLATES = [
+        {"id": "summer-2026", "name": "Summer League Dual Meet — 2026", "blurb": "The 2026 summer format: relays first, then free, IM, back, breast and fly. Girls and boys swim separately; 13-17 relays are 200s.", "events": "1;F;X;R;0;6;100;1\n3;F;F;R;7;8;100;1\n4;F;M;R;7;8;100;1\n5;F;F;R;9;10;100;1\n6;F;M;R;9;10;100;1\n7;F;F;R;11;12;100;1\n8;F;M;R;11;12;100;1\n9A;F;F;R;13;17;200;1\n9B;F;M;R;13;17;200;1\n9C;F;X;R;13;17;200;1\n11;F;F;I;0;6;25;1\n12;F;M;I;0;6;25;1\n13;F;F;I;7;8;25;1\n14;F;M;I;7;8;25;1\n15;F;F;I;9;10;25;1\n16;F;M;I;9;10;25;1\n17A;F;F;I;11;12;50;1\n17B;F;M;I;11;12;50;1\n18;F;M;I;11;12;50;1\n19;F;F;I;13;14;50;1\n20;F;M;I;13;14;50;1\n21;F;F;I;15;17;50;1\n22;F;M;I;15;17;50;1\n23;F;X;I;0;6;100;5\n25;F;F;I;7;8;100;5\n26;F;M;I;7;8;100;5\n27;F;F;I;9;10;100;5\n28;F;M;I;9;10;100;5\n29;F;F;I;11;12;100;5\n30;F;M;I;11;12;100;5\n31;F;F;I;13;14;100;5\n32;F;M;I;13;14;100;5\n33;F;F;I;15;17;100;5\n34;F;M;I;15;17;100;5\n35;F;F;I;0;6;25;2\n36;F;M;I;0;6;25;2\n37;F;F;I;7;8;25;2\n38;F;M;I;7;8;25;2\n39;F;F;I;9;10;25;2\n40;F;M;I;9;10;25;2\n41A;F;F;I;11;12;50;2\n41B;F;F;I;13;14;50;2\n42;F;M;I;11;12;50;2\n43;F;F;I;13;14;50;2\n44;F;M;I;13;14;50;2\n45;F;F;I;15;17;50;2\n46;F;M;I;15;17;50;2\n47;F;F;I;0;6;25;3\n48;F;M;I;0;6;25;3\n49;F;F;I;7;8;25;3\n50;F;M;I;7;8;25;3\n51;F;F;I;9;10;25;3\n52;F;M;I;9;10;25;3\n53A;F;F;I;11;12;50;3\n53B;F;M;I;11;12;50;3\n53C;F;F;I;13;14;50;3\n53D;F;M;I;13;14;50;3\n54;F;M;I;11;12;50;3\n55;F;F;I;13;14;50;3\n56;F;M;I;13;14;50;3\n57;F;F;I;15;17;50;3\n58;F;M;I;15;17;50;3\n59;F;F;I;0;6;25;4\n60;F;M;I;0;6;25;4\n61;F;F;I;7;8;25;4\n62;F;M;I;7;8;25;4\n63;F;F;I;9;10;25;4\n64;F;M;I;9;10;25;4\n65;F;F;I;11;12;50;4\n66A;F;F;I;11;12;50;4\n66B;F;M;I;11;12;50;4\n66C;F;F;I;13;14;50;4\n66D;F;M;I;13;14;50;4\n67;F;F;I;13;14;50;4\n68;F;M;I;13;14;50;4\n69;F;F;I;15;17;50;4\n70;F;M;I;15;17;50;4\n71;F;X;R;0;6;100;5\n73;F;X;R;7;8;100;5\n75;F;X;R;9;10;100;5\n77;F;X;R;11;12;100;5\n79A;F;F;R;13;17;200;5\n79B;F;M;R;13;17;200;5\n79C;F;X;R;13;17;200;5", "file": "meet-templates/Summer League Dual Meet - 2026.hyv"},
+        {"id": "summer-champs", "name": "Summer League Championship", "blurb": "Championship order: every relay, 25s for 10 & under, 50s and 100 IM for 11 & up, girls and boys separate.", "events": "1;F;X;R;0;6;100;1\n3;F;F;R;7;8;100;1\n4;F;M;R;7;8;100;1\n5;F;F;R;9;10;100;1\n6;F;M;R;9;10;100;1\n7;F;F;R;11;12;100;1\n8;F;M;R;11;12;100;1\n9;F;F;R;13;17;100;1\n10;F;M;R;13;17;100;1\n11;F;F;I;0;6;25;1\n12;F;M;I;0;6;25;1\n13;F;F;I;7;8;25;1\n14;F;M;I;7;8;25;1\n15;F;F;I;9;10;25;1\n16;F;M;I;9;10;25;1\n17A;F;F;I;11;12;50;1\n17B;F;F;I;13;14;50;1\n17C;F;F;I;15;17;50;1\n18A;F;M;I;11;12;50;1\n18B;F;M;I;13;14;50;1\n18C;F;M;I;15;17;50;1\n19A;F;F;I;0;6;100;5\n19B;F;F;I;7;8;100;5\n19C;F;F;I;9;10;100;5\n20A;F;M;I;0;6;100;5\n20B;F;M;I;7;8;100;5\n20C;F;M;I;9;10;100;5\n21A;F;F;I;11;12;100;5\n21B;F;F;I;13;14;100;5\n21C;F;F;I;15;17;100;5\n22A;F;M;I;11;12;100;5\n22B;F;M;I;13;14;100;5\n22C;F;M;I;15;17;100;5\n23;F;F;I;0;6;25;2\n24;F;M;I;0;6;25;2\n25;F;F;I;7;8;25;2\n26;F;M;I;7;8;25;2\n27;F;F;I;9;10;25;2\n28;F;M;I;9;10;25;2\n29A;F;F;I;11;12;50;2\n29B;F;F;I;13;14;50;2\n29C;F;F;I;15;17;50;2\n30A;F;M;I;11;12;50;2\n30B;F;M;I;13;14;50;2\n30C;F;M;I;15;17;50;2\n31;F;F;I;0;6;25;3\n32;F;M;I;0;6;25;3\n33;F;F;I;7;8;25;3\n34;F;M;I;7;8;25;3\n35;F;F;I;9;10;25;3\n36;F;M;I;9;10;25;3\n37A;F;F;I;11;12;50;3\n37B;F;F;I;13;14;50;3\n37C;F;F;I;15;17;50;3\n38A;F;M;I;11;12;50;3\n38B;F;M;I;13;14;50;3\n38C;F;M;I;15;17;50;3\n39A;F;F;I;0;6;25;4\n39B;F;F;I;7;8;25;4\n39C;F;F;I;9;10;25;4\n40A;F;M;I;0;6;25;4\n40B;F;M;I;7;8;25;4\n40C;F;M;I;9;10;25;4\n41A;F;F;I;11;12;50;4\n41B;F;F;I;13;14;50;4\n41C;F;F;I;15;17;50;4\n42A;F;M;I;11;12;50;4\n42B;F;M;I;13;14;50;4\n42C;F;M;I;15;17;50;4\n43;F;X;R;0;8;100;5\n45;F;X;R;9;10;100;5\n47;F;X;R;11;12;100;5\n49;F;X;R;13;17;200;5", "file": "meet-templates/Summer League Championship.hyv"},
+        {"id": "summer-2024", "name": "Summer League Dual Meet — 2024", "blurb": "The 2024 summer format. 13-17 relays are 100s; IM split by age and gender.", "events": "1;F;X;R;0;6;100;1\n3;F;F;R;7;8;100;1\n4;F;M;R;7;8;100;1\n5;F;F;R;9;10;100;1\n6;F;M;R;9;10;100;1\n7;F;F;R;11;12;100;1\n8;F;M;R;11;12;100;1\n9;F;F;R;13;17;100;1\n10;F;M;R;13;17;100;1\n11;F;F;I;0;6;25;1\n12;F;M;I;0;6;25;1\n13;F;F;I;7;8;25;1\n14;F;M;I;7;8;25;1\n15;F;F;I;9;10;25;1\n16;F;M;I;9;10;25;1\n17A;F;F;I;11;12;50;1\n17B;F;F;I;13;14;50;1\n17C;F;F;I;15;17;50;1\n18A;F;M;I;11;12;50;1\n18B;F;M;I;13;14;50;1\n18C;F;M;I;15;17;50;1\n19A;F;F;I;0;6;100;5\n19B;F;M;I;0;6;100;5\n19C;F;F;I;7;8;100;5\n19D;F;M;I;7;8;100;5\n21A;F;F;I;9;10;100;5\n21B;F;M;I;9;10;100;5\n21C;F;F;I;11;12;100;5\n21D;F;M;I;11;12;100;5\n21E;F;F;I;13;14;100;5\n21F;F;M;I;13;14;100;5\n21G;F;F;I;15;17;100;5\n21H;F;M;I;15;17;100;5\n23;F;F;I;0;6;25;2\n24;F;M;I;0;6;25;2\n25A;F;F;I;7;8;25;2\n26;F;M;I;7;8;25;2\n27;F;F;I;9;10;25;2\n28;F;M;I;9;10;25;2\n29A;F;F;I;11;12;50;2\n29B;F;F;I;13;14;50;2\n29C;F;F;I;15;17;50;2\n30A;F;M;I;11;12;50;2\n30B;F;M;I;13;14;50;2\n30C;F;M;I;15;17;50;2\n31;F;X;I;0;6;25;3\n33A;F;F;I;7;8;25;3\n33B;F;F;I;9;10;25;3\n34A;F;M;I;7;8;25;3\n34B;F;M;I;9;10;25;3\n35A;F;F;I;11;12;50;3\n35B;F;F;I;13;14;50;3\n35C;F;F;I;15;17;50;3\n36A;F;M;I;11;12;50;3\n36B;F;M;I;13;14;50;3\n36C;F;M;I;15;17;50;3\n37;F;X;I;0;6;25;4\n39A;F;F;I;7;8;25;4\n39B;F;F;I;9;10;25;4\n40A;F;M;I;7;8;25;4\n40B;F;M;I;9;10;25;4\n41A;F;F;I;11;12;50;4\n41B;F;F;I;13;14;50;4\n41C;F;F;I;15;17;50;4\n42A;F;M;I;11;12;50;4\n42B;F;M;I;13;14;50;4\n42C;F;M;I;15;17;50;4\n43;F;X;R;0;8;100;5\n45;F;X;R;9;10;100;5\n47;F;X;R;11;12;100;5\n49;F;X;R;13;17;200;5", "file": "meet-templates/Summer League Dual Meet - 2024.hyv"},
+        {"id": "simple-summer", "name": "Simple Summer — 25s and 50s", "blurb": "25s of every stroke for 8 & under, 50s of every stroke for 9 & up. No relays or IM — easy to run.", "events": "1;F;F;I;0;6;25;1\n2;F;M;I;0;6;25;1\n3;F;F;I;7;8;25;1\n4;F;M;I;7;8;25;1\n5;F;F;I;9;10;50;1\n6;F;M;I;9;10;50;1\n7;F;F;I;11;12;50;1\n8;F;M;I;11;12;50;1\n9;F;F;I;13;14;50;1\n10;F;M;I;13;14;50;1\n11;F;F;I;15;17;50;1\n12;F;M;I;15;17;50;1\n13;F;F;I;0;6;25;2\n14;F;M;I;0;6;25;2\n15;F;F;I;7;8;25;2\n16;F;M;I;7;8;25;2\n17;F;F;I;9;10;50;2\n18;F;M;I;9;10;50;2\n19;F;F;I;11;12;50;2\n20;F;M;I;11;12;50;2\n21;F;F;I;13;14;50;2\n22;F;M;I;13;14;50;2\n23;F;F;I;15;17;50;2\n24;F;M;I;15;17;50;2\n25;F;F;I;0;6;25;3\n26;F;M;I;0;6;25;3\n27;F;F;I;7;8;25;3\n28;F;M;I;7;8;25;3\n29;F;F;I;9;10;50;3\n30;F;M;I;9;10;50;3\n31;F;F;I;11;12;50;3\n32;F;M;I;11;12;50;3\n33;F;F;I;13;14;50;3\n34;F;M;I;13;14;50;3\n35;F;F;I;15;17;50;3\n36;F;M;I;15;17;50;3\n37;F;F;I;0;6;25;4\n38;F;M;I;0;6;25;4\n39;F;F;I;7;8;25;4\n40;F;M;I;7;8;25;4\n41;F;F;I;9;10;50;4\n42;F;M;I;9;10;50;4\n43;F;F;I;11;12;50;4\n44;F;M;I;11;12;50;4\n45;F;F;I;13;14;50;4\n46;F;M;I;13;14;50;4\n47;F;F;I;15;17;50;4\n48;F;M;I;15;17;50;4", "file": "meet-templates/Simple Summer - 25s and 50s.hyv"},
+        {"id": "small-dual", "name": "Small Dual Meet — 10 & Under / 11 & Over", "blurb": "Shorter meet: 25s for 10 & under, 50s for 11 & over, free and medley relays.", "events": "1;F;F;R;0;6;100;1\n2;F;M;R;0;6;100;1\n3;F;F;R;7;8;100;1\n4;F;M;R;7;8;100;1\n5;F;F;R;9;10;100;1\n6;F;M;R;9;10;100;1\n7;F;F;R;11;0;200;1\n8;F;M;R;11;0;200;1\n9;F;F;I;0;6;25;1\n10;F;M;I;0;6;25;1\n11;F;F;I;7;8;25;1\n12;F;M;I;7;8;25;1\n13;F;F;I;9;10;25;1\n14;F;M;I;9;10;25;1\n15;F;F;I;11;0;50;1\n16;F;M;I;11;0;50;1\n17;F;F;I;0;6;25;2\n18;F;M;I;0;6;25;2\n19;F;F;I;7;8;25;2\n20;F;M;I;7;8;25;2\n21;F;F;I;9;10;25;2\n22;F;M;I;9;10;25;2\n25;F;F;I;0;6;25;3\n26;F;M;I;0;6;25;3\n27;F;F;I;7;8;25;3\n28;F;M;I;7;8;25;3\n29;F;F;I;9;10;25;3\n30;F;M;I;9;10;25;3\n31;F;F;I;11;0;50;3\n32;F;M;I;11;0;50;3\n33;F;F;I;0;6;25;4\n34;F;M;I;0;6;25;4\n35;F;F;I;7;8;25;4\n36;F;M;I;7;8;25;4\n37;F;F;I;9;10;25;4\n38;F;M;I;9;10;25;4\n39;F;F;I;11;0;50;4\n40;F;M;I;11;0;50;4\n41;F;F;R;0;6;100;5\n42;F;M;R;0;6;100;5\n43;F;F;R;7;8;100;5\n44;F;M;R;7;8;100;5\n45;F;F;R;9;10;100;5\n46;F;M;R;9;10;100;5\n47;F;F;R;11;0;200;5\n48;F;M;R;11;0;200;5", "file": "meet-templates/Small Dual Meet - 10 & Under and 11 & Over.hyv"},
+        {"id": "scrimmage", "name": "Scrimmage — 25s and 50s", "blurb": "Practice-meet format: 25s for 10 & under, 50s for 11 & over, 100 IM, mixed relays.", "events": "1;F;X;R;0;10;100;1\n2;F;X;R;11;0;100;1\n3;F;F;I;0;6;25;1\n4;F;M;I;0;6;25;1\n5;F;F;I;7;8;25;1\n6;F;M;I;7;8;25;1\n7;F;F;I;9;10;25;1\n8;F;M;I;9;10;25;1\n9;F;F;I;11;0;50;1\n10;F;M;I;11;0;50;1\n11;F;F;I;0;8;100;5\n12;F;M;I;0;8;100;5\n13;F;F;I;7;8;100;5\n14;F;M;I;7;8;100;5\n15;F;F;I;9;10;100;5\n16;F;M;I;9;10;100;5\n17;F;F;I;11;0;100;5\n18;F;M;I;11;0;100;5\n19;F;F;I;0;6;25;2\n20;F;M;I;0;6;25;2\n21;F;F;I;7;8;25;2\n22;F;M;I;7;8;25;2\n23;F;F;I;9;10;25;2\n24;F;M;I;9;10;25;2\n25;F;F;I;11;0;50;2\n26;F;M;I;11;0;50;2\n27;F;F;I;0;6;25;3\n28;F;M;I;0;6;25;3\n29;F;F;I;7;8;25;3\n30;F;M;I;7;8;25;3\n31;F;F;I;9;10;25;3\n32;F;M;I;9;10;25;3\n33;F;F;I;11;0;50;3\n34;F;M;I;11;0;50;3\n35;F;F;I;0;6;25;4\n36;F;M;I;0;6;25;4\n37;F;F;I;7;8;25;4\n38;F;M;I;7;8;25;4\n39;F;F;I;9;10;25;4\n40;F;M;I;9;10;25;4\n41;F;F;I;11;0;50;4\n42;F;M;I;11;0;50;4\n43;F;X;R;0;10;100;5\n44;F;X;R;11;0;100;5", "file": "meet-templates/Scrimmage - 25s and 50s.hyv"},
+        {"id": "splash-8u", "name": "8 & Under Splash Meet", "blurb": "25s of every stroke for 6 & under and 7-8, plus a mixed free relay for each.", "events": "1;F;F;I;0;6;25;1\n2;F;M;I;0;6;25;1\n3;F;F;I;7;8;25;1\n4;F;M;I;7;8;25;1\n5;F;F;I;0;6;25;2\n6;F;M;I;0;6;25;2\n7;F;F;I;7;8;25;2\n8;F;M;I;7;8;25;2\n9;F;F;I;0;6;25;3\n10;F;M;I;0;6;25;3\n11;F;F;I;7;8;25;3\n12;F;M;I;7;8;25;3\n13;F;F;I;0;6;25;4\n14;F;M;I;0;6;25;4\n15;F;F;I;7;8;25;4\n16;F;M;I;7;8;25;4\n17;F;X;R;0;6;100;1\n18;F;X;R;7;8;100;1", "file": "meet-templates/8 & Under Splash Meet.hyv"},
+        {"id": "mini-fbb", "name": "Mini Meet — Free, Back, Breast", "blurb": "11 events, girls and boys together: 50s for every age, plus 100 free for 9 & up.", "events": "1;F;X;I;0;8;50;1\n2;F;X;I;9;10;50;1\n3;F;X;I;11;0;50;1\n4;F;X;I;0;8;50;2\n5;F;X;I;9;10;50;2\n6;F;X;I;11;0;50;2\n7;F;X;I;0;8;50;3\n8;F;X;I;9;10;50;3\n9;F;X;I;11;0;50;3\n10;F;X;I;9;10;100;1\n11;F;X;I;11;0;100;1", "file": "meet-templates/Mini Meet - Free, Back, Breast.hyv"}
+      ];
+      function templateMeet(t) {
+        return parseHyv(`${t.name};;;;Y;;;Timeathon;1.0;CN;0000\n${t.events}`);
+      }
+
       // Meet Manager hands out events as a .zip: open it in the browser and
       // take the .hyv (or entries .hy3/.cl2) inside.
       function loadJSZip() {
@@ -3336,7 +3354,12 @@
         const swimFileInputRef = useRef(null);
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
         const [swimSavedAt, setSwimSavedAt] = useState(null);
-        const [swimImportMsg, setSwimImportMsg] = useState(null);   // { ok, text } after importing/exporting a meet file
+        const [swimImportMsg, setSwimImportMsg] = useState(null);
+        const [swimTplOpen, setSwimTplOpen] = useState(false);     // ready-made meets list showing
+        const [swimTplPick, setSwimTplPick] = useState(null);      // template id being previewed
+        const [swimTplOff, setSwimTplOff] = useState({});          // { eventLabel: true } = left out
+        const [swimEditEvt, setSwimEditEvt] = useState(null);      // eventNum being edited
+        const [swimEditForm, setSwimEditForm] = useState(null);   // { ok, text } after importing/exporting a meet file
         const [swimResultsEvent, setSwimResultsEvent] = useState(null);
         const [swimResultsTab, setSwimResultsTab] = useState("results"); // "results" | "scores"
         const [swimAddEventOpen, setSwimAddEventOpen] = useState(false);
@@ -13376,18 +13399,7 @@
                   if (/\.hyv$/i.test(name)) {
                     let hv;
                     try { hv = parseHyv(text); } catch (e) { setSwimImportMsg({ ok: false, text: e.message }); return; }
-                    const had = swimMeet.events.length;
-                    if (had && !window.confirm(`Replace the ${had} event${had === 1 ? "" : "s"} you have with the ${hv.events.length} from “${hv.meetName || name}”? Swimmers already entered will need to be entered again.`)) return;
-                    const lanes = swimMeet.lanes || 8;
-                    const blankHeat = () => ({ heatNum: 1, lanes: Array.from({ length: lanes }, (_, li) => ({
-                      lane: li + 1, lastName: "", firstName: "", name: "", age: 0, team: "", seedTime: "NT", seedMs: null, finalMs: null, dq: false, scratch: false })) });
-                    setSwimMeet(m => ({ ...m,
-                      meetName: m.meetName || hv.meetName, date: hv.date || m.date, facility: hv.facility || m.facility, pool: hv.course || m.pool,
-                      events: hv.events.map(ev => ({ ...ev, heats: [blankHeat()] })),
-                      meetEntries: had ? [] : (m.meetEntries || []) }));
-                    setSwimExpandedEvents({});
-                    const relays = hv.events.filter(ev => ev.relay).length;
-                    setSwimImportMsg({ ok: true, text: `Imported ${hv.events.length} events from “${hv.meetName || name}”${relays ? ` (${relays} relays)` : ""}. Next: add swimmers, then 🌱 Seed.` });
+                    useMeetEvents(hv, hv.meetName || name, "Imported");
                     return;
                   }
                   let parsed;
@@ -13429,9 +13441,41 @@
                   setSwimExpandedEvents({});
                   setSwimImportMsg({ ok: true, text: `Imported ${parsed.events.length} events and ${linkedEntries.length} swimmers.` });
                 }
+                // Put a set of events (from a file or a ready-made meet) in this meet.
+                function useMeetEvents(hv, source, verb) {
+                  const had = swimMeet.events.length;
+                  if (had && !window.confirm(`Replace the ${had} event${had === 1 ? "" : "s"} you have with the ${hv.events.length} from “${source}”? Swimmers already entered will need to be entered again.`)) return false;
+                  const lanes = swimMeet.lanes || 8;
+                  const blankHeat = () => ({ heatNum: 1, lanes: Array.from({ length: lanes }, (_, li) => ({
+                    lane: li + 1, lastName: "", firstName: "", name: "", age: 0, team: "", seedTime: "NT", seedMs: null, finalMs: null, dq: false, scratch: false })) });
+                  setSwimMeet(m => ({ ...m,
+                    meetName: m.meetName || hv.meetName, date: hv.date || m.date, facility: hv.facility || m.facility, pool: hv.course || m.pool,
+                    events: hv.events.map((ev, i) => ({ ...ev, eventNum: i + 1, heats: [blankHeat()] })),
+                    meetEntries: had ? [] : (m.meetEntries || []) }));
+                  setSwimExpandedEvents({});
+                  const relays = hv.events.filter(ev => ev.relay).length;
+                  setSwimImportMsg({ ok: true, text: `${verb} ${hv.events.length} events from “${source}”${relays ? ` (${relays} relays)` : ""}. Tap an event to edit or delete it. Next: add swimmers, then 🌱 Seed.` });
+                  return true;
+                }
+                function deleteMeetEvent(ev) {
+                  const n = (ev.entries || []).length + ev.heats.reduce((k, h) => k + h.lanes.filter(l => l.name).length, 0);
+                  if (n && !window.confirm(`Event ${evLabel(ev)} has swimmers in it. Delete it anyway?`)) return;
+                  setSwimMeet(m => ({ ...m, events: m.events.filter(e => e.eventNum !== ev.eventNum),
+                    meetEntries: (m.meetEntries || []).map(en => ({ ...en, events: (en.events || []).filter(x => x.eventNum !== ev.eventNum) })) }));
+                  if (swimEditEvt === ev.eventNum) { setSwimEditEvt(null); setSwimEditForm(null); }
+                }
+                function saveMeetEvent(ev) {
+                  const f = swimEditForm; if (!f) return;
+                  const [minAge, maxAge] = ageRangeOf(f.ageGroup);
+                  setSwimMeet(m => ({ ...m, events: m.events.map(e => e.eventNum !== ev.eventNum ? e : { ...e,
+                    eventLabel: (f.eventLabel || "").trim() || evLabel(e), gender: f.gender, ageGroup: (f.ageGroup || "").trim() || "Open",
+                    minAge, maxAge: maxAge >= 99 ? 0 : maxAge, distance: +f.distance || e.distance, stroke: f.stroke, relay: /relay/i.test(f.stroke) }) }));
+                  setSwimEditEvt(null); setSwimEditForm(null);
+                }
+
                 function exportMeetEvents() {
                   const text = buildHyv(swimMeet);
-                  const d = new Date(((swimMeet.date || new Date().toISOString().slice(0, 10))) + "T12:00:00");
+                  const d = new Date((swimMeet.date || new Date().toLocaleDateString("en-CA")) + "T12:00:00");
                   const stamp = `${String(d.getDate()).padStart(2, "0")}${d.toLocaleString("en-US", { month: "short" })}${d.getFullYear()}`;
                   const safe = (swimMeet.meetName || "Swim Meet").replace(/[\\/:*?"<>|]/g, "").trim();
                   const a = document.createElement("a");
@@ -13709,7 +13753,57 @@
                             <>
                         {/* Import */}
                         <div style={S.card}>
-                          <div style={S.label}>Start from a meet file</div>
+                          <div style={S.label}>Start from a ready-made meet</div>
+                          <button onClick={() => { setSwimTplOpen(o => !o); setSwimTplPick(null); }}
+                            style={{ ...btnStyle(TM.swim, !swimTplOpen), fontSize:15, width:"100%", marginBottom: 10 }}>
+                            {swimTplOpen ? "Hide ready-made meets" : `📚 Browse ${SWIM_TEMPLATES.length} ready-made meets`}
+                          </button>
+                          {swimTplOpen && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+                              {SWIM_TEMPLATES.map(t => {
+                                const open = swimTplPick === t.id;
+                                const evs = templateMeet(t).events;
+                                const kept = evs.filter(ev => !swimTplOff[ev.eventLabel]);
+                                return (
+                                  <div key={t.id} style={{ ...rowStyle(open ? TM.swim : undefined) }}>
+                                    <button onClick={() => { setSwimTplPick(open ? null : t.id); setSwimTplOff({}); }}
+                                      aria-expanded={open}
+                                      style={{ all: "unset", cursor: "pointer", display: "block", width: "100%" }}>
+                                      <div style={{ fontSize: 16, fontWeight: 900 }}>{t.name}</div>
+                                      <div style={{ ...TM_CAPTION, marginTop: 2 }}>{evs.length} events · {t.blurb}</div>
+                                    </button>
+                                    {open && (
+                                      <div style={{ marginTop: 10 }}>
+                                        <div style={{ ...TM_CAPTION, marginBottom: 6 }}>Untick any event you don't want. You can edit events after.</div>
+                                        <div style={{ maxHeight: 320, overflowY: "auto", border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF" }}>
+                                          {evs.map(ev => (
+                                            <label key={ev.eventLabel} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 10px", borderBottom: `1px solid ${TM.line}`, fontSize: 15, cursor: "pointer" }}>
+                                              <input type="checkbox" checked={!swimTplOff[ev.eventLabel]}
+                                                onChange={e => setSwimTplOff(x => ({ ...x, [ev.eventLabel]: !e.target.checked }))} style={{ width: 20, height: 20 }} />
+                                              <span style={{ fontWeight: 800, minWidth: 36 }}>{ev.eventLabel}</span>
+                                              <span>{ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                                          <button disabled={!kept.length}
+                                            onClick={() => { if (useMeetEvents({ ...templateMeet(t), meetName: "", events: kept }, t.name, "Added")) { setSwimTplOpen(false); setSwimTplPick(null); } }}
+                                            style={{ ...btnStyle(TM.swim), flex: "1 1 180px", fontSize: 15, opacity: kept.length ? 1 : 0.5 }}>
+                                            Use {kept.length} event{kept.length === 1 ? "" : "s"}
+                                          </button>
+                                          <a href={encodeURI(t.file)} download
+                                            style={{ ...btnStyle(TM.ink, true), flex: "0 1 auto", fontSize: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", padding: "0 14px" }}>
+                                            ⬇ .hyv file
+                                          </a>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          <div style={S.label}>Or start from a meet file</div>
                           <input ref={swimFileInputRef} type="file" accept=".zip,.hyv,.ev3,.hy3,.cl2,.csv,.ZIP,.HYV,.HY3,.CL2" style={{ display:"none" }}
                             onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importMeetFile(f); }} />
                           <button onClick={() => swimFileInputRef.current && swimFileInputRef.current.click()}
@@ -13771,6 +13865,42 @@
                                       <span style={{ color:"#3D434B", fontSize:14 }}>{expanded ? "▲" : "▼"}</span>
                                     </div>
                                   </div>
+                                  {expanded && (
+                                    <div style={{ padding:"8px 16px", borderTop:"2px solid #C9C5BC", background:"#FFFFFF" }}>
+                                      {swimEditEvt === ev.eventNum && swimEditForm ? (
+                                        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                                          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                                            <label style={{ flex:"0 1 80px" }}><div style={S.label}>Event #</div>
+                                              <input value={swimEditForm.eventLabel} onChange={e => setSwimEditForm(f => ({ ...f, eventLabel: e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, "") }))} style={{ ...S.input }} /></label>
+                                            <label style={{ flex:"1 1 100px" }}><div style={S.label}>Who</div>
+                                              <select value={swimEditForm.gender} onChange={e => setSwimEditForm(f => ({ ...f, gender: e.target.value }))} style={{ ...S.input }}>
+                                                {["Girls","Boys","Mixed"].map(g => <option key={g}>{g}</option>)}</select></label>
+                                            <label style={{ flex:"1 1 110px" }}><div style={S.label}>Ages</div>
+                                              <input value={swimEditForm.ageGroup} onChange={e => setSwimEditForm(f => ({ ...f, ageGroup: e.target.value }))} placeholder="e.g. 9-10, 6 & Under" style={{ ...S.input }} /></label>
+                                          </div>
+                                          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                                            <label style={{ flex:"0 1 100px" }}><div style={S.label}>Distance</div>
+                                              <select value={swimEditForm.distance} onChange={e => setSwimEditForm(f => ({ ...f, distance: +e.target.value }))} style={{ ...S.input }}>
+                                                {[25,50,100,200,400,500].map(d => <option key={d} value={d}>{d}</option>)}</select></label>
+                                            <label style={{ flex:"1 1 160px" }}><div style={S.label}>Stroke</div>
+                                              <select value={swimEditForm.stroke} onChange={e => setSwimEditForm(f => ({ ...f, stroke: e.target.value }))} style={{ ...S.input }}>
+                                                {["Freestyle","Backstroke","Breaststroke","Butterfly","IM","Freestyle Relay","Medley Relay"].map(st => <option key={st}>{st}</option>)}</select></label>
+                                          </div>
+                                          <div style={{ display:"flex", gap:8 }}>
+                                            <button onClick={() => saveMeetEvent(ev)} style={{ ...btnStyle(TM.swim), flex:1, fontSize:15 }}>Save event</button>
+                                            <button onClick={() => { setSwimEditEvt(null); setSwimEditForm(null); }} style={{ ...btnStyle(TM.ink, true), fontSize:15, padding:"0 16px" }}>Cancel</button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div style={{ display:"flex", gap:8 }}>
+                                          <button onClick={() => { setSwimEditEvt(ev.eventNum); setSwimEditForm({ eventLabel: evLabel(ev), gender: ev.gender, ageGroup: ev.ageGroup, distance: ev.distance, stroke: ev.stroke }); }}
+                                            style={{ ...btnStyle(TM.ink, true), minHeight:40, fontSize:15, padding:"0 14px" }}>✎ Edit event</button>
+                                          <button onClick={() => deleteMeetEvent(ev)}
+                                            style={{ ...btnStyle(TM.live, true), minHeight:40, fontSize:15, padding:"0 14px" }}>Delete event</button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                   {expanded && ev.heats.map(ht => (
                                     <div key={ht.heatNum} style={{ padding:"6px 16px", borderTop:"2px solid #C9C5BC" }}>
                                       <div style={{ fontSize:14, color:"#04613F", fontWeight:700, marginBottom:4 }}>Heat {ht.heatNum}</div>
