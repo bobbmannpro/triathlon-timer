@@ -2930,7 +2930,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
       }
 
       // ── Send / receive files and print (phone-first) ──
-      function SwimShareCard({ meet, setMeet, onImport, onSeed }) {
+      function SwimShareCard({ meet, setMeet, onImport, onSeed, onOpenFiles }) {
         const teams = meet.teams || [];
         const [team, setTeam] = useState(() => { try { return localStorage.getItem("swim-my-team") || ""; } catch (_) { return ""; } });
         const cur = teams.find(t => t.code === team) ? team : (teams[0] ? teams[0].code : "");
@@ -2949,24 +2949,9 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
         const step = { fontSize: 13, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: TM.inkMuted, margin: "12px 0 6px" };
         return (
           <div style={{ ...rowStyle(TM.swim), display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 17, fontWeight: 900 }}>Share &amp; print</div>
-            <div style={step}>Host</div>
-            <button onClick={() => send("meet")} disabled={!meet.events.length} style={btn(false)}>1 · Send events to coaches</button>
-            <div style={TM_CAPTION}>When the coaches' entry files come back, open each one below, then seed.</div>
-            <button onClick={() => { onSeed(); setMsg({ ok: true, text: "Heats and lanes are set from everyone's entries." }); }} disabled={!meet.events.length} style={btn(false)}>3 · 🌱 Seed heats from all entries</button>
-            <button onClick={() => send("program")} disabled={!seeded} style={{ ...btn(false), opacity: seeded ? 1 : 0.5 }}>4 · Send the program to coaches</button>
-            <div style={step}>Coach</div>
-            {teams.length > 1 && (
-              <select value={cur} onChange={e => { setTeam(e.target.value); try { localStorage.setItem("swim-my-team", e.target.value); } catch (_) {} }} aria-label="Your team"
-                style={{ background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 12px", fontSize: 16 }}>
-                {teams.map(t => <option key={t.code} value={t.code}>{t.code} — {t.name}</option>)}
-              </select>
-            )}
-            <button onClick={() => send("entries")} disabled={!cur} style={{ ...btn(false), opacity: cur ? 1 : 0.5 }}>2 · Send {cur || "my team's"} entries to the host</button>
-            <div style={step}>Anyone</div>
-            <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }}
-              onChange={async e => { const f = e.target.files[0]; e.target.value = ""; if (f) setMsg(await onImport(f)); }} />
-            <button onClick={() => fileRef.current && fileRef.current.click()} style={btn(true)}>📂 Open a file from the host or a coach</button>
+            <div style={{ fontSize: 17, fontWeight: 900 }}>Files &amp; printouts</div>
+            <button onClick={onOpenFiles} style={btn(true)}>📁 Import &amp; export — athletes, events, entries, program, results</button>
+            <button onClick={() => { onSeed(); setMsg({ ok: true, text: "Heats and lanes are set from everyone's entries." }); }} disabled={!meet.events.length} style={btn(false)}>🌱 Seed heats from all entries</button>
             {msg && <div role="status" style={{ ...rowStyle(msg.ok ? TM.run : TM.live), fontSize: 15, fontWeight: 700 }}>{msg.ok ? "✓ " : "✕ "}{msg.text}</div>}
             <div style={step}>Print (opens a page to print or save as PDF)</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -3189,7 +3174,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
       }
 
       // ── Swim Teams: teams, their swimmers, each swimmer's history ──
-      function SwimTeamsView({ teams, saveTeams, athletes, saveAthletes }) {
+      function SwimTeamsView({ teams, saveTeams, athletes, saveAthletes, onOpenFiles }) {
         const [teamCode, setTeamCode] = useState(null);
         const [swId, setSwId] = useState(null);
         const [newTeam, setNewTeam] = useState(null);
@@ -3370,7 +3355,9 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
             )}
 
             <div style={{ ...rowStyle(), marginTop: 22 }}>
-              <div style={{ fontSize: 17, fontWeight: 900 }}>📥 Bring in past results</div>
+              <div style={{ fontSize: 17, fontWeight: 900 }}>⬆ Import athletes or past results</div>
+              <button onClick={onOpenFiles} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 8 }}>From Team Manager → Import / Export</button>
+              <div style={{ ...TM_CAPTION, marginTop: 8 }}>Or pick Hy-Tek results here and choose teams:</div>
               <div style={{ ...TM_CAPTION, marginTop: 4 }}>Pick Hy-Tek <b>Meet Results</b> files (.cl2, or the .zip Meet Manager made) — as many as you like at once. Every swimmer and time goes into their profile.</div>
               <input ref={fileRef} type="file" multiple accept=".cl2,.zip,.sd3,.CL2,.ZIP" style={{ display: "none" }} onChange={e => { const fl = Array.from(e.target.files || []); e.target.value = ""; if (fl.length) readResultFiles(fl); }} />
               {!imp ? (
@@ -3458,6 +3445,196 @@ ${html}</body></html>`);
               Print {count} label{count === 1 ? "" : "s"}{team ? ` for ${team}` : ""}
             </button>
             <div style={TM_CAPTION}>Pick one team to make a sheet just for that coach.</div>
+          </div>
+        );
+      }
+
+      // ── Hy-Tek .hy3 (Team Manager / Meet Manager) ─────────────────────────────
+      // C1 = team, D1 = swimmer (name, birthday, age), E1 = one swim (event
+      // number, distance, stroke, seed time), E2 after an E1 = its result.
+      // Athlete exports and meet-entry exports from Team Manager carry
+      // birthdays; results exports carry times.
+      const HY3_STROKES = { A: "Freestyle", B: "Backstroke", C: "Breaststroke", D: "Butterfly", E: "IM" };
+      function parseHytekHy3(text) {
+        const lines = text.split(/\r?\n/);
+        const mdY = s => /^\d{8}$/.test(s) ? `${s.slice(4)}-${s.slice(0, 2)}-${s.slice(2, 4)}` : null;
+        const t2ms = s => { const m = String(s).trim().match(/^(?:(\d+):)?(\d+)\.(\d\d)$/); return m ? ((+(m[1] || 0) * 60 + +m[2]) * 100 + +m[3]) * 10 : null; };
+        let meetName = "", date = null, team = "";
+        const teams = [], athletes = {}, swims = [], entries = [];
+        for (let i = 0; i < lines.length; i++) {
+          const l = lines[i], rec = l.slice(0, 2);
+          if (rec === "B1") { meetName = l.slice(2, 47).trim(); const m = l.slice(47).match(/(\d{8})/); date = m ? mdY(m[1]) : null; }
+          else if (rec === "C1") { team = l.slice(2, 7).trim().toUpperCase(); if (team && !teams.some(t => t.code === team)) teams.push({ code: team, name: l.slice(7, 37).trim() || team }); }
+          else if (rec === "D1") {
+            const id = l.slice(3, 8).trim(), last = l.slice(8, 28).trim(), first = l.slice(28, 48).trim(), nick = l.slice(48, 68).trim();
+            const fn = nick || first;
+            athletes[team + "|" + id] = { name: `${fn} ${last}`.trim(), firstName: fn, lastName: last, team, gender: l.charAt(2) === "F" ? "Girls" : "Boys",
+              dob: mdY(l.slice(88, 96)), age: +l.slice(96, 99) || null };
+          } else if (rec === "E1") {
+            const a = athletes[team + "|" + l.slice(3, 8).trim()];
+            const stroke = HY3_STROKES[l.charAt(21)];
+            if (!a || !stroke) continue;
+            const base = { distance: +l.slice(15, 21) || 0, stroke, eventLabel: l.slice(38, 42).trim() };
+            const seeds = (l.slice(42, 62).match(/(\d+:)?\d+\.\d\d/g) || []).map(t2ms).filter(x => x > 0);
+            const nx = lines[i + 1] || "";
+            const res = nx.startsWith("E2") ? t2ms(nx.slice(3, 11)) : null;
+            if (res > 0) {
+              const tok = nx.slice(12).trim().split(/\s+/);
+              swims.push({ ...a, ...base, course: { Y: "25y", S: "25m", L: "50m" }[nx.charAt(11)] || "25y", timeMs: res, place: +tok[4] || null, date, meetName });
+            } else entries.push({ ...a, ...base, seedMs: seeds[0] || null });
+          }
+        }
+        return { meetName, date, teams, athletes: Object.values(athletes), swims, entries };
+      }
+      // Add or update swimmers (no times): match by name and team; fill in a
+      // birthday or gender the profile doesn't have yet.
+      function addAthletesToLibrary(lib, incoming) {
+        const list = (lib || []).map(a => ({ ...a }));
+        let added = 0, updated = 0;
+        incoming.forEach(x => {
+          const a = list.find(y => normName(y.name) === normName(x.name) && sameTeam(y.team, x.team));
+          if (!a) { list.push({ id: newId("swa"), name: x.name, firstName: x.firstName, lastName: x.lastName, team: x.team, gender: x.gender || "", dob: x.dob || null, age: x.age || null, results: [], personalBests: {}, timeHistory: [] }); added++; return; }
+          let ch = false;
+          if (x.dob && a.dob !== x.dob) { a.dob = x.dob; ch = true; }
+          if (x.gender && !a.gender) { a.gender = x.gender; ch = true; }
+          if (ch) updated++;
+        });
+        return { athletes: list, added, updated };
+      }
+      // Every Hy-Tek file inside a .zip (or the file itself).
+      async function hytekTexts(file) {
+        if (/\.zip$/i.test(file.name)) {
+          const JSZip = await loadJSZip();
+          const zip = await JSZip.loadAsync(file);
+          const out = [];
+          for (const n of Object.keys(zip.files)) if (/\.(hy3|cl2|hyv|sd3)$/i.test(n)) out.push({ name: n.split("/").pop(), text: await zip.files[n].async("string") });
+          return out;
+        }
+        return [{ name: file.name, text: await file.text() }];
+      }
+      function athletesCsv(list, teams) {
+        const q = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+        const rows = [["Last name", "First name", "Gender", "Birthday", "Age today", "Team code", "Team"]];
+        list.forEach(a => rows.push([a.lastName, a.firstName, a.gender === "Girls" ? "F" : a.gender === "Boys" ? "M" : "", a.dob || "", ageToday(a) ?? "", a.team, (teams.find(t => t.code === a.team) || {}).name || ""]));
+        return rows.map(r => r.map(q).join(",")).join("\r\n") + "\r\n";
+      }
+
+      // ── The Import & Export page ──
+      // Every file in and out of a swim meet, in one place, named the way
+      // coaches already know them from Hy-Tek: athletes, events, entries,
+      // program, results.
+      function SwimFilesPage({ meet, teams, athletes, onImport, onExport, myTeam, setMyTeam }) {
+        const [msg, setMsg] = useState(null);
+        const [busy, setBusy] = useState(null);
+        const [who, setWho] = useState(() => { try { return localStorage.getItem("swim-files-who") || "coach"; } catch (_) { return "coach"; } });
+        const pickWho = w => { setWho(w); try { localStorage.setItem("swim-files-who", w); } catch (_) {} };
+        const refs = { athletes: useRef(null), events: useRef(null), entries: useRef(null), program: useRef(null), results: useRef(null) };
+        const allTeams = [...teams, ...(meet.teams || []).filter(t => !teams.some(x => x.code === t.code))];
+        const cur = allTeams.some(t => t.code === myTeam) ? myTeam : (allTeams[0] || {}).code || "";
+        const hasMeet = meet.events.length > 0;
+        const seeded = meet.events.some(ev => ev.heats.some(h => h.lanes.some(l => l.name)));
+        const nResults = hasMeet ? meetSwims(meet).length : 0;
+        const accept = { athletes: ".zip,.hy3,.cl2,.json,.csv", events: ".zip,.hyv,.json", entries: ".zip,.hy3,.json", program: ".json", results: ".zip,.hy3,.cl2,.json" };
+        async function pick(section, files) {
+          setBusy(section); setMsg(null);
+          try { setMsg(await onImport(section, Array.from(files))); }
+          catch (e) { setMsg({ ok: false, text: (e && e.message) || "Couldn't read that file." }); }
+          setBusy(null);
+        }
+        async function exp(section, fmt) {
+          setMsg(null);
+          try { const r = await onExport(section, fmt, cur); if (r) setMsg(r); }
+          catch (e) { setMsg({ ok: false, text: (e && e.message) || "Couldn't make that file." }); }
+        }
+        const btnI = { ...btnStyle(TM.ink), flex: "1 1 140px", fontSize: 15, minHeight: 48 };
+        const btnE = { ...btnStyle(TM.ink, true), flex: "1 1 140px", fontSize: 15, minHeight: 48 };
+        const card = (key, title, edge, blurb, extra, importLabel, exportBtns, disabledImport) => (
+          <div key={key} style={{ ...rowStyle(edge), marginTop: 12 }}>
+            <div style={{ fontSize: 19, fontWeight: 900 }}>{title}</div>
+            <div style={{ ...TM_CAPTION, fontSize: 15, marginTop: 2 }}>{blurb}</div>
+            {extra}
+            <input ref={refs[key]} type="file" multiple accept={accept[key]} style={{ display: "none" }}
+              onChange={e => { const f = e.target.files; const arr = Array.from(f || []); e.target.value = ""; if (arr.length) pick(key, arr); }} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+              <button onClick={() => refs[key].current && refs[key].current.click()} disabled={busy === key || disabledImport}
+                style={{ ...btnI, opacity: busy === key || disabledImport ? 0.5 : 1 }}>{busy === key ? "Reading…" : `⬆ Import ${importLabel}`}</button>
+              {exportBtns}
+            </div>
+          </div>
+        );
+        const steps = who === "coach"
+          ? [["1", "Import athletes", "Once a season, from Team Manager."], ["2", "Import events", "The file the host sends you."], ["3", "Enter your swimmers", "Setup → Who's swimming."], ["4", "Export entries", "Send that file to the host."], ["5", "Import program", "The heat sheet the host sends back."], ["6", "Import results", "After the meet — times go into each swimmer's profile."]]
+          : [["1", "Export events", "Send to every coach."], ["2", "Import entries", "Each coach's file — Timeathon or Team Manager."], ["3", "Seed", "Setup → Events & heats → 🌱 Seed All."], ["4", "Export program", "Send the heat sheet to every coach."], ["5", "Run the meet", "Race tab."], ["6", "Export results", "Send to every coach after the meet."]];
+        return (
+          <div>
+            <h1 style={{ ...TM_DISPLAY, marginTop: 4 }}>Import &amp; export</h1>
+            <div style={{ ...TM_CAPTION, fontSize: 16, marginTop: 6 }}>Every file for a swim meet, in one place. Files share by text or email from a phone.</div>
+
+            <div role="radiogroup" aria-label="I'm the" style={{ display: "flex", gap: 6, marginTop: 14 }}>
+              {[["coach", "I'm a coach"], ["host", "I'm hosting"]].map(([k, l]) => (
+                <button key={k} role="radio" aria-checked={who === k} onClick={() => pickWho(k)}
+                  style={{ ...btnStyle(TM.ink, who !== k), flex: 1, minHeight: 48, fontSize: 16 }}>{l}</button>
+              ))}
+            </div>
+            <ol style={{ listStyle: "none", margin: "10px 0 0", padding: 0, ...rowStyle(TM.swim) }}>
+              {steps.map(([n, t, d]) => (
+                <li key={n} style={{ display: "flex", gap: 10, padding: "5px 0", alignItems: "baseline" }}>
+                  <span style={{ fontWeight: 900, fontSize: 17, minWidth: 18 }}>{n}</span>
+                  <span><b style={{ fontSize: 16 }}>{t}</b> <span style={TM_CAPTION}>— {d}</span></span>
+                </li>
+              ))}
+              {who === "coach" && <li style={{ ...TM_CAPTION, paddingTop: 4 }}>Not hosting? That's all you need — the host does the rest.</li>}
+            </ol>
+
+            {allTeams.length > 0 && (
+              <label style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                <b style={{ fontSize: 16 }}>My team</b>
+                <select value={cur} onChange={e => setMyTeam(e.target.value)} aria-label="My team"
+                  style={{ flex: "1 1 200px", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "10px 12px", fontSize: 16 }}>
+                  {allTeams.map(t => <option key={t.code} value={t.code}>{t.code} — {t.name}</option>)}
+                </select>
+              </label>
+            )}
+
+            {msg && <div role="status" style={{ ...rowStyle(msg.ok ? TM.run : TM.live), marginTop: 14, fontSize: 16, fontWeight: 700 }}>{msg.ok ? "✓ " : "✕ "}{msg.text}</div>}
+
+            {card("athletes", "Athletes", TM.run, "Your team's swimmers — names, birthdays and times. Do this once a season; it's what makes entering meets quick.",
+              <details open={!athletes.length} style={{ marginTop: 10, background: TM.bgAlt, borderRadius: 6, padding: "10px 12px" }}>
+                <summary style={{ fontWeight: 800, fontSize: 16, cursor: "pointer" }}>How to get your athletes out of Team Manager</summary>
+                <ol style={{ margin: "8px 0 0 20px", padding: 0, fontSize: 15, lineHeight: 1.55 }}>
+                  <li>Open <b>Team Manager</b> on your computer.</li>
+                  <li>Go to <b>File → Export</b>, and choose the export for <b>athletes and times</b> (any Hy-Tek export of your athletes works — the meet <b>entries</b> export does too).</li>
+                  <li>Select <b>all your athletes</b> and save. Team Manager makes a <b>.zip</b> file.</li>
+                  <li>Here, tap <b>⬆ Import athletes</b> and pick that .zip. Birthdays come with it, so ages are always right.</li>
+                </ol>
+                <div style={{ ...TM_CAPTION, marginTop: 6 }}>Also works: Hy-Tek <b>Meet Results</b> files (.cl2 / .hy3) to bring in past times, or a Timeathon athletes file.</div>
+              </details>,
+              "athletes",
+              <>
+                <button onClick={() => exp("athletes", "json")} disabled={!athletes.length} style={{ ...btnE, opacity: athletes.length ? 1 : 0.5 }}>⬇ Export athletes</button>
+                <button onClick={() => exp("athletes", "csv")} disabled={!athletes.length} style={{ ...btnE, opacity: athletes.length ? 1 : 0.5 }}>⬇ Spreadsheet (.csv)</button>
+              </>)}
+
+            {card("events", "Events", TM.swim, "The meet's event list. The host exports it; coaches import it. Hy-Tek Meet Events files work too.",
+              null, "events",
+              <>
+                <button onClick={() => exp("events", "json")} disabled={!hasMeet} style={{ ...btnE, opacity: hasMeet ? 1 : 0.5 }}>⬇ Export events</button>
+                <button onClick={() => exp("events", "hyv")} disabled={!hasMeet} style={{ ...btnE, opacity: hasMeet ? 1 : 0.5 }}>⬇ Hy-Tek (.hyv)</button>
+              </>)}
+
+            {card("entries", "Entries", TM.bike, "Who's swimming which events. Coaches export their team's entries; the host imports every team's file (Timeathon or Team Manager entries).",
+              !hasMeet ? <div style={{ ...TM_CAPTION, marginTop: 6 }}>Import the events first — entries go into a meet.</div> : null,
+              "entries",
+              <button onClick={() => exp("entries", "json")} disabled={!hasMeet || !cur} style={{ ...btnE, opacity: hasMeet && cur ? 1 : 0.5 }}>⬇ Export {cur || "my"} entries</button>,
+              !hasMeet)}
+
+            {card("program", "Program", TM.ink, "The seeded meet — heats and lanes. The host exports it after seeding; coaches import it to print heat sheets and their team list.",
+              null, "program",
+              <button onClick={() => exp("program", "json")} disabled={!seeded} style={{ ...btnE, opacity: seeded ? 1 : 0.5 }}>⬇ Export program</button>)}
+
+            {card("results", "Results", TM.warn, "Times from the meet. The host exports them; coaches import them and every time lands in their swimmers' profiles.",
+              null, "results",
+              <button onClick={() => exp("results", "json")} disabled={!nResults} style={{ ...btnE, opacity: nResults ? 1 : 0.5 }}>⬇ Export results</button>)}
           </div>
         );
       }
@@ -4435,6 +4612,7 @@ ${html}</body></html>`);
         const [swimExpandedEvents, setSwimExpandedEvents] = useState({});
         const [swimSavedAt, setSwimSavedAt] = useState(null);
         const [swimImportMsg, setSwimImportMsg] = useState(null);
+        const [swimFilesTick, setSwimFilesTick] = useState(0);    // re-render the files page after "My team" changes
         const [swimFileMsg, setSwimFileMsg] = useState(null);     // after opening a file from My Races
         const [swimTplOpen, setSwimTplOpen] = useState(false);     // ready-made meets list showing
         const [swimTplPick, setSwimTplPick] = useState(null);      // template id being previewed
@@ -10060,11 +10238,11 @@ ${html}</body></html>`);
 
             {/* NAV — hosts only. Athletes and spectators move with a back arrow. */}
             {isHost && (() => {
-              const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimathletes:"athletes", swimdevices:"devices" };
+              const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimathletes:"athletes", swimfiles:"files", swimdevices:"devices" };
               const navTabs = appMode === "bike"
                 ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__","Ride"],["__bike_feed__","Follow"],["__bike_riders__","Riders"]]
                 : appMode === "swim"
-                ? [["myraces","My Races"],["swimsetup","Setup"],["swimrace","Race"],["swimresults","Results"],["swimathletes","Athletes"],["swimdevices","Devices"],["swimlane","Lane"]]
+                ? [["myraces","My Races"],["swimsetup","Setup"],["swimrace","Race"],["swimresults","Results"],["swimathletes","Athletes"],["swimfiles","Import / Export"],["swimdevices","Devices"],["swimlane","Lane"]]
                 : [["myraces","My Races"],["setup","Setup"],["race","Race"], ...(courseMapOn ? [["racemap","Map"]] : []),["results","Results"],["athletes","Athletes"],["devices","Devices"]];
               return (
                 <nav className="tm-nav-wrap" aria-label="Host">
@@ -10260,20 +10438,14 @@ ${html}</body></html>`);
 
                     <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>More</h2>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <label style={{ ...rowStyle(RACE_KINDS.swim.colour), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
-                        <input type="file" accept=".json,application/json" style={{ display: "none" }} onChange={async e => {
-                          const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-                          const r = await importMeetJson(f);
-                          if (!r.ok) { alert(r.text); return; }
-                          selectMode("swim"); setView("swim"); setSwimView("setup"); setSwimSetupStep(0); setSwimHomeSection(null);
-                          setSwimFileMsg(r);
-                        }} />
+                      <button onClick={() => { selectMode("swim"); setView("swim"); setSwimView("files"); }}
+                        style={{ ...rowStyle(RACE_KINDS.swim.colour), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
                         <span style={{ flex: 1 }}>
-                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>📂 Open a swim meet file</span>
-                          <span style={{ display: "block", ...TM_CAPTION }}>From the host (events or program) or a coach (entries)</span>
+                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>📁 Swim meet import / export</span>
+                          <span style={{ display: "block", ...TM_CAPTION }}>Athletes from Team Manager, events, entries, program, results</span>
                         </span>
                         <ArrowIcon size={24} />
-                      </label>
+                      </button>
                       <button onClick={() => { selectMode("triathlon"); setView("manual"); }}
                         style={{ ...rowStyle(), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
                         <span style={{ flex: 1 }}>
@@ -15039,12 +15211,12 @@ ${html}</body></html>`);
                               })}
                             </div>
                           )}
-                          <div style={S.label}>Or start from a meet file</div>
+                          <div style={S.label}>Or import events</div>
                           <input ref={swimFileInputRef} type="file" accept=".zip,.hyv,.ev3,.hy3,.cl2,.csv,.json,.ZIP,.HYV,.HY3,.CL2" style={{ display:"none" }}
                             onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importMeetFile(f); }} />
                           <button onClick={() => swimFileInputRef.current && swimFileInputRef.current.click()}
                             style={{ ...btnStyle("#04613F"), fontSize:15, width:"100%", marginBottom:6 }}>
-                            📂 Import meet file
+                            ⬆ Import events
                           </button>
                           <div style={{ fontSize:14, color:"#3D434B" }}>
                             Hy-Tek <b>Meet Events</b> (.zip or .hyv) brings in the events. Entries files (.hy3, .cl2) or a CSV bring in events and swimmers.
@@ -15054,11 +15226,9 @@ ${html}</body></html>`);
                               {swimImportMsg.ok ? "✓ " : "✕ "}{swimImportMsg.text}
                             </div>
                           )}
-                          {swimMeet.events.length > 0 && (
-                            <button onClick={exportMeetEvents} style={{ ...btnStyle(TM.ink, true), fontSize: 15, width: "100%", marginTop: 10 }}>
-                              ⬇ Export events as a meet file (.hyv)
-                            </button>
-                          )}
+                          <button onClick={() => setSwimView("files")} style={{ ...btnStyle(TM.ink, true), fontSize: 15, width: "100%", marginTop: 10 }}>
+                            📁 All imports &amp; exports
+                          </button>
                         </div>
 
                         {/* Event tree */}
@@ -15303,7 +15473,7 @@ ${html}</body></html>`);
                               </div>
                               {nEvents === 0 && <div style={{ ...TM_CAPTION, marginTop: 8 }}>Add at least one event (step 3) before saving.</div>}
                               <div style={{ marginTop: 18 }}>
-                                <SwimShareCard meet={swimMeet} setMeet={setSwimMeet} onImport={importMeetJson} onSeed={seedAllEvents} />
+                                <SwimShareCard meet={swimMeet} setMeet={setSwimMeet} onImport={importMeetJson} onSeed={seedAllEvents} onOpenFiles={() => setSwimView("files")} />
                               </div>
                             </div>
                           )}
@@ -15318,7 +15488,7 @@ ${html}</body></html>`);
                             <button onClick={() => setSwimView("race")} disabled={nEvents === 0}
                               style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24, opacity: nEvents === 0 ? 0.45 : 1 }}>Go to race →</button>
                             <div style={{ marginTop: 16 }}>
-                              <SwimShareCard meet={swimMeet} setMeet={setSwimMeet} onImport={importMeetJson} onSeed={seedAllEvents} />
+                              <SwimShareCard meet={swimMeet} setMeet={setSwimMeet} onImport={importMeetJson} onSeed={seedAllEvents} onOpenFiles={() => setSwimView("files")} />
                             </div>
                           </WizardStepList>
                         );
@@ -15592,7 +15762,7 @@ ${html}</body></html>`);
                                   {!known.length && <div style={TM_CAPTION}>None of these teams are in your Swim Teams yet.</div>}
                                   <button onClick={() => shareOrDownload(`${safeFileName(swimMeet.meetName)} - results.json`,
                                       JSON.stringify({ app: "Timeathon", kind: "results", version: 1, meet: { meetName: swimMeet.meetName, date: swimMeet.date || null, meetUid: swimMeet.meetUid || null }, swims }, null, 1))}
-                                    style={btnStyle(TM.ink, true)}>⬇ Send results to coaches</button>
+                                    style={btnStyle(TM.ink, true)}>⬇ Export results</button>
                                   <SwimLabelsCard meet={swimMeet} />
                                 </div>
                               );
@@ -15752,6 +15922,117 @@ ${html}</body></html>`);
                     )}
 
                     {/* ── DEVICES ── */}
+                    {swimView === "files" && (() => {
+                      const myTeam = (() => { try { return localStorage.getItem("swim-my-team") || ""; } catch (_) { return ""; } })();
+                      const setMyTeam = c => { try { localStorage.setItem("swim-my-team", c); } catch (_) {} setSwimFilesTick(t => t + 1); };
+                      const ensureUid = () => { if (swimMeet.meetUid) return swimMeet; const m = { ...swimMeet, meetUid: newId("meet") }; setSwimMeet(m); return m; };
+                      const nm = safeFileName(swimMeet.meetName);
+                      async function filesImport(section, files) {
+                        let lib = swimAthletes, teamsAcc = [...swimTeamLib];
+                        const out = [];
+                        let libChanged = false;
+                        const mine = () => { try { return localStorage.getItem("swim-my-team") || ""; } catch (_) { return ""; } };
+                        const addTeam = t => { if (t && t.code && !teamsAcc.some(x => x.code === t.code)) teamsAcc.push({ code: t.code, name: t.name.replace(/\b\w+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase()) }); };
+                        for (const file of files) {
+                          if (/\.json$/i.test(file.name)) {
+                            let d = null; try { d = JSON.parse(await file.text()); } catch (_) {}
+                            if (d && d.app === "Timeathon" && d.kind === "athletes") {
+                              asList(d.teams).forEach(addTeam);
+                              const inc = asList(d.athletes);
+                              const r1 = addAthletesToLibrary(lib, inc);
+                              const swims = inc.flatMap(a => asList(a.results).map(r => ({ ...r, name: a.name, firstName: a.firstName, lastName: a.lastName, team: a.team, gender: a.gender, dob: a.dob })));
+                              const r2 = addSwimsToAthletes(r1.athletes, swims);
+                              lib = r2.athletes; libChanged = true;
+                              out.push(`${r1.added} new athletes, ${r1.updated} updated, ${r2.added} times`);
+                            } else { const r = await importMeetJson(file); if (!r.ok) return r; out.push(r.text); }
+                            continue;
+                          }
+                          if (/\.csv$/i.test(file.name)) {
+                            const rows = (await file.text()).split(/\r?\n/).filter(Boolean).map(l => (l.match(/("([^"]|"")*"|[^,]*)(,|$)/g) || []).map(c => c.replace(/,$/, "").replace(/^"|"$/g, "").replace(/""/g, '"').trim()));
+                            const h = (rows.shift() || []).map(x => x.toLowerCase());
+                            const col = (...ks) => h.findIndex(x => ks.some(k => x.includes(k)));
+                            const [cl, cf, cg, cb, ct] = [col("last"), col("first"), col("gender", "sex"), col("birth", "dob"), col("team code", "team")];
+                            const inc = rows.filter(r => r[cl] || r[cf]).map(r => { const g = (r[cg] || "").toUpperCase(); const b = r[cb] || "";
+                              const dob = /^\d{4}-\d\d-\d\d$/.test(b) ? b : (b.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/) ? b.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, (_, m, d, y) => `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`) : null);
+                              return { name: `${r[cf] || ""} ${r[cl] || ""}`.trim(), firstName: r[cf] || "", lastName: r[cl] || "", gender: g.startsWith("F") || g.startsWith("G") ? "Girls" : g ? "Boys" : "", dob, team: (r[ct] || mine() || "").toUpperCase() }; });
+                            const r1 = addAthletesToLibrary(lib, inc); lib = r1.athletes; libChanged = true;
+                            out.push(`${r1.added} new athletes, ${r1.updated} updated from ${file.name}`);
+                            continue;
+                          }
+                          let texts;
+                          try { texts = await hytekTexts(file); } catch (_) { return { ok: false, text: `Couldn't open ${file.name}.` }; }
+                          if (!texts.length) { out.push(`Nothing Hy-Tek in ${file.name}`); continue; }
+                          for (const { name, text } of texts) {
+                            if (/\.hyv$/i.test(name)) {
+                              if (section !== "events") { out.push(`${name} is an events file — import it under Events`); continue; }
+                              let hv; try { hv = parseHyv(text); } catch (e) { return { ok: false, text: e.message }; }
+                              useMeetEvents(hv, hv.meetName || name, "Imported");
+                              out.push(`${hv.events.length} events from “${hv.meetName || name}”`);
+                              continue;
+                            }
+                            const hy3 = /\.hy3$/i.test(name);
+                            const pz = hy3 ? parseHytekHy3(text) : parseSdifResults(text);
+                            if (section === "entries") {
+                              if (!hy3 || !pz.entries.length) { out.push(`${name} has no entries`); continue; }
+                              const t = pz.teams[0] || { code: "TEAM", name: "Team" };
+                              const byLabel = Object.fromEntries(swimMeet.events.map(ev => [evLabel(ev).toUpperCase(), ev]));
+                              const ents = {}; let missing = 0;
+                              pz.entries.forEach(x => {
+                                const ev = byLabel[String(x.eventLabel).toUpperCase()];
+                                if (!ev) { missing++; return; }
+                                const k = normName(x.name);
+                                ents[k] = ents[k] || { id: newId("me"), athleteId: null, name: x.name, firstName: x.firstName, lastName: x.lastName, team: t.code, gender: x.gender, age: x.age, dob: x.dob, events: [] };
+                                ents[k].events.push({ eventNum: ev.eventNum, seedMs: x.seedMs, seedTime: x.seedMs ? formatSwimTime(x.seedMs) : "NT" });
+                              });
+                              const list = Object.values(ents);
+                              setSwimMeet(m => syncEventEntries({ ...m, teams: [...(m.teams || []).filter(x => x.code !== t.code), { code: t.code, name: t.name }],
+                                meetEntries: [...(m.meetEntries || []).filter(e => e.team !== t.code), ...list] }));
+                              out.push(`${t.name}: ${list.length} swimmers, ${list.reduce((n, e) => n + e.events.length, 0)} entries${missing ? ` (${missing} for events not in this meet)` : ""}`);
+                              continue;
+                            }
+                            // athletes or results: one team in the file → bring it in; several →
+                            // only my team / teams already in Swim Teams.
+                            const fileTeams = pz.teams.map(t => t.code);
+                            const keep = new Set(fileTeams.length <= 1 ? fileTeams
+                              : fileTeams.filter(c => c === mine() || teamsAcc.some(t => t.code === c)));
+                            if (!keep.size) { out.push(`${name}: ${fileTeams.length} teams in this file — pick My team above (or make your team in Athletes) so only your swimmers come in`); continue; }
+                            pz.teams.filter(t => keep.has(t.code)).forEach(addTeam);
+                            const people = (pz.athletes || pz.swims).filter(a => keep.has(a.team));
+                            const r1 = addAthletesToLibrary(lib, people);
+                            const r2 = addSwimsToAthletes(r1.athletes, pz.swims.filter(sw => keep.has(sw.team)));
+                            lib = r2.athletes; libChanged = true;
+                            out.push(`${[...keep].join(", ")}: ${r1.added} new athletes, ${r2.added} times${pz.meetName ? ` (${pz.meetName})` : ""}`);
+                          }
+                        }
+                        if (libChanged) persistSwimAthletes(lib);
+                        if (teamsAcc.length !== swimTeamLib.length) persistSwimTeams(teamsAcc);
+                        return { ok: true, text: out.join(" · ") || "Nothing to import." };
+                      }
+                      async function filesExport(section, fmt, team) {
+                        const m = ensureUid();
+                        const save = async (fname, text, type) => {
+                          const how = await shareOrDownload(fname, text);
+                          return how === "cancelled" ? null : { ok: true, text: how === "shared" ? `Shared ${fname}.` : `Saved “${fname}” — send it by text or email.` };
+                        };
+                        if (section === "athletes") {
+                          const list = team ? swimAthletes.filter(a => sameTeam(a.team, team)) : swimAthletes;
+                          const tname = team ? safeFileName((swimTeamLib.find(t => t.code === team) || {}).name || team) : "All teams";
+                          if (fmt === "csv") return save(`${tname} - athletes.csv`, athletesCsv(list, swimTeamLib));
+                          return save(`${tname} - athletes.json`, JSON.stringify({ app: "Timeathon", kind: "athletes", version: 1, teams: swimTeamLib.filter(t => !team || t.code === team), athletes: list }, null, 1));
+                        }
+                        if (section === "events") {
+                          if (fmt === "hyv") { exportMeetEvents(); return { ok: true, text: "Saved the Hy-Tek events file (.hyv)." }; }
+                          return save(`${nm} - events.json`, meetFileText(m, "meet"));
+                        }
+                        if (section === "entries") return save(`${nm} - ${team} entries.json`, meetFileText(m, "entries", team));
+                        if (section === "program") return save(`${nm} - program.json`, meetFileText(m, "program"));
+                        if (section === "results") return save(`${nm} - results.json`, JSON.stringify({ app: "Timeathon", kind: "results", version: 1,
+                          meet: { meetName: m.meetName, date: m.date || null, meetUid: m.meetUid || null }, swims: meetSwims(m) }, null, 1));
+                        return null;
+                      }
+                      return <SwimFilesPage meet={swimMeet} teams={swimTeamLib} athletes={swimAthletes} onImport={filesImport} onExport={filesExport} myTeam={myTeam} setMyTeam={setMyTeam} />;
+                    })()}
+
                     {swimView === "devices" && (
                       <div>
                         {/* Clicker Assignments */}
@@ -15805,7 +16086,7 @@ ${html}</body></html>`);
 
                     {swimView === "athletes" && (
                       <div style={{ padding: "10px 0 20px" }}>
-                        <SwimTeamsView teams={swimTeamLib} saveTeams={persistSwimTeams} athletes={swimAthletes} saveAthletes={persistSwimAthletes} />
+                        <SwimTeamsView teams={swimTeamLib} saveTeams={persistSwimTeams} athletes={swimAthletes} saveAthletes={persistSwimAthletes} onOpenFiles={() => setSwimView("files")} />
                       </div>
                     )}
 
