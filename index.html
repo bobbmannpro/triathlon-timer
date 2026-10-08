@@ -4425,6 +4425,7 @@ ${html}</body></html>`);
         // flag. Freshness has to be re-derived on a timer: if a phone dies, Firebase
         // sends no event, so a flag computed only on snapshots stays "live" forever.
         const [athleteGps, setAthleteGps] = useState({});
+        const [athleteWatch, setAthleteWatch] = useState({});   // { idx: gps node } for athletes with a paired watch, GPS fix or not
         const [athleteTrainerData, setAthleteTrainerData] = useState({});
         const [athleteHrData, setAthleteHrData] = useState({});
         const athleteGpsListenerRef = useRef(null);
@@ -5378,7 +5379,7 @@ ${html}</body></html>`);
             athleteGpsListenerRef.current = null;
           }
           if (!liveRaceCode) {
-            setAthleteGps({}); setAthleteTrainerData({}); setAthleteHrData({});
+            setAthleteGps({}); setAthleteWatch({}); setAthleteTrainerData({}); setAthleteHrData({});
             setAthletePhones({}); phonesKnownRef.current = null; setAthleteCounters({});
             athleteTrackRef.current = {};
             return;
@@ -5411,6 +5412,9 @@ ${html}</body></html>`);
               }
             }
             phonesKnownRef.current = Object.fromEntries(Object.entries(phoneMap).map(([k, v]) => [k, v.uid]));
+            const watchMap = {};
+            athArr.forEach((ath, idx) => { if (ath && ath.gps && ath.gps.src === "watch" && ath.gps.tok) watchMap[idx] = ath.gps; });
+            setAthleteWatch(watchMap);
             athArr.forEach((ath, idx) => {
               // Every athlete writes to their own node, so any number of phones can
               // publish at once; this just reads whatever each of them last sent.
@@ -5567,7 +5571,7 @@ ${html}</body></html>`);
         const watchLapSeenRef = useRef({});
         useEffect(() => {
           if (!liveRaceCode) return;
-          Object.entries(athleteGps).forEach(([k, g]) => {
+          Object.entries(athleteWatch).forEach(([k, g]) => {
             const i = +k, wl = g && g.watchLap;
             if (!wl || wl.at == null || wl.seg == null) return;
             const key = `${wl.n}-${wl.at}`;
@@ -5585,7 +5589,7 @@ ${html}</body></html>`);
             const at = Math.max(prev || 0, Math.round(raceNow() - Math.max(0, serverNow() - pressedAt)));
             logSplit(i, next, at);
           });
-        }, [athleteGps, autoSplits, liveRaceCode]);
+        }, [athleteWatch, autoSplits, liveRaceCode]);
 
         // Each paired watch reads where its athlete is from watchTokens/{code}/race:
         // sent-off time and leg finishes in server time, so the watch shows the
@@ -5593,7 +5597,7 @@ ${html}</body></html>`);
         const watchRaceSentRef = useRef({});
         useEffect(() => {
           if (!liveRaceCode) return;
-          Object.entries(athleteGps).forEach(([k, g]) => {
+          Object.entries(athleteWatch).forEach(([k, g]) => {
             const i = +k, ath = athletes[i];
             if (!g || g.src !== "watch" || !g.tok || !ath) return;
             const key = JSON.stringify([ath.started, ath.startOffset, ath.splits, ath.finished]);
@@ -5606,7 +5610,7 @@ ${html}</body></html>`);
               splits: SEGMENTS.map((_, si) => toServer(ath.splits[si])),
             }).catch(console.error);
           });
-        }, [athleteGps, athletes, liveRaceCode]);
+        }, [athleteWatch, athletes, liveRaceCode]);
 
         // The roster can be rebuilt (host goes live, adds or removes people), which
         // moves athletes around. A phone signed in as an athlete who's on the list
@@ -6577,7 +6581,7 @@ ${html}</body></html>`);
           }
           lastPushedRef.current = athletes.map(() => ({ splits: blank.slice(), started: false, finished: false }));
           athleteTrackRef.current = {};
-          setAthleteGps({});
+          setAthleteGps({}); setAthleteWatch({});
           setResetConfirm(false);
           setEditTarget(null);
         }
