@@ -4876,6 +4876,7 @@ ${html}</body></html>`);
           return () => { clearInterval(id); tRef.off("value", fn); hostRef.remove().catch(() => {}); };
         }, [swimLiveCode]);
         useTicker(!!swimLiveCode);
+        useTicker(!!liveRaceCode && Object.keys(athleteWatch).length > 0, 1000);   // watch lights go grey on their own
         const timerOn = lane => { const t = swimTimersLive[lane] || (Array.isArray(swimTimersLive) ? swimTimersLive[lane] : null); return !!(t && heartbeatFresh(t.at)); };
 
         // Lane timer state (all roles)
@@ -5413,7 +5414,7 @@ ${html}</body></html>`);
             }
             phonesKnownRef.current = Object.fromEntries(Object.entries(phoneMap).map(([k, v]) => [k, v.uid]));
             const watchMap = {};
-            athArr.forEach((ath, idx) => { if (ath && ath.gps && ath.gps.src === "watch" && ath.gps.tok) watchMap[idx] = ath.gps; });
+            athArr.forEach((ath, idx) => { if (ath && ath.gps && ath.gps.src === "watch") watchMap[idx] = ath.gps; });
             setAthleteWatch(watchMap);
             athArr.forEach((ath, idx) => {
               // Every athlete writes to their own node, so any number of phones can
@@ -14258,6 +14259,11 @@ ${html}</body></html>`);
                               {athletePhones[i] && (Date.now() - (athletePhones[i].seen || 0) < 90000
                                 ? <span title="This athlete's phone is linked to the race" style={{ fontSize: 14, fontWeight: 800, color: TM.run }}>📱 Connected</span>
                                 : <span title="Linked earlier; not heard from in the last minute or so" style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>📱 Offline</span>)}
+                              {athleteWatch[i] && (serverNow() - (athleteWatch[i].t || 0) < 12000
+                                ? <span title="This athlete's watch is sending to the race" style={{ fontSize: 14, fontWeight: 800, color: TM.run, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                    <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: "#1FA971", animation: "gpsping 1.4s ease-out infinite" }} />⌚ Watch</span>
+                                : <span title="Paired earlier; not heard from in the last 12 seconds" style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                    <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: "#B8B3A9" }} />⌚ Watch offline</span>)}
                               {countersFor(i).length > 0 && (
                                 <span title="Parents counting this athlete's laps" style={{ fontSize: 14, fontWeight: 800, color: TM.swim }}>👀 {countersFor(i).map(c => (c.name || "Parent").split(" ")[0]).join(", ")}</span>
                               )}

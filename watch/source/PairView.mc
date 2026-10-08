@@ -14,7 +14,9 @@ class PairView extends WatchUi.View {
     function initialize() { View.initialize(); }
 
     function paired() as Boolean {
-        return Application.Storage.getValue("raceCode") != null && Application.Storage.getValue("athIdx") != null;
+        // the code is needed too: it is how the watch reads the race's times
+        return Application.Storage.getValue("raceCode") != null && Application.Storage.getValue("athIdx") != null
+            && Application.Storage.getValue("token") != null;
     }
 
     function onUpdate(dc as Graphics.Dc) as Void {
