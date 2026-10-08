@@ -13,8 +13,8 @@ import Toybox.WatchUi;
 //   Sends:  liveRaces/{race}/athletes/{i}/gps  ← { lat, lng, distanceMi, accuracy, seg, onBike, src:"watch", tok, t }
 //           .../gps/watchLap                   ← { seg, n, ago, at: server time }  (one per LAP press;
 //                                                ago = ms between the press and sending it)
-//   Reads:  watchTokens/{code}/race            ← { started, startAt, splits[5], finished }  (server times,
-//                                                kept up to date by the host's screen)
+//   Reads:  watchTokens/{code}/race            ← { started, startAt, splits[5], finished,  (server times,
+//                                                dist[5], unit[5] }  kept up to date by the host's screen)
 // The times shown are the race's: from when the host sent this athlete off,
 // and the leg is whatever the race says — the watch only guesses ahead of
 // the race for a few seconds after a LAP press.
@@ -27,6 +27,8 @@ class TrackView extends WatchUi.View {
     var startAt = null;               // server ms
     var splits as Array = [0, 0, 0, 0, 0];   // server ms, 0 = not yet
     var raceKnown as Boolean = false;
+    var legDist as Array = [0, 0, 0, 0, 0];   // each leg's distance in its unit (0 = none, e.g. transitions)
+    var legUnit as Array = ["", "", "", "", ""];
     // the server's clock, learned from the replies to our own updates
     var serverBase = null;            // server ms …
     var timerBase as Number = 0;      // … at this System.getTimer()
@@ -34,7 +36,9 @@ class TrackView extends WatchUi.View {
     var localLeg as Number = 0;       // leg shown right after a LAP press, before the race confirms it
     var lastPressMs as Number = -100000;
     var lat = null, lng = null, lastLat = null, lastLng = null;
-    var distMi as Float = 0.0;
+    var totalM as Float = 0.0;        // GPS metres since tracking began
+    var legStartM as Float = 0.0;     // … when the leg on screen began
+    var shownLeg as Number = -1;
     var quality as Number = 0;
     var lastSentMs as Number = -1;
     var lastCode as Number = 0;
@@ -101,10 +105,27 @@ class TrackView extends WatchUi.View {
         if (quality >= Position.QUALITY_USABLE) {
             if (lastLat != null) {
                 var m = metres(lastLat, lastLng, lat, lng);
-                if (m > 3 && m < 200) { distMi += (m / 1609.344).toFloat(); lastLat = lat; lastLng = lng; }
+                if (m > 3 && m < 200) { totalM += m; lastLat = lat; lastLng = lng; }
             } else { lastLat = lat; lastLng = lng; }
         }
     }
+    // metres on the leg showing now (starts again from 0 each new leg)
+    function legMetres() as Float {
+        var l = leg();
+        if (l != shownLeg) { shownLeg = l; legStartM = totalM; }
+        return totalM - legStartM;
+    }
+    // metres in a leg's unit
+    function inUnit(m as Float, u as String) as Float {
+        if (u.equals("yd")) { return m * 1.09361; }
+        if (u.equals("m")) { return m; }
+        if (u.equals("km")) { return m / 1000.0; }
+        return m / 1609.344;
+    }
+    function fmtDist(d as Float, u as String) as String {
+        return (u.equals("yd") || u.equals("m")) ? d.toNumber().format("%d") : d.format("%.2f");
+    }
+
     function metres(a1, o1, a2, o2) as Float {
         var r = 6371000.0, p = Math.PI / 180;
         var dLat = (a2 - a1) * p, dLng = (o2 - o1) * p;
@@ -142,7 +163,7 @@ class TrackView extends WatchUi.View {
         }
         if (tick % 3 == 0 && lat != null) {
             sending = true;
-            patch({ "lat" => lat, "lng" => lng, "distanceMi" => distMi, "accuracy" => quality, "seg" => leg(),
+            patch({ "lat" => lat, "lng" => lng, "distanceMi" => legMetres() / 1609.344, "accuracy" => quality, "seg" => leg(),
                     "onBike" => leg() == 2, "src" => "watch", "tok" => token, "t" => { ".sv" => "timestamp" } }, method(:onGpsSent));
         } else if (tick % 3 == 0) {
             // no GPS yet: keep letting the race know we're here (and learn the server's clock)
@@ -176,6 +197,14 @@ class TrackView extends WatchUi.View {
             for (var i = 0; i < 5 && i < sp.size(); i++) { out[i] = toMs(sp[i]); }
         }
         splits = out;
+        var ds = data.get("dist"), us = data.get("unit");
+        if (ds instanceof Array && us instanceof Array) {
+            for (var i = 0; i < 5 && i < ds.size() && i < us.size(); i++) {
+                var dv = ds[i];
+                legDist[i] = (dv instanceof Number || dv instanceof Float || dv instanceof Double || dv instanceof Long) ? dv.toFloat() : 0;
+                legUnit[i] = us[i] != null ? us[i].toString() : "";
+            }
+        }
         if (lapsToSend.size() == 0 && System.getTimer() - lastPressMs >= 8000) { localLeg = raceLeg(); }
     }
 
@@ -223,8 +252,31 @@ class TrackView extends WatchUi.View {
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.32, Graphics.FONT_NUMBER_MEDIUM, legTime != null ? Tm.fmt(legTime.toNumber()) : "--:--", Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w / 2, h * 0.56, Graphics.FONT_SMALL, "Race " + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_CENTER);
-            dc.drawText(w / 2, h * 0.67, Graphics.FONT_SMALL, distMi.format("%.2f") + " mi", Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawText(w / 2, h * 0.53, Graphics.FONT_XTINY, "Race " + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_CENTER);
+            // distance on this leg: done of the leg's total, what's left, and a ring round the edge
+            var u = legUnit[l] as String, goal = legDist[l] as Float;
+            var done = inUnit(legMetres(), u.length() > 0 ? u : "mi");
+            if (goal > 0) {
+                var frac = done / goal;
+                if (frac > 1.0) { frac = 1.0; }
+                dc.setPenWidth(w / 40 > 4 ? w / 40 : 4);
+                dc.setColor(0x333333, Graphics.COLOR_TRANSPARENT);
+                dc.drawArc(w / 2, h / 2, w / 2 - w / 40, Graphics.ARC_CLOCKWISE, 90, 90 - 359);
+                if (frac > 0.005) {
+                    dc.setColor(Tm.legColor(l), Graphics.COLOR_TRANSPARENT);
+                    dc.drawArc(w / 2, h / 2, w / 2 - w / 40, Graphics.ARC_CLOCKWISE, 90, 90 - (frac * 359).toNumber());
+                }
+                dc.setPenWidth(1);
+                dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(w / 2, h * 0.60, Graphics.FONT_SMALL, fmtDist(done, u) + " / " + fmtDist(goal, u) + " " + u, Graphics.TEXT_JUSTIFY_CENTER);
+                var left = goal - done;
+                dc.setColor(left > 0 ? 0xAAAAAA : 0x2FC27A, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(w / 2, h * 0.70, Graphics.FONT_XTINY, left > 0 ? fmtDist(left, u) + " " + u + " left" : "Distance done", Graphics.TEXT_JUSTIFY_CENTER);
+            } else if (l == 1 || l == 3) {
+                dc.drawText(w / 2, h * 0.63, Graphics.FONT_XTINY, "Transition", Graphics.TEXT_JUSTIFY_CENTER);
+            } else {
+                dc.drawText(w / 2, h * 0.63, Graphics.FONT_SMALL, fmtDist(done, "mi") + " mi", Graphics.TEXT_JUSTIFY_CENTER);
+            }
         }
         var nowT = System.getTimer();
         var ok = lastSentMs >= 0 && nowT - lastSentMs < 10000;

@@ -5601,7 +5601,11 @@ ${html}</body></html>`);
           Object.entries(athleteWatch).forEach(([k, g]) => {
             const i = +k, ath = athletes[i];
             if (!g || g.src !== "watch" || !g.tok || !ath) return;
-            const key = JSON.stringify([ath.started, ath.startOffset, ath.splits, ath.finished]);
+            // each leg's distance and unit, so the watch can show done / left (transitions have none)
+            const crs = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0] || {};
+            const dist = [+crs.swimYards || 0, 0, +crs.bikeMiles || 0, 0, +crs.runMiles || 0];
+            const unit = [UNIT_SHORT[units.swim] || "yd", "", UNIT_SHORT[units.bike] || "mi", "", UNIT_SHORT[units.run] || "mi"];
+            const key = JSON.stringify([ath.started, ath.startOffset, ath.splits, ath.finished, dist, unit]);
             if (watchRaceSentRef.current[g.tok] === key) return;
             watchRaceSentRef.current[g.tok] = key;
             const toServer = c => c == null ? 0 : Math.round(serverNow() - (raceNow() - c));
@@ -5609,9 +5613,10 @@ ${html}</body></html>`);
               started: !!ath.started, finished: !!ath.finished,
               startAt: ath.started && ath.startOffset != null ? toServer(ath.startOffset) : 0,
               splits: SEGMENTS.map((_, si) => toServer(ath.splits[si])),
+              dist, unit,
             }).catch(console.error);
           });
-        }, [athleteWatch, athletes, liveRaceCode]);
+        }, [athleteWatch, athletes, liveRaceCode, courses, units]);
 
         // The roster can be rebuilt (host goes live, adds or removes people), which
         // moves athletes around. A phone signed in as an athlete who's on the list
