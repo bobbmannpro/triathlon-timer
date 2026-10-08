@@ -268,10 +268,10 @@ class TrackView extends WatchUi.View {
                 }
                 dc.setPenWidth(1);
                 dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(w / 2, h * 0.60, Graphics.FONT_SMALL, fmtDist(done, u) + " / " + fmtDist(goal, u) + " " + u, Graphics.TEXT_JUSTIFY_CENTER);
+                dc.drawText(w / 2, h * 0.59, Graphics.FONT_SMALL, fmtDist(done, u) + " / " + fmtDist(goal, u) + " " + u, Graphics.TEXT_JUSTIFY_CENTER);
                 var left = goal - done;
                 dc.setColor(left > 0 ? 0xAAAAAA : 0x2FC27A, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(w / 2, h * 0.70, Graphics.FONT_XTINY, left > 0 ? fmtDist(left, u) + " " + u + " left" : "Distance done", Graphics.TEXT_JUSTIFY_CENTER);
+                dc.drawText(w / 2, h * 0.68, Graphics.FONT_XTINY, left > 0 ? fmtDist(left, u) + " " + u + " left" : "Distance done", Graphics.TEXT_JUSTIFY_CENTER);
             } else if (l == 1 || l == 3) {
                 dc.drawText(w / 2, h * 0.63, Graphics.FONT_XTINY, "Transition", Graphics.TEXT_JUSTIFY_CENTER);
             } else {
@@ -282,11 +282,11 @@ class TrackView extends WatchUi.View {
         var ok = lastSentMs >= 0 && nowT - lastSentMs < 10000;
         var gps = quality >= Position.QUALITY_USABLE;
         dc.setColor(ok ? 0x2FC27A : 0xFF5A5A, Graphics.COLOR_TRANSPARENT);
-        var line = ok ? "Connected to race" : (lastCode < 0 ? "Phone not connected" : (lastSentMs < 0 ? "Connecting..." : "Not sending"));
+        var line = ok ? "Connected" : (lastCode < 0 ? "No phone" : (lastSentMs < 0 ? "Connecting..." : "Not sending"));
         if (lapsToSend.size() > 0) { line = "Sending lap..."; }
-        dc.drawText(w / 2, h * 0.79, Graphics.FONT_XTINY, line + (gps ? "  GPS ok" : "  GPS ..."), Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(w / 2, h * 0.76, Graphics.FONT_XTINY, line + (gps ? "  GPS ok" : "  GPS ..."), Graphics.TEXT_JUSTIFY_CENTER);
         dc.setColor(0x777777, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, h * 0.88, Graphics.FONT_XTINY, l < 5 && (!raceKnown || started) ? "LAP = end " + Tm.LEGS[l] : "Hold UP for menu", Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(w / 2, h * 0.84, Graphics.FONT_XTINY, l < 5 && (!raceKnown || started) ? "LAP = end " + Tm.LEGS[l] : "Hold UP for menu", Graphics.TEXT_JUSTIFY_CENTER);
     }
 }
 
