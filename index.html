@@ -5536,6 +5536,14 @@ ${html}</body></html>`);
         useEffect(() => {
           if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/autoSplits").set(autoSplits).catch(console.error);
         }, [autoSplits, liveRaceCode]);
+        // A logo or org name added after going live reaches everyone's certificates too.
+        useEffect(() => {
+          if (!liveRaceCode) return;
+          rtdb.ref("liveRaces/" + liveRaceCode + "/cert").set({
+            orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
+            logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null,
+          }).catch(console.error);
+        }, [certConfig.orgName, certConfig.accentColor, certConfig.customLogoB64, liveRaceCode]);
         // Turning laps on (or changing distances) after going live reaches
         // parents' and athletes' phones straight away.
         useEffect(() => {
