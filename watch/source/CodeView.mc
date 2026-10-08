@@ -31,7 +31,7 @@ class CodeView extends WatchUi.View {
         }
         dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w / 2, h * 0.68, Graphics.FONT_XTINY, "UP / DOWN change", Graphics.TEXT_JUSTIFY_CENTER);
-        dc.drawText(w / 2, h * 0.76, Graphics.FONT_XTINY, "START next · BACK back", Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(w / 2, h * 0.76, Graphics.FONT_XTINY, "START next, BACK back", Graphics.TEXT_JUSTIFY_CENTER);
     }
 
     function code() as String {

@@ -11,12 +11,12 @@ import Toybox.WatchUi;
 
 // Racing: GPS to the race every 3 s, LAP ends each leg.
 //   liveRaces/{race}/athletes/{i}/gps  ← { lat, lng, distanceMi, accuracy, seg, onBike, src:"watch", t }
-//   …/gps/watchLap                     ← { seg, n, at: server time }  (one per LAP press)
+//   .../gps/watchLap                     ← { seg, n, at: server time }  (one per LAP press)
 // The host's screen turns each watchLap into that leg's split.
 class TrackView extends WatchUi.View {
     var raceCode as String;
     var athIdx;
-    var leg as Number = 0;            // 0 Swim … 4 Run, 5 = finished
+    var leg as Number = 0;            // 0 Swim ... 4 Run, 5 = finished
     var startMs as Number = 0;        // System.getTimer() at START
     var legStartMs as Number = 0;
     var finishMs as Number = 0;
@@ -153,9 +153,9 @@ class TrackView extends WatchUi.View {
         var ok = lastSentMs >= 0 && now - lastSentMs < 10000;
         var gps = quality >= Position.QUALITY_USABLE;
         dc.setColor(ok ? 0x2FC27A : 0xFF5A5A, Graphics.COLOR_TRANSPARENT);
-        var line = ok ? "● Sending to race" : (lastCode < 0 ? "Phone not connected" : (lastSentMs < 0 ? "Connecting…" : "Not sending"));
-        if (lapsToSend.size() > 0) { line = "Sending lap…"; }
-        dc.drawText(w / 2, h * 0.79, Graphics.FONT_XTINY, line + (gps ? "  GPS ✓" : "  GPS …"), Graphics.TEXT_JUSTIFY_CENTER);
+        var line = ok ? "Sending to race" : (lastCode < 0 ? "Phone not connected" : (lastSentMs < 0 ? "Connecting..." : "Not sending"));
+        if (lapsToSend.size() > 0) { line = "Sending lap..."; }
+        dc.drawText(w / 2, h * 0.79, Graphics.FONT_XTINY, line + (gps ? "  GPS ok" : "  GPS ..."), Graphics.TEXT_JUSTIFY_CENTER);
         dc.setColor(0x777777, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w / 2, h * 0.88, Graphics.FONT_XTINY, leg < 5 ? "LAP = end " + Tm.LEGS[leg] : "Hold UP for menu", Graphics.TEXT_JUSTIFY_CENTER);
     }

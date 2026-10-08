@@ -44,7 +44,7 @@ class PairView extends WatchUi.View {
 
     // Look the code up: watchTokens/{CODE} → { raceCode, athIdx, athleteName }.
     function lookUp(code as String) as Void {
-        busy = true; status = "Checking " + code + "…";
+        busy = true; status = "Checking " + code + "...";
         WatchUi.requestUpdate();
         Communications.makeWebRequest(Tm.RTDB + "/watchTokens/" + code + ".json", null,
             { :method => Communications.HTTP_REQUEST_METHOD_GET, :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON },
