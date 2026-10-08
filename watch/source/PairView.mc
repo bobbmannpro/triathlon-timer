@@ -4,7 +4,7 @@ import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.WatchUi;
 
-// Pair with a race: START → type the code → the watch looks it up.
+// Pair with a race: START → enter the 6-digit code → the watch looks it up.
 // Once paired, START again begins tracking.
 class PairView extends WatchUi.View {
     var status as String = "";
@@ -33,8 +33,8 @@ class PairView extends WatchUi.View {
             dc.drawText(w / 2, h * 0.75, Graphics.FONT_XTINY, "Hold UP for a new code", Graphics.TEXT_JUSTIFY_CENTER);
         } else {
             dc.drawText(w / 2, h * 0.36, Graphics.FONT_SMALL, "Press START", Graphics.TEXT_JUSTIFY_CENTER);
-            dc.drawText(w / 2, h * 0.48, Graphics.FONT_SMALL, "to type your", Graphics.TEXT_JUSTIFY_CENTER);
-            dc.drawText(w / 2, h * 0.60, Graphics.FONT_SMALL, "watch code", Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawText(w / 2, h * 0.48, Graphics.FONT_SMALL, "to enter the", Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawText(w / 2, h * 0.60, Graphics.FONT_SMALL, "6-digit code", Graphics.TEXT_JUSTIFY_CENTER);
         }
         if (!status.equals("")) {
             dc.setColor(busy ? 0xAAAAAA : 0xFF5A5A, Graphics.COLOR_TRANSPARENT);
@@ -81,7 +81,8 @@ class PairDelegate extends WatchUi.BehaviorDelegate {
             var t = new TrackView();
             WatchUi.switchToView(t, new TrackDelegate(t), WatchUi.SLIDE_LEFT);
         } else {
-            WatchUi.pushView(new WatchUi.TextPicker(""), new CodeDelegate(view), WatchUi.SLIDE_UP);
+            var cv = new CodeView();
+            WatchUi.pushView(cv, new CodeDelegate(cv, view), WatchUi.SLIDE_UP);
         }
         return true;
     }
@@ -91,26 +92,8 @@ class PairDelegate extends WatchUi.BehaviorDelegate {
         Application.Storage.deleteValue("raceCode");
         Application.Storage.deleteValue("athIdx");
         Application.Storage.deleteValue("athleteName");
-        WatchUi.pushView(new WatchUi.TextPicker(""), new CodeDelegate(view), WatchUi.SLIDE_UP);
+        var cv = new CodeView();
+        WatchUi.pushView(cv, new CodeDelegate(cv, view), WatchUi.SLIDE_UP);
         return true;
     }
-}
-
-class CodeDelegate extends WatchUi.TextPickerDelegate {
-    var view as PairView;
-    function initialize(v as PairView) { TextPickerDelegate.initialize(); view = v; }
-
-    function onTextEntered(text as String, changed as Boolean) as Boolean {
-        // Codes are 8 letters/numbers; keep just those, upper-case.
-        var up = text.toUpper(), code = "";
-        var chars = up.toCharArray();
-        for (var i = 0; i < chars.size(); i++) {
-            var c = chars[i];
-            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) { code += c.toString(); }
-        }
-        if (code.length() > 0) { view.lookUp(code); }
-        return true;
-    }
-
-    function onCancel() as Boolean { return true; }
 }

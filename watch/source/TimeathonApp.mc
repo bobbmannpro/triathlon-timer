@@ -3,7 +3,7 @@ import Toybox.Lang;
 import Toybox.WatchUi;
 
 // Timeathon on the watch.
-//   1. Pair: type the 8-character code from the Timeathon web app (athlete's
+//   1. Pair: enter the 6-digit code from the Timeathon web app (athlete's
 //      race screen → Connect watch). The watch looks it up to learn the race
 //      and which athlete it is.
 //   2. Track: GPS goes to the race every 3 seconds; the LAP (back) button
