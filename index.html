@@ -81,7 +81,10 @@
       input[type="checkbox"], input[type="radio"] { min-height: 0; width: 22px; height: 22px;
                                                     accent-color: var(--tm-ink); }
       input[type="range"], input[type="file"], input[type="color"] { min-height: 0; accent-color: var(--tm-ink); }
-      input::placeholder, textarea::placeholder { color: var(--tm-ink-muted); opacity: 1; }
+      /* Placeholders must never look like something already typed: light, italic,
+         plain weight and spacing, whatever the field itself uses. */
+      input::placeholder, textarea::placeholder { color: #9AA0A8; opacity: 1; font-style: italic; font-weight: 400;
+                                                  letter-spacing: normal; text-transform: none; }
       input:focus, select:focus, textarea:focus { outline: 3px solid var(--tm-ink); outline-offset: 1px; }
       button:focus-visible, a:focus-visible { outline: 3px solid var(--tm-ink); outline-offset: 2px; }
 
@@ -1188,7 +1191,7 @@
                 <label htmlFor={nameId + "-code"} style={TM_LABEL}>Race code — what parents type to watch</label>
                 <div style={{ display: "flex", gap: 8 }}>
                   <input id={nameId + "-code"} value={code || ""} disabled={codeLocked} autoCapitalize="characters" autoComplete="off"
-                    onChange={e => onCode(normCode(e.target.value).slice(0, CODE_MAX))} placeholder="FOX7"
+                    onChange={e => onCode(normCode(e.target.value).slice(0, CODE_MAX))} placeholder="Type code"
                     style={{ flex: 1, minWidth: 0, background: codeLocked ? TM.bgAlt : "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
                              padding: "4px 14px", color: TM.ink, fontSize: 28, fontWeight: 900, letterSpacing: 2, outline: "none" }} />
                   {!codeLocked && (
@@ -10804,7 +10807,7 @@ ${html}</body></html>`);
                         <div style={{ display: "flex", gap: 8 }}>
                           <input id="photo-code" value={photoCodeInput}
                             onChange={e => setPhotoCodeInput(normCode(e.target.value))}
-                            placeholder="Photo code"
+                            placeholder="Type photo code"
                             onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                             style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
                                      padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none" }} />
@@ -11216,7 +11219,7 @@ ${html}</body></html>`);
                     <label htmlFor="spectate-code" style={{ ...TM_LABEL, color: "#FFFFFF" }}>Race code</label>
                     <input id="spectate-code" value={spectateCode} autoCapitalize="characters" autoComplete="off"
                       onChange={e => { setSpectateCode(normCode(e.target.value)); setSpectateError(""); }}
-                      placeholder="FOX7"
+                      placeholder="Type code"
                       style={{ width: "100%", background: "#FFFFFF", border: "none", borderRadius: 6, padding: "6px 14px",
                                color: TM.ink, fontSize: 34, fontWeight: 900, letterSpacing: 4, textAlign: "center",
                                minHeight: 64, outline: "none" }} />
@@ -11247,7 +11250,7 @@ ${html}</body></html>`);
                     <label htmlFor="spectate-photo-code" style={{ ...TM_LABEL }}>📷 Race photos</label>
                     <div style={{ display: "flex", gap: 8 }}>
                       <input id="spectate-photo-code" value={photoCodeInput} autoCapitalize="characters" autoComplete="off"
-                        onChange={e => setPhotoCodeInput(normCode(e.target.value))} placeholder="Photo code"
+                        onChange={e => setPhotoCodeInput(normCode(e.target.value))} placeholder="Type photo code"
                         onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                         style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none", minHeight: 46 }} />
                       <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }} style={{ ...btnStyle(TM.ink), minHeight: 46 }}>View</button>
@@ -12019,7 +12022,7 @@ ${html}</body></html>`);
                       <div style={{ display: "flex", gap: 8 }}>
                         <input value={joinCode} onChange={e => { setJoinCode(normCode(e.target.value)); setRegError(""); }}
                           onKeyDown={e => e.key === "Enter" && joinRaceByCode()}
-                          placeholder="e.g. FOX7" maxLength={12}
+                          placeholder="Type code" maxLength={12}
                           style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "6px 14px", color: TM.ink, fontSize: 24, fontWeight: 900, fontFamily: "var(--tm-font)", letterSpacing: 2, outline: "none", textAlign: "center" }} />
                         <button onClick={() => joinRaceByCode()} disabled={regWorking} style={{ ...btnStyle("#04613F"), padding: "12px 20px", fontSize: 14, opacity: regWorking ? 0.6 : 1 }}>{regWorking ? "…" : "Find Race"}</button>
                       </div>
@@ -12028,7 +12031,7 @@ ${html}</body></html>`);
                     <label htmlFor="join-photo-code" style={{ ...TM_LABEL }}>📷 Race photos</label>
                     <div style={{ display: "flex", gap: 8 }}>
                       <input id="join-photo-code" value={photoCodeInput} autoCapitalize="characters" autoComplete="off"
-                        onChange={e => setPhotoCodeInput(normCode(e.target.value))} placeholder="Photo code"
+                        onChange={e => setPhotoCodeInput(normCode(e.target.value))} placeholder="Type photo code"
                         onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                         style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none", minHeight: 46 }} />
                       <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }} style={{ ...btnStyle(TM.ink), minHeight: 46 }}>View</button>
@@ -12885,7 +12888,7 @@ ${html}</body></html>`);
                         </div>
                         <input value={spectatorCode} onChange={e => setSpectatorCode(normCode(e.target.value))}
                           onKeyDown={e => e.key === "Enter" && watchRace(spectatorCode)}
-                          placeholder="RACE CODE" maxLength={12}
+                          placeholder="Type race code" maxLength={12}
                           style={{ width: "100%", boxSizing: "border-box", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
                         <button onClick={() => watchRace(spectatorCode)} disabled={liveRaceLoading}
                           style={{ width: "100%", background: "#0B3FCC", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#FFFFFF", cursor: "pointer", letterSpacing: 1 }}>
@@ -12906,7 +12909,7 @@ ${html}</body></html>`);
                         </div>
                         <input value={photoCodeInput} onChange={e => setPhotoCodeInput(normCode(e.target.value))}
                           onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
-                          placeholder="PHOTO CODE"
+                          placeholder="Type photo code"
                           style={{ width: "100%", boxSizing: "border-box", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 8, padding: "16px", marginBottom: 12, color: "#0B3FCC", fontSize: 28, fontFamily: "var(--tm-font)", letterSpacing: 0.5, outline: "none", textAlign: "center", display: "block" }} />
                         <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
                           style={{ width: "100%", background: "#0B3FCC", border: "none", borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 700, color: "#FFFFFF", cursor: "pointer", letterSpacing: 1 }}>
@@ -16642,7 +16645,7 @@ ${html}</body></html>`);
                             onChange={e => setSwimLaneCode(normCode(e.target.value))}
                             onKeyDown={e => e.key === "Enter" && joinLaneTimer()}
                             maxLength={12}
-                            placeholder="FOX7"
+                            placeholder="Type code"
                             style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"8px 12px", color:"#0B0D10", fontSize:16, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
                         </div>
@@ -16852,7 +16855,7 @@ ${html}</body></html>`);
                             onChange={e => setSwimWatchCode(normCode(e.target.value))}
                             onKeyDown={e => e.key === "Enter" && joinSwimWatch()}
                             maxLength={12}
-                            placeholder="FOX7"
+                            placeholder="Type code"
                             style={{ background:"#FFFFFF", border:"2px solid #C9C5BC", borderRadius:4, padding:"10px 14px", color:"#0B0D10", fontSize:18, fontFamily:"monospace", letterSpacing:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                           />
                         </div>
@@ -17053,7 +17056,7 @@ ${html}</body></html>`);
                         </div>
                         <div style={S.row}>
                           <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
-                            placeholder="FOX7" maxLength={12}
+                            placeholder="Type code" maxLength={12}
                             style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           <button onClick={() => { if ((bikeWatchCode||"").trim().length >= 4) setBikeView("feed"); }}
                             style={{ ...btnStyle("#8A5A00"), whiteSpace:"nowrap" }}>Follow</button>
@@ -17658,7 +17661,7 @@ ${html}</body></html>`);
                         <div style={S.label}>Publishing to</div>
                         <div style={S.row}>
                           <input value={bikeRideCode || ""} onChange={e => setBikeRideCode(normCode(e.target.value))}
-                            placeholder="FOX7" maxLength={12} disabled={bikeRiding}
+                            placeholder="Type code" maxLength={12} disabled={bikeRiding}
                             style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center", opacity: bikeRiding ? 0.6 : 1 }} />
                         </div>
                         {bikeFeedList.length > 0 && !bikeRiding && (
@@ -17900,7 +17903,7 @@ ${html}</body></html>`);
                           <div style={S.label}>Follow a ride</div>
                           <div style={S.row}>
                             <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
-                              placeholder="FOX7" maxLength={12}
+                              placeholder="Type code" maxLength={12}
                               style={{ ...S.input, fontFamily:"monospace", fontSize:18, letterSpacing:1.2, textAlign:"center" }} />
                           </div>
                         </div>
@@ -17962,7 +17965,7 @@ ${html}</body></html>`);
                               <div style={S.label}>Follow another rider</div>
                               <div style={S.row}>
                                 <input value={bikeAddCode} onChange={e => setBikeAddCode(normCode(e.target.value))}
-                                  placeholder="FOX7" maxLength={12}
+                                  placeholder="Type code" maxLength={12}
                                   style={{ ...S.input, fontFamily:"monospace", fontSize:16, letterSpacing:1.2, textAlign:"center" }} />
                                 <button onClick={() => {
                                   const c = (bikeAddCode || "").trim().toUpperCase();
