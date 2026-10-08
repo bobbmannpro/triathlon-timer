@@ -9,6 +9,7 @@ import Toybox.WatchUi;
 class PairView extends WatchUi.View {
     var status as String = "";
     var busy as Boolean = false;
+    var pending as String = "";
 
     function initialize() { View.initialize(); }
 
@@ -44,7 +45,7 @@ class PairView extends WatchUi.View {
 
     // Look the code up: watchTokens/{CODE} → { raceCode, athIdx, athleteName }.
     function lookUp(code as String) as Void {
-        busy = true; status = "Checking " + code + "...";
+        busy = true; pending = code; status = "Checking " + code + "...";
         WatchUi.requestUpdate();
         Communications.makeWebRequest(Tm.RTDB + "/watchTokens/" + code + ".json", null,
             { :method => Communications.HTTP_REQUEST_METHOD_GET, :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON },
@@ -59,6 +60,7 @@ class PairView extends WatchUi.View {
             var nm = data.get("athleteName");
             Application.Storage.setValue("athleteName", nm != null ? nm.toString() : "Athlete");
             Application.Storage.setValue("leg", 0);
+            Application.Storage.setValue("token", pending);
             status = "";
         } else if (code == 200) {
             status = "Code not found";
@@ -92,6 +94,7 @@ class PairDelegate extends WatchUi.BehaviorDelegate {
         Application.Storage.deleteValue("raceCode");
         Application.Storage.deleteValue("athIdx");
         Application.Storage.deleteValue("athleteName");
+        Application.Storage.deleteValue("token");
         var cv = new CodeView();
         WatchUi.pushView(cv, new CodeDelegate(cv, view), WatchUi.SLIDE_UP);
         return true;

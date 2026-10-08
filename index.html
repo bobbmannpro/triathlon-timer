@@ -5579,10 +5579,34 @@ ${html}</body></html>`);
             const next = ath.splits.findIndex(x => x === null);
             if (next !== +wl.seg) return;
             const prev = next === 0 ? (ath.startOffset || 0) : ath.splits[next - 1];
-            const at = Math.max(prev || 0, Math.round(raceNow() - Math.max(0, serverNow() - wl.at)));
+            // when the button was pressed: the server's receipt time, less how long
+            // the watch held it (e.g. out of Bluetooth range during the swim)
+            const pressedAt = wl.at - Math.max(0, +wl.ago || 0);
+            const at = Math.max(prev || 0, Math.round(raceNow() - Math.max(0, serverNow() - pressedAt)));
             logSplit(i, next, at);
           });
         }, [athleteGps, autoSplits, liveRaceCode]);
+
+        // Each paired watch reads where its athlete is from watchTokens/{code}/race:
+        // sent-off time and leg finishes in server time, so the watch shows the
+        // race's own times and leg (and follows splits logged here by hand).
+        const watchRaceSentRef = useRef({});
+        useEffect(() => {
+          if (!liveRaceCode) return;
+          Object.entries(athleteGps).forEach(([k, g]) => {
+            const i = +k, ath = athletes[i];
+            if (!g || g.src !== "watch" || !g.tok || !ath) return;
+            const key = JSON.stringify([ath.started, ath.startOffset, ath.splits, ath.finished]);
+            if (watchRaceSentRef.current[g.tok] === key) return;
+            watchRaceSentRef.current[g.tok] = key;
+            const toServer = c => c == null ? 0 : Math.round(serverNow() - (raceNow() - c));
+            rtdb.ref(`watchTokens/${g.tok}/race`).set({
+              started: !!ath.started, finished: !!ath.finished,
+              startAt: ath.started && ath.startOffset != null ? toServer(ath.startOffset) : 0,
+              splits: SEGMENTS.map((_, si) => toServer(ath.splits[si])),
+            }).catch(console.error);
+          });
+        }, [athleteGps, athletes, liveRaceCode]);
 
         // The roster can be rebuilt (host goes live, adds or removes people), which
         // moves athletes around. A phone signed in as an athlete who's on the list
