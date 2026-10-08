@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timeathon Privacy</title>
+<style>
+  :root { --bg: #FFFFFF; --ink: #0B0D10; --muted: #3D434B; --line: #E2DFD8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0B0D10; --ink: #EFEDE8; --muted: #B8B3A9; --line: #2A2E34; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 28px 0 6px; }
+  p, li { color: var(--muted); }
+  .date { color: var(--muted); font-size: 15px; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Timeathon Privacy</h1>
+  <p class="date">For the Timeathon race-timing web app and the Timeathon Garmin watch app. Last updated October 8, 2026.</p>
+
+  <h2>What the watch app sends</h2>
+  <p>Only after you pair the watch with a race using its 6-digit code, and only until you choose End tracking:</p>
+  <ul>
+    <li>your watch's GPS position, accuracy and distance on the current leg, about every 3 seconds;</li>
+    <li>each LAP press (which leg it ended, and when);</li>
+    <li>the pairing code, so the race knows which athlete the watch belongs to.</li>
+  </ul>
+  <p>The watch reads back your race's start time and leg times so it can show the race clock. Nothing is sent before you pair.</p>
+
+  <h2>Who can see it</h2>
+  <p>The race director who hosts the race, and the spectators following that race in Timeathon, can see your live position on the race map and your leg times. Your times appear in that race's results, as with any timed race.</p>
+
+  <h2>Where it is kept</h2>
+  <p>Race data is stored in Google Firebase. Watch pairing codes expire after six hours. Live positions belong to the race and are kept with it until the race director deletes the race.</p>
+
+  <h2>What we don't do</h2>
+  <p>Timeathon doesn't sell or share your data with advertisers, doesn't show ads, and doesn't track you outside a race you joined.</p>
+
+  <h2>Questions or deletion</h2>
+  <p>Ask the race director of your race, or contact the developer through the Timeathon page in the Garmin Connect IQ Store, to have your race data removed.</p>
+</main>
+</body>
+</html>
