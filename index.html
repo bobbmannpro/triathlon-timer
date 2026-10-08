@@ -2298,6 +2298,15 @@
       const SERVER_CLOCK = { offset: 0 };
       try { rtdb.ref(".info/serverTimeOffset").on("value", sn => { if (!SERVER_CLOCK.synced) SERVER_CLOCK.offset = sn.val() || 0; }); } catch (_) {}
       function serverNow() { return Date.now() + SERVER_CLOCK.offset; }
+      // Watch connection is still being tested: its panels only show on a
+      // device opened once with ?watchbeta=1 (and ?watchbeta=0 hides them again).
+      const WATCH_BETA = (() => {
+        try {
+          const q = new URLSearchParams(location.search);
+          if (q.has("watchbeta")) localStorage.setItem("tm-watch-beta", q.get("watchbeta") === "0" ? "0" : "1");
+          return localStorage.getItem("tm-watch-beta") === "1";
+        } catch (_) { return false; }
+      })();
       // Connection lights. Each side writes a heartbeat (server time) every
       // second; the other side shows green only while the latest heartbeat is
       // under HEARTBEAT_STALE_MS old by the shared clock, re-checked 4× a
@@ -4471,11 +4480,17 @@ ${html}</body></html>`);
           }
           if (!watchToken || !joinRace || joinAthIdx === null) { setWatchConnected(false); return; }
           const ref = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`);
-          const fn = snap => setWatchConnected(snap.exists());
+          // Only the watch marks its updates src:"watch" — the phone's own GPS doesn't count.
+          const fn = snap => { const g = snap.val(); setWatchConnected(!!(g && g.src === "watch")); };
           ref.on("value", fn);
           watchGpsListenerRef.current = { ref, fn };
           return () => { ref.off("value", fn); watchGpsListenerRef.current = null; };
         }, [watchToken, joinRace, joinAthIdx]);
+
+        // A connected watch takes over GPS: the phone stops, so they don't both write.
+        useEffect(() => {
+          if (watchConnected && joinGpsActive) { stopGpsTracking(); setJoinGpsStatus("Your watch is sending GPS now."); }
+        }, [watchConnected, joinGpsActive]);
 
         // Finished: stop tracking, so the phone isn't burning battery on GPS.
         const joinMeFinished = !!(joinLiveData && joinAthIdx !== null && asList(joinLiveData.athletes)[joinAthIdx] && asList(joinLiveData.athletes)[joinAthIdx].finished);
@@ -5544,6 +5559,30 @@ ${html}</body></html>`);
             }
           });
         }, [lapTaps, athletes, courses, liveRaceCode, autoSplits]);
+
+        // Watches send { seg, n, at: server time } on each LAP press. In Auto the
+        // host turns it into that leg's split at the moment it was pressed —
+        // only if it's the leg that's next for that athlete, so a press for a
+        // leg the host already logged (or a double press) changes nothing.
+        const watchLapSeenRef = useRef({});
+        useEffect(() => {
+          if (!liveRaceCode) return;
+          Object.entries(athleteGps).forEach(([k, g]) => {
+            const i = +k, wl = g && g.watchLap;
+            if (!wl || wl.at == null || wl.seg == null) return;
+            const key = `${wl.n}-${wl.at}`;
+            if (watchLapSeenRef.current[i] === key) return;
+            watchLapSeenRef.current[i] = key;
+            if (!autoSplits) return;
+            const ath = athletes[i];
+            if (!ath || !ath.started || ath.finished) return;
+            const next = ath.splits.findIndex(x => x === null);
+            if (next !== +wl.seg) return;
+            const prev = next === 0 ? (ath.startOffset || 0) : ath.splits[next - 1];
+            const at = Math.max(prev || 0, Math.round(raceNow() - Math.max(0, serverNow() - wl.at)));
+            logSplit(i, next, at);
+          });
+        }, [athleteGps, autoSplits, liveRaceCode]);
 
         // The roster can be rebuilt (host goes live, adds or removes people), which
         // moves athletes around. A phone signed in as an athlete who's on the list
@@ -7608,7 +7647,7 @@ ${html}</body></html>`);
                      distanceMi: +totalDistMi.toFixed(3),
                      accuracy: accM != null ? Math.round(accM) : null,
                      laps, lapMi, rejected,
-                     seg: joinCurSegRef.current, onBike,
+                     seg: joinCurSegRef.current, onBike, src: "phone",
                      t: Date.now() }).catch(console.error);
             // Trail tracking
             joinGpsTrailRef.current = [...joinGpsTrailRef.current, [lat, lng]];
@@ -12289,7 +12328,7 @@ ${html}</body></html>`);
                           })()}
 
                           {/* Garmin watch panel — only when the race uses GPS */}
-                          {((joinLiveData || joinRace)?.courseMap !== false || asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")) && (() => {
+                          {WATCH_BETA && ((joinLiveData || joinRace)?.courseMap !== false || asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")) && (() => {
                             const gpsData = joinLiveData?.athletes?.[joinAthIdx]?.gps;
                             const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
                             const curSeg = (() => { const s = splits.findIndex(x => x === null); return s === -1 ? SEGMENTS.length - 1 : s; })();
@@ -12297,7 +12336,7 @@ ${html}</body></html>`);
                               <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: `2px solid ${watchConnected ? "#C9C5BC" : "#C9C5BC"}` }}>
                                 {/* Header row */}
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: watchConnected ? 10 : 6 }}>
-                                  <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1.2 }}>⌚ GARMIN WATCH</div>
+                                  <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1.2 }}>⌚ WATCH</div>
                                   {watchConnected
                                     ? <span style={{ fontSize: 14, color: "#04613F", letterSpacing: 1, animation: "gpsping 1.4s ease-out infinite" }}>● WORKOUT ACTIVE</span>
                                     : watchToken && <span style={{ fontSize: 14, color: "#3D434B" }}>Waiting for watch…</span>}
@@ -12356,10 +12395,10 @@ ${html}</body></html>`);
                                 {/* Pair / token row */}
                                 {!watchToken ? (
                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                    <div style={{ fontSize: 14, color: "#3D434B" }}>Start a multisport on your Garmin to sync</div>
+                                    <div style={{ fontSize: 14, color: "#3D434B" }}>Open Timeathon on your watch, press START and type the code.</div>
                                     <button onClick={generateWatchToken} disabled={watchTokenLoading}
                                       style={{ ...btnStyle("#0B3FCC", true), padding: "5px 12px", fontSize: 14, flexShrink: 0, marginLeft: 8 }}>
-                                      {watchTokenLoading ? "…" : "Pair"}
+                                      {watchTokenLoading ? "…" : "Connect watch"}
                                     </button>
                                   </div>
                                 ) : !watchConnected ? (
@@ -12368,7 +12407,7 @@ ${html}</body></html>`);
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 24, letterSpacing: 0.5, color: "#0B3FCC", lineHeight: 1 }}>
                                         {watchToken.slice(0, 4)} {watchToken.slice(4)}
                                       </div>
-                                      <div style={{ fontSize: 14, color: "#3D434B" }}>Enter this code on your Garmin watch</div>
+                                      <div style={{ fontSize: 14, color: "#3D434B" }}>Type this code in Timeathon on your watch</div>
                                     </div>
                                     <button onClick={clearWatchToken} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, color: "#3D434B", fontSize: 14, cursor: "pointer", padding: "4px 8px", flexShrink: 0, marginLeft: 8 }}>Unpair</button>
                                   </div>
@@ -12561,10 +12600,10 @@ ${html}</body></html>`);
                     )}
                   </div>
 
-                  {/* Garmin Watch (WiFi) card */}
-                  <div style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
+                  {/* Watch card (test switch only) */}
+                  <div style={{ display: WATCH_BETA ? "block" : "none", background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>
-                      Garmin Watch (WiFi)
+                      Watch
                     </div>
 
                     {!joinRace || joinAthIdx === null ? (
@@ -12585,18 +12624,18 @@ ${html}</body></html>`);
                     ) : !watchToken ? (
                       <button onClick={generateWatchToken} disabled={watchTokenLoading || joinGpsActive}
                         style={{ ...btnStyle("#0B3FCC", true), width: "100%", padding: "14px", fontSize: 14, letterSpacing: 1, opacity: (watchTokenLoading || joinGpsActive) ? 0.45 : 1, cursor: (watchTokenLoading || joinGpsActive) ? "not-allowed" : "pointer" }}>
-                        {watchTokenLoading ? "Generating…" : "⌚ Pair Garmin Watch"}
+                        {watchTokenLoading ? "Generating…" : "⌚ Connect watch"}
                       </button>
                     ) : (
                       <div style={{ background: "#FFFFFF", border: `2px solid ${watchConnected ? "#04613F" : "#0B3FCC"}`, borderRadius: 8, padding: "16px", textAlign: "center" }}>
                         <div style={{ fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 8 }}>
-                          ⌚ Garmin Watch Code
+                          ⌚ Watch code
                         </div>
                         <div style={{ fontFamily: "var(--tm-font), monospace", fontSize: 38, letterSpacing: 0.5, color: "#0B3FCC", marginBottom: 2 }}>
                           {watchToken.slice(0, 4)} {watchToken.slice(4)}
                         </div>
                         <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 12 }}>
-                          Enter in the Timeathon Garmin app · expires in 6 hours
+                          Type it in Timeathon on your watch · expires in 6 hours
                         </div>
                         {watchConnected ? (
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>

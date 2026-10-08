@@ -1,0 +1,575 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<debugInfo>
+    <manifest filename="C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\manifest.xml"/>
+    <pcToLineNum>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="1" lineNum="14" parent="globals/TimeathonApp" pc="268435460" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="2" lineNum="164" parent="globals/TrackDelegate" pc="268435472" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="3" lineNum="16" parent="globals/TrackView" pc="268435484" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="3" lineNum="29" parent="globals/TrackView" pc="268435495" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="4" lineNum="186" parent="globals/TrackMenuDelegate" pc="268435505" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\bin\\gen\\006-B4536-00\\source\\Rez.mcgen" id="5" lineNum="7" parent="globals/Rez" pc="268435517" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="6" lineNum="9" parent="globals/PairView" pc="268435537" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="7" lineNum="99" parent="globals/CodeDelegate" pc="268435549" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="8" lineNum="74" parent="globals/PairDelegate" pc="268435561" symbol="&lt;init&gt;"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="9" lineNum="17" parent="globals/TimeathonApp" pc="268435573" symbol="getInitialView"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="9" lineNum="18" parent="globals/TimeathonApp" pc="268435576" symbol="getInitialView"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="9" lineNum="19" parent="globals/TimeathonApp" pc="268435596" symbol="getInitialView"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="10" lineNum="15" parent="globals/TimeathonApp" pc="268435629" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="10" lineNum="15" parent="globals/TimeathonApp" pc="268435631" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="11" lineNum="169" parent="globals/TrackDelegate" pc="268435644" symbol="onBack"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="11" lineNum="169" parent="globals/TrackDelegate" pc="268435646" symbol="onBack"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="11" lineNum="169" parent="globals/TrackDelegate" pc="268435658" symbol="onBack"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="12" lineNum="177" parent="globals/TrackDelegate" pc="268435660" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="12" lineNum="178" parent="globals/TrackDelegate" pc="268435663" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="12" lineNum="179" parent="globals/TrackDelegate" pc="268435703" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="12" lineNum="180" parent="globals/TrackDelegate" pc="268435747" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="12" lineNum="181" parent="globals/TrackDelegate" pc="268435795" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="12" lineNum="182" parent="globals/TrackDelegate" pc="268435835" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="13" lineNum="166" parent="globals/TrackDelegate" pc="268435837" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="13" lineNum="166" parent="globals/TrackDelegate" pc="268435839" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="13" lineNum="166" parent="globals/TrackDelegate" pc="268435851" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="14" lineNum="171" parent="globals/TrackDelegate" pc="268435861" symbol="onKey"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="14" lineNum="172" parent="globals/TrackDelegate" pc="268435863" symbol="onKey"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="14" lineNum="172" parent="globals/TrackDelegate" pc="268435876" symbol="onKey"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="14" lineNum="172" parent="globals/TrackDelegate" pc="268435888" symbol="onKey"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="14" lineNum="173" parent="globals/TrackDelegate" pc="268435893" symbol="onKey"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="15" lineNum="70" parent="globals/TrackView" pc="268435895" symbol="metres"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="15" lineNum="71" parent="globals/TrackView" pc="268435898" symbol="metres"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="15" lineNum="72" parent="globals/TrackView" pc="268435912" symbol="metres"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="15" lineNum="73" parent="globals/TrackView" pc="268435932" symbol="metres"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="15" lineNum="74" parent="globals/TrackView" pc="268436041" symbol="metres"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="89" parent="globals/TrackView" pc="268436097" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="90" parent="globals/TrackView" pc="268436100" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="91" parent="globals/TrackView" pc="268436115" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="92" parent="globals/TrackView" pc="268436126" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="92" parent="globals/TrackView" pc="268436134" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="94" parent="globals/TrackView" pc="268436138" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="95" parent="globals/TrackView" pc="268436154" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="96" parent="globals/TrackView" pc="268436162" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="97" parent="globals/TrackView" pc="268436171" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="98" parent="globals/TrackView" pc="268436260" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="100" parent="globals/TrackView" pc="268436264" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="101" parent="globals/TrackView" pc="268436297" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="16" lineNum="102" parent="globals/TrackView" pc="268436305" symbol="onTick"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="57" parent="globals/TrackView" pc="268436418" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="58" parent="globals/TrackView" pc="268436421" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="59" parent="globals/TrackView" pc="268436434" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="59" parent="globals/TrackView" pc="268436455" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="60" parent="globals/TrackView" pc="268436459" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="61" parent="globals/TrackView" pc="268436473" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="61" parent="globals/TrackView" pc="268436484" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="62" parent="globals/TrackView" pc="268436496" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="63" parent="globals/TrackView" pc="268436507" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="64" parent="globals/TrackView" pc="268436516" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="65" parent="globals/TrackView" pc="268436546" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="65" parent="globals/TrackView" pc="268436563" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="65" parent="globals/TrackView" pc="268436590" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="65" parent="globals/TrackView" pc="268436602" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="66" parent="globals/TrackView" pc="268436620" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="17" lineNum="66" parent="globals/TrackView" pc="268436632" symbol="onPosition"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="18" lineNum="77" parent="globals/TrackView" pc="268436648" symbol="gpsUrl"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="18" lineNum="77" parent="globals/TrackView" pc="268436650" symbol="gpsUrl"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="19" lineNum="81" parent="globals/TrackView" pc="268436680" symbol="patch"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="19" lineNum="82" parent="globals/TrackView" pc="268436682" symbol="patch"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="118" parent="globals/TrackView" pc="268436737" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="119" parent="globals/TrackView" pc="268436740" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="119" parent="globals/TrackView" pc="268436751" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="120" parent="globals/TrackView" pc="268436755" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="121" parent="globals/TrackView" pc="268436767" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="122" parent="globals/TrackView" pc="268436782" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="123" parent="globals/TrackView" pc="268436823" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="124" parent="globals/TrackView" pc="268436838" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="125" parent="globals/TrackView" pc="268436847" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="125" parent="globals/TrackView" pc="268436858" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="126" parent="globals/TrackView" pc="268436876" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="127" parent="globals/TrackView" pc="268436899" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="127" parent="globals/TrackView" pc="268436914" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="20" lineNum="128" parent="globals/TrackView" pc="268436964" symbol="lap"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="21" lineNum="48" parent="globals/TrackView" pc="268436976" symbol="onHide"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="21" lineNum="49" parent="globals/TrackView" pc="268436978" symbol="onHide"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="22" lineNum="107" parent="globals/TrackView" pc="268436991" symbol="onGpsSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="22" lineNum="108" parent="globals/TrackView" pc="268436993" symbol="onGpsSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="22" lineNum="108" parent="globals/TrackView" pc="268437001" symbol="onGpsSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="22" lineNum="109" parent="globals/TrackView" pc="268437010" symbol="onGpsSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="22" lineNum="109" parent="globals/TrackView" pc="268437019" symbol="onGpsSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="23" lineNum="43" parent="globals/TrackView" pc="268437040" symbol="onShow"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="23" lineNum="44" parent="globals/TrackView" pc="268437042" symbol="onShow"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="23" lineNum="45" parent="globals/TrackView" pc="268437070" symbol="onShow"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="24" lineNum="112" parent="globals/TrackView" pc="268437102" symbol="onLapSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="24" lineNum="113" parent="globals/TrackView" pc="268437104" symbol="onLapSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="24" lineNum="113" parent="globals/TrackView" pc="268437112" symbol="onLapSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="24" lineNum="114" parent="globals/TrackView" pc="268437121" symbol="onLapSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="24" lineNum="114" parent="globals/TrackView" pc="268437130" symbol="onLapSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="24" lineNum="114" parent="globals/TrackView" pc="268437153" symbol="onLapSent"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="25" lineNum="52" parent="globals/TrackView" pc="268437174" symbol="stop"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="25" lineNum="53" parent="globals/TrackView" pc="268437176" symbol="stop"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="25" lineNum="54" parent="globals/TrackView" pc="268437188" symbol="stop"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="26" lineNum="34" parent="globals/TrackView" pc="268437217" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="26" lineNum="35" parent="globals/TrackView" pc="268437219" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="26" lineNum="36" parent="globals/TrackView" pc="268437231" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="26" lineNum="37" parent="globals/TrackView" pc="268437261" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="26" lineNum="38" parent="globals/TrackView" pc="268437285" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="26" lineNum="39" parent="globals/TrackView" pc="268437302" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="26" lineNum="40" parent="globals/TrackView" pc="268437314" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="131" parent="globals/TrackView" pc="268437344" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="132" parent="globals/TrackView" pc="268437347" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="133" parent="globals/TrackView" pc="268437365" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="134" parent="globals/TrackView" pc="268437377" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="135" parent="globals/TrackView" pc="268437393" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="136" parent="globals/TrackView" pc="268437401" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="137" parent="globals/TrackView" pc="268437418" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="138" parent="globals/TrackView" pc="268437455" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="139" parent="globals/TrackView" pc="268437466" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="140" parent="globals/TrackView" pc="268437482" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="141" parent="globals/TrackView" pc="268437514" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="142" parent="globals/TrackView" pc="268437531" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="144" parent="globals/TrackView" pc="268437578" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="145" parent="globals/TrackView" pc="268437607" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="146" parent="globals/TrackView" pc="268437655" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="147" parent="globals/TrackView" pc="268437672" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="148" parent="globals/TrackView" pc="268437719" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="149" parent="globals/TrackView" pc="268437736" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="150" parent="globals/TrackView" pc="268437789" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="153" parent="globals/TrackView" pc="268437840" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="154" parent="globals/TrackView" pc="268437867" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="155" parent="globals/TrackView" pc="268437877" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="156" parent="globals/TrackView" pc="268437906" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="157" parent="globals/TrackView" pc="268437962" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="157" parent="globals/TrackView" pc="268437978" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="158" parent="globals/TrackView" pc="268437988" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="159" parent="globals/TrackView" pc="268438035" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="27" lineNum="160" parent="globals/TrackView" pc="268438051" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="28" lineNum="188" parent="globals/TrackMenuDelegate" pc="268438118" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="28" lineNum="188" parent="globals/TrackMenuDelegate" pc="268438120" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="28" lineNum="188" parent="globals/TrackMenuDelegate" pc="268438132" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="29" lineNum="190" parent="globals/TrackMenuDelegate" pc="268438142" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="29" lineNum="191" parent="globals/TrackMenuDelegate" pc="268438145" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="29" lineNum="192" parent="globals/TrackMenuDelegate" pc="268438161" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="29" lineNum="193" parent="globals/TrackMenuDelegate" pc="268438173" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="29" lineNum="194" parent="globals/TrackMenuDelegate" pc="268438188" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="29" lineNum="195" parent="globals/TrackMenuDelegate" pc="268438208" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TrackView.mc" id="29" lineNum="197" parent="globals/TrackMenuDelegate" pc="268438248" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="30" lineNum="46" parent="globals/PairView" pc="268438264" symbol="lookUp"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="30" lineNum="47" parent="globals/PairView" pc="268438266" symbol="lookUp"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="30" lineNum="47" parent="globals/PairView" pc="268438274" symbol="lookUp"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="30" lineNum="48" parent="globals/PairView" pc="268438295" symbol="lookUp"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="30" lineNum="49" parent="globals/PairView" pc="268438306" symbol="lookUp"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="54" parent="globals/PairView" pc="268438368" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="55" parent="globals/PairView" pc="268438371" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="56" parent="globals/PairView" pc="268438379" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="57" parent="globals/PairView" pc="268438441" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="58" parent="globals/PairView" pc="268438480" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="59" parent="globals/PairView" pc="268438513" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="60" parent="globals/PairView" pc="268438530" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="61" parent="globals/PairView" pc="268438570" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="62" parent="globals/PairView" pc="268438589" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="63" parent="globals/PairView" pc="268438604" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="64" parent="globals/PairView" pc="268438613" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="65" parent="globals/PairView" pc="268438628" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="66" parent="globals/PairView" pc="268438635" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="68" parent="globals/PairView" pc="268438659" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="31" lineNum="70" parent="globals/PairView" pc="268438674" symbol="onToken"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="32" lineNum="13" parent="globals/PairView" pc="268438686" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="32" lineNum="13" parent="globals/PairView" pc="268438688" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="19" parent="globals/PairView" pc="268438701" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="20" parent="globals/PairView" pc="268438704" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="21" parent="globals/PairView" pc="268438722" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="22" parent="globals/PairView" pc="268438738" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="23" parent="globals/PairView" pc="268438746" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="24" parent="globals/PairView" pc="268438778" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="25" parent="globals/PairView" pc="268438787" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="26" parent="globals/PairView" pc="268438806" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="27" parent="globals/PairView" pc="268438825" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="28" parent="globals/PairView" pc="268438874" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="29" parent="globals/PairView" pc="268438891" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="30" parent="globals/PairView" pc="268438931" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="31" parent="globals/PairView" pc="268438947" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="32" parent="globals/PairView" pc="268438979" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="33" parent="globals/PairView" pc="268438996" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="35" parent="globals/PairView" pc="268439030" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="36" parent="globals/PairView" pc="268439062" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="37" parent="globals/PairView" pc="268439094" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="39" parent="globals/PairView" pc="268439126" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="40" parent="globals/PairView" pc="268439148" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="33" lineNum="41" parent="globals/PairView" pc="268439181" symbol="onUpdate"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="34" lineNum="15" parent="globals/PairView" pc="268439216" symbol="paired"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="34" lineNum="16" parent="globals/PairView" pc="268439218" symbol="paired"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="35" lineNum="36" parent="globals/Tm" pc="268439261" symbol="fmt"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="35" lineNum="37" parent="globals/Tm" pc="268439272" symbol="fmt"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="35" lineNum="38" parent="globals/Tm" pc="268439280" symbol="fmt"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="35" lineNum="39" parent="globals/Tm" pc="268439306" symbol="fmt"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="35" lineNum="39" parent="globals/Tm" pc="268439313" symbol="fmt"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="35" lineNum="40" parent="globals/Tm" pc="268439373" symbol="fmt"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="28" parent="globals/Tm" pc="268439409" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="29" parent="globals/Tm" pc="268439419" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="29" parent="globals/Tm" pc="268439426" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="30" parent="globals/Tm" pc="268439434" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="30" parent="globals/Tm" pc="268439442" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="31" parent="globals/Tm" pc="268439451" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="31" parent="globals/Tm" pc="268439459" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\TimeathonApp.mc" id="36" lineNum="32" parent="globals/Tm" pc="268439467" symbol="legColor"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="103" parent="globals/CodeDelegate" pc="268439473" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="105" parent="globals/CodeDelegate" pc="268439476" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="106" parent="globals/CodeDelegate" pc="268439492" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="107" parent="globals/CodeDelegate" pc="268439501" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="108" parent="globals/CodeDelegate" pc="268439517" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="109" parent="globals/CodeDelegate" pc="268439524" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="109" parent="globals/CodeDelegate" pc="268439568" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="111" parent="globals/CodeDelegate" pc="268439593" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="111" parent="globals/CodeDelegate" pc="268439605" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="37" lineNum="112" parent="globals/CodeDelegate" pc="268439624" symbol="onTextEntered"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="38" lineNum="115" parent="globals/CodeDelegate" pc="268439626" symbol="onCancel"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="38" lineNum="115" parent="globals/CodeDelegate" pc="268439628" symbol="onCancel"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="39" lineNum="101" parent="globals/CodeDelegate" pc="268439630" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="39" lineNum="101" parent="globals/CodeDelegate" pc="268439632" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="39" lineNum="101" parent="globals/CodeDelegate" pc="268439644" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="40" lineNum="90" parent="globals/PairDelegate" pc="268439654" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="40" lineNum="91" parent="globals/PairDelegate" pc="268439656" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="40" lineNum="92" parent="globals/PairDelegate" pc="268439674" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="40" lineNum="93" parent="globals/PairDelegate" pc="268439692" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="40" lineNum="94" parent="globals/PairDelegate" pc="268439710" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="40" lineNum="95" parent="globals/PairDelegate" pc="268439775" symbol="onMenu"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="41" lineNum="76" parent="globals/PairDelegate" pc="268439777" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="41" lineNum="76" parent="globals/PairDelegate" pc="268439779" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="41" lineNum="76" parent="globals/PairDelegate" pc="268439791" symbol="initialize"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="78" parent="globals/PairDelegate" pc="268439801" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="79" parent="globals/PairDelegate" pc="268439804" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="79" parent="globals/PairDelegate" pc="268439817" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="80" parent="globals/PairDelegate" pc="268439822" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="81" parent="globals/PairDelegate" pc="268439836" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="82" parent="globals/PairDelegate" pc="268439856" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="84" parent="globals/PairDelegate" pc="268439896" symbol="onSelect"/>
+        <entry filename="C:\\Users\\User\\Desktop\\Claude Apps\\triathlon-timer\\watch\\source\\PairView.mc" id="42" lineNum="86" parent="globals/PairDelegate" pc="268439961" symbol="onSelect"/>
+    </pcToLineNum>
+    <symbolTable>
+        <entry id="8388639" module="true" symbol="Graphics"/>
+        <entry id="11" object="true" symbol="TrackDelegate"/>
+        <entry field="true" id="17" symbol="finishMs"/>
+        <entry id="8388632" method="true" symbol="&lt;init&gt;"/>
+        <entry field="true" id="15" symbol="athIdx"/>
+        <entry field="true" id="45" symbol="status"/>
+        <entry id="29" method="true" symbol="metres"/>
+        <entry field="true" id="40" symbol="timer"/>
+        <entry id="34" method="true" symbol="patch"/>
+        <entry id="7" object="true" symbol="PairDelegate"/>
+        <entry id="8391787" symbol="resume"/>
+        <entry id="32" method="true" symbol="onPosition"/>
+        <entry id="43" method="true" symbol="onToken"/>
+        <entry field="true" id="8388611" module="true" symbol="Toybox"/>
+        <entry field="true" id="20" symbol="lapCount"/>
+        <entry id="31" method="true" symbol="onLapSent"/>
+        <entry field="true" id="50" symbol="AppName"/>
+        <entry id="46" symbol="LEGS"/>
+        <entry id="4" module="true" symbol="globals/Rez/Strings"/>
+        <entry id="8389594" symbol="headers"/>
+        <entry id="8389080" method="true" symbol="onMenu"/>
+        <entry id="8388648" module="true" symbol="WatchUi"/>
+        <entry id="8389081" method="true" symbol="onBack"/>
+        <entry id="8" object="true" symbol="PairView"/>
+        <entry id="2" module="true" symbol="globals/Rez"/>
+        <entry field="true" id="27" symbol="legStartMs"/>
+        <entry id="13" object="true" symbol="TrackView"/>
+        <entry id="8389124" method="true" symbol="onUpdate"/>
+        <entry id="8388771" module="true" object="true" symbol="Drawables"/>
+        <entry field="true" id="37" symbol="sending"/>
+        <entry id="18" method="true" symbol="gpsUrl"/>
+        <entry id="44" method="true" symbol="paired"/>
+        <entry field="true" id="16" symbol="distMi"/>
+        <entry id="47" method="true" symbol="fmt"/>
+        <entry id="8388987" method="true" symbol="vibrate"/>
+        <entry field="true" id="39" symbol="tick"/>
+        <entry field="true" id="28" symbol="lng"/>
+        <entry id="8388637" module="true" symbol="Communications"/>
+        <entry field="true" id="21" symbol="lapsToSend"/>
+        <entry id="3" module="true" symbol="globals/Rez/Drawables"/>
+        <entry id="12" object="true" symbol="TrackMenuDelegate"/>
+        <entry id="10" module="true" symbol="Tm"/>
+        <entry id="8389844" symbol="responseType"/>
+        <entry id="8388699" method="true" symbol="stop"/>
+        <entry field="true" id="25" symbol="lastSentMs"/>
+        <entry field="true" id="26" symbol="leg"/>
+        <entry field="true" id="8389305" symbol="lat"/>
+        <entry id="19" method="true" symbol="lap"/>
+        <entry id="42" method="true" symbol="lookUp"/>
+        <entry id="8388786" method="true" symbol="method"/>
+        <entry id="8388644" module="true" symbol="System"/>
+        <entry id="51" symbol="end"/>
+        <entry id="8389619" method="true" symbol="onSelect"/>
+        <entry field="true" id="36" symbol="raceCode"/>
+        <entry id="8388769" module="true" object="true" symbol="Rez"/>
+        <entry field="true" id="24" symbol="lastLng"/>
+        <entry id="8389540" method="true" symbol="onTextEntered"/>
+        <entry id="5" module="true" symbol="globals/Tm"/>
+        <entry id="8388640" module="true" symbol="Lang"/>
+        <entry id="6" object="true" symbol="CodeDelegate"/>
+        <entry field="true" id="35" symbol="quality"/>
+        <entry field="true" id="49" symbol="LauncherIcon"/>
+        <entry id="8388610" symbol="statics"/>
+        <entry id="8389123" method="true" symbol="onShow"/>
+        <entry field="true" id="22" symbol="lastCode"/>
+        <entry field="true" id="23" symbol="lastLat"/>
+        <entry id="8389350" module="true" symbol="globals"/>
+        <entry id="9" object="true" symbol="TimeathonApp"/>
+        <entry id="8388770" module="true" object="true" symbol="Strings"/>
+        <entry id="33" method="true" symbol="onTick"/>
+        <entry id="8388702" method="true" symbol="initialize"/>
+        <entry field="true" id="14" symbol="view"/>
+        <entry field="true" id="38" symbol="startMs"/>
+        <entry id="8388641" module="true" symbol="Math"/>
+        <entry id="8389541" method="true" symbol="onCancel"/>
+        <entry id="8389280" method="true" symbol="getInitialView"/>
+        <entry field="true" id="41" symbol="busy"/>
+        <entry id="8389097" method="true" symbol="onKey"/>
+        <entry id="8388646" module="true" object="true" symbol="Timer"/>
+        <entry id="8388636" module="true" symbol="Attention"/>
+        <entry id="30" method="true" symbol="onGpsSent"/>
+        <entry id="8388642" module="true" symbol="Position"/>
+        <entry id="8389125" method="true" symbol="onHide"/>
+        <entry id="48" method="true" symbol="legColor"/>
+        <entry id="8388635" module="true" symbol="Application"/>
+        <entry field="true" id="8389642" symbol="title"/>
+    </symbolTable>
+    <localVars>
+        <entry endPc="268435628" name="view" stackId="1" startPc="268435576"/>
+        <entry endPc="268435836" name="menu" stackId="1" startPc="268435663"/>
+        <entry arg="true" endPc="268435860" name="v" stackId="1" startPc="268435837"/>
+        <entry arg="true" endPc="268435894" name="evt" stackId="1" startPc="268435861"/>
+        <entry arg="true" endPc="268436096" name="a1" stackId="1" startPc="268435895"/>
+        <entry arg="true" endPc="268436096" name="o1" stackId="2" startPc="268435895"/>
+        <entry arg="true" endPc="268436096" name="a2" stackId="3" startPc="268435895"/>
+        <entry arg="true" endPc="268436096" name="o2" stackId="4" startPc="268435895"/>
+        <entry endPc="268436096" name="r" stackId="5" startPc="268435898"/>
+        <entry endPc="268436096" name="p" stackId="6" startPc="268435898"/>
+        <entry endPc="268436096" name="dLat" stackId="7" startPc="268435898"/>
+        <entry endPc="268436096" name="dLng" stackId="8" startPc="268435898"/>
+        <entry endPc="268436096" name="x" stackId="9" startPc="268435898"/>
+        <entry endPc="268436260" name="l" stackId="1" startPc="268436154"/>
+        <entry arg="true" endPc="268436647" name="info" stackId="1" startPc="268436418"/>
+        <entry endPc="268436646" name="d" stackId="2" startPc="268436421"/>
+        <entry endPc="268436616" name="m" stackId="3" startPc="268436516"/>
+        <entry arg="true" endPc="268436736" name="body" stackId="1" startPc="268436680"/>
+        <entry arg="true" endPc="268436736" name="cb" stackId="2" startPc="268436680"/>
+        <entry endPc="268436974" name="now" stackId="1" startPc="268436740"/>
+        <entry arg="true" endPc="268437039" name="code" stackId="1" startPc="268436991"/>
+        <entry arg="true" endPc="268437039" name="data" stackId="2" startPc="268436991"/>
+        <entry arg="true" endPc="268437173" name="code" stackId="1" startPc="268437102"/>
+        <entry arg="true" endPc="268437173" name="data" stackId="2" startPc="268437102"/>
+        <entry arg="true" endPc="268438117" name="dc" stackId="1" startPc="268437344"/>
+        <entry endPc="268438116" name="w" stackId="2" startPc="268437347"/>
+        <entry endPc="268438116" name="h" stackId="3" startPc="268437347"/>
+        <entry endPc="268438116" name="now" stackId="4" startPc="268437347"/>
+        <entry endPc="268438116" name="ok" stackId="5" startPc="268437347"/>
+        <entry endPc="268438116" name="gps" stackId="6" startPc="268437347"/>
+        <entry endPc="268438116" name="line" stackId="7" startPc="268437347"/>
+        <entry arg="true" endPc="268438141" name="v" stackId="1" startPc="268438118"/>
+        <entry arg="true" endPc="268438263" name="item" stackId="1" startPc="268438142"/>
+        <entry endPc="268438244" name="p" stackId="2" startPc="268438161"/>
+        <entry arg="true" endPc="268438367" name="code" stackId="1" startPc="268438264"/>
+        <entry arg="true" endPc="268438685" name="code" stackId="1" startPc="268438368"/>
+        <entry arg="true" endPc="268438685" name="data" stackId="2" startPc="268438368"/>
+        <entry endPc="268438600" name="nm" stackId="3" startPc="268438441"/>
+        <entry arg="true" endPc="268439215" name="dc" stackId="1" startPc="268438701"/>
+        <entry endPc="268439214" name="w" stackId="2" startPc="268438704"/>
+        <entry endPc="268439214" name="h" stackId="3" startPc="268438704"/>
+        <entry endPc="268439026" name="name" stackId="4" startPc="268438787"/>
+        <entry endPc="268439026" name="code" stackId="5" startPc="268438787"/>
+        <entry arg="true" endPc="268439408" name="ms" stackId="1" startPc="268439261"/>
+        <entry endPc="268439408" name="s" stackId="2" startPc="268439272"/>
+        <entry endPc="268439408" name="h" stackId="3" startPc="268439272"/>
+        <entry endPc="268439408" name="m" stackId="4" startPc="268439272"/>
+        <entry endPc="268439408" name="sec" stackId="5" startPc="268439272"/>
+        <entry arg="true" endPc="268439472" name="i" stackId="1" startPc="268439409"/>
+        <entry arg="true" endPc="268439625" name="text" stackId="1" startPc="268439473"/>
+        <entry arg="true" endPc="268439625" name="changed" stackId="2" startPc="268439473"/>
+        <entry endPc="268439625" name="up" stackId="3" startPc="268439476"/>
+        <entry endPc="268439625" name="code" stackId="4" startPc="268439476"/>
+        <entry endPc="268439625" name="chars" stackId="5" startPc="268439476"/>
+        <entry endPc="268439592" name="i" stackId="6" startPc="268439517"/>
+        <entry endPc="268439582" name="c" stackId="7" startPc="268439517"/>
+        <entry arg="true" endPc="268439653" name="v" stackId="1" startPc="268439630"/>
+        <entry arg="true" endPc="268439800" name="v" stackId="1" startPc="268439777"/>
+        <entry endPc="268439892" name="t" stackId="1" startPc="268439836"/>
+    </localVars>
+    <deviceInfo deviceVersion="45fe3cbb0de8ea0a70e12628d2697915f1272301" partNumber="006-B4536-00"/>
+    <annotations>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="LauncherIcon"/>
+        <annotationEntry annotation="initialized" class="Strings" module="globals/Rez" symbol="AppName"/>
+    </annotations>
+    <dataEntryOffsetMappings>
+        <dataEntry label="globals" offset="58" parentId="" symbolId="globals" type="module"/>
+        <dataEntry label="globals/TimeathonApp" offset="170" parentId="globals" symbolId="TimeathonApp" type="class"/>
+        <dataEntry label="globals/TrackDelegate" offset="223" parentId="globals" symbolId="TrackDelegate" type="class"/>
+        <dataEntry label="globals/TrackView" offset="303" parentId="globals" symbolId="TrackView" type="class"/>
+        <dataEntry label="globals/TrackMenuDelegate" offset="626" parentId="globals" symbolId="TrackMenuDelegate" type="class"/>
+        <dataEntry label="globals/Rez" offset="688" parentId="globals" symbolId="Rez" type="module"/>
+        <dataEntry label="globals/PairView" offset="732" parentId="globals" symbolId="PairView" type="class"/>
+        <dataEntry label="globals/Tm" offset="830" parentId="globals" symbolId="Tm" type="module"/>
+        <dataEntry label="globals/CodeDelegate" offset="883" parentId="globals" symbolId="CodeDelegate" type="class"/>
+        <dataEntry label="globals/PairDelegate" offset="954" parentId="globals" symbolId="PairDelegate" type="class"/>
+        <dataEntry label="globals/Rez/Drawables" offset="1025" parentId="Rez" symbolId="Drawables" type="module"/>
+        <dataEntry label="globals/Rez/Strings" offset="1060" parentId="Rez" symbolId="Strings" type="module"/>
+    </dataEntryOffsetMappings>
+    <functions>
+        <functionEntry accessMode="public" endPc="268435471" name="&lt;init&gt;" parent="TimeathonApp" startPc="268435460">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435483" name="&lt;init&gt;" parent="TrackDelegate" startPc="268435472">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435504" name="&lt;init&gt;" parent="TrackView" startPc="268435484">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435516" name="&lt;init&gt;" parent="TrackMenuDelegate" startPc="268435505">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435536" name="&lt;init&gt;" parent="Rez" startPc="268435517">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435548" name="&lt;init&gt;" parent="PairView" startPc="268435537">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Tm">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435560" name="&lt;init&gt;" parent="CodeDelegate" startPc="268435549">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435572" name="&lt;init&gt;" parent="PairDelegate" startPc="268435561">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435628" name="getInitialView" parent="TimeathonApp" startPc="268435573">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435643" name="initialize" parent="TimeathonApp" startPc="268435629">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435659" name="onBack" parent="TrackDelegate" startPc="268435644">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435836" name="onMenu" parent="TrackDelegate" startPc="268435660">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435860" name="initialize" parent="TrackDelegate" startPc="268435837">
+            <param id="v"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435894" name="onKey" parent="TrackDelegate" startPc="268435861">
+            <param id="evt"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436096" name="metres" parent="TrackView" startPc="268435895">
+            <param id="a1"/>
+            <param id="o1"/>
+            <param id="a2"/>
+            <param id="o2"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436417" name="onTick" parent="TrackView" startPc="268436097">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436647" name="onPosition" parent="TrackView" startPc="268436418">
+            <param id="info"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436679" name="gpsUrl" parent="TrackView" startPc="268436648">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436736" name="patch" parent="TrackView" startPc="268436680">
+            <param id="body"/>
+            <param id="cb"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436975" name="lap" parent="TrackView" startPc="268436737">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436990" name="onHide" parent="TrackView" startPc="268436976">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268437039" name="onGpsSent" parent="TrackView" startPc="268436991">
+            <param id="code"/>
+            <param id="data"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268437101" name="onShow" parent="TrackView" startPc="268437040">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268437173" name="onLapSent" parent="TrackView" startPc="268437102">
+            <param id="code"/>
+            <param id="data"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268437216" name="stop" parent="TrackView" startPc="268437174">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268437343" name="initialize" parent="TrackView" startPc="268437217">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268438117" name="onUpdate" parent="TrackView" startPc="268437344">
+            <param id="dc"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268438141" name="initialize" parent="TrackMenuDelegate" startPc="268438118">
+            <param id="v"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268438263" name="onSelect" parent="TrackMenuDelegate" startPc="268438142">
+            <param id="item"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Drawables">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Strings">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268438367" name="lookUp" parent="PairView" startPc="268438264">
+            <param id="code"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268438685" name="onToken" parent="PairView" startPc="268438368">
+            <param id="code"/>
+            <param id="data"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268438700" name="initialize" parent="PairView" startPc="268438686">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439215" name="onUpdate" parent="PairView" startPc="268438701">
+            <param id="dc"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439260" name="paired" parent="PairView" startPc="268439216">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439408" name="fmt" parent="Tm" startPc="268439261">
+            <param id="ms"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439472" name="legColor" parent="Tm" startPc="268439409">
+            <param id="i"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439625" name="onTextEntered" parent="CodeDelegate" startPc="268439473">
+            <param id="text"/>
+            <param id="changed"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439629" name="onCancel" parent="CodeDelegate" startPc="268439626">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439653" name="initialize" parent="CodeDelegate" startPc="268439630">
+            <param id="v"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439776" name="onMenu" parent="PairDelegate" startPc="268439654">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439800" name="initialize" parent="PairDelegate" startPc="268439777">
+            <param id="v"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268439962" name="onSelect" parent="PairDelegate" startPc="268439801">
+            <documentation/>
+        </functionEntry>
+    </functions>
+</debugInfo>

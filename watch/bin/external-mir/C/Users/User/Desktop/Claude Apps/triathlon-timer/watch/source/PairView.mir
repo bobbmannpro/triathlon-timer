@@ -1,0 +1,1099 @@
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 1; @symbol_importdef<0> = [Toybox,1,7,13]; @symbol_importdef<1> = [Application,1,14,25]; ]
+import Toybox.Application;
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 2; @symbol_importdef<0> = [Toybox,2,7,13]; @symbol_importdef<1> = [Communications,2,14,28]; ]
+import Toybox.Communications;
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 3; @symbol_importdef<0> = [Toybox,3,7,13]; @symbol_importdef<1> = [Graphics,3,14,22]; ]
+import Toybox.Graphics;
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 4; @symbol_importdef<0> = [Toybox,4,7,13]; @symbol_importdef<1> = [Lang,4,14,18]; ]
+import Toybox.Lang;
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 5; @symbol_importdef<0> = [Toybox,5,7,13]; @symbol_importdef<1> = [WatchUi,5,14,21]; ]
+import Toybox.WatchUi;
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 9; @symbol_classdef = [PairView,9,6,14]; @symbol_extends<0> = [WatchUi,9,23,30]; @symbol_extends<1> = [View,9,31,35]; ]
+class PairView extends WatchUi.View {
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 9; ]
+    <init> {
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 9; ]
+    static
+    <init> {
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 10; @position = 8; @symbol_vardef = [status,10,8,14]; @symbol_type<0> = [String,10,18,24]; ]
+    var status as String = "";
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 11; @position = 8; @symbol_vardef = [busy,11,8,12]; @symbol_type<0> = [Boolean,11,16,23]; ]
+    var busy as Boolean = false;
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 13; @symbol_functiondef = [initialize,13,13,23]; ]
+    function initialize() as Void {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_13_26_13_47_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 13 28 ]
+        symbol [ View %tmp.2 13 28 32 ];
+        %tmp.2 = getv ? :View;
+        symbol [ initialize %tmp.3 13 33 43 ];
+        %tmp.3 = getv function %tmp.2 :initialize;
+        invoke %tmp.2 %tmp.3();
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_13_26_13_47_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 15; @symbol_functiondef = [paired,15,13,19]; @symbol_return<0> = [Boolean,15,25,32]; ]
+    function paired() as Boolean {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_15_33_17_4_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 16 8 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_16_15_16_109_begin:
+        symbol [ Application %tmp.1 16 15 26 ];
+        %tmp.1 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.2 16 27 34 ];
+        %tmp.2 = getv %tmp.1 :Storage;
+        symbol [ getValue %tmp.3 16 35 43 ];
+        %tmp.3 = getv function %tmp.2 :getValue;
+        %tmp.4 = "raceCode";
+        %tmp.5 = invoke %tmp.2 %tmp.3(%tmp.4);
+        %tmp.6 = null;
+        %tmp.7 = ne %tmp.5 %tmp.6;
+        %tmp.8 = dup %tmp.7;
+        bf %tmp.8 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_16_67_16_109_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_16_67_16_109_true:
+        symbol [ Application %tmp.9 16 67 78 ];
+        %tmp.9 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.10 16 79 86 ];
+        %tmp.10 = getv %tmp.9 :Storage;
+        symbol [ getValue %tmp.11 16 87 95 ];
+        %tmp.11 = getv function %tmp.10 :getValue;
+        %tmp.12 = "athIdx";
+        %tmp.13 = invoke %tmp.10 %tmp.11(%tmp.12);
+        %tmp.14 = null;
+        %tmp.15 = ne %tmp.13 %tmp.14;
+        %tmp.16 = and %tmp.7 %tmp.15;
+        push %tmp.16;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_16_67_16_109_end:
+        %tmp.17 = phi [%tmp.8 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_16_15_16_109_begin] [%tmp.16 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_16_67_16_109_true] [%tmp.17 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_16_67_16_109_end];
+        ret %tmp.17;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_15_33_17_4_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 19; @symbol_functiondef = [onUpdate,19,13,21]; @symbol_param<0> = [dc,19,22,24]; @symbol_param<0>_type<0> = [Graphics,19,28,36]; @symbol_param<0>_type<1> = [Dc,19,37,39]; ]
+    function onUpdate(dc as Graphics.Dc) as Void {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_19_49_43_4_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 20 8 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_19_49_43_4_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_19_49_43_4_stop" ]
+        %w.1 = local;
+        symbol [ w %w.1 20 12 13 ];
+        %tmp.1 = lgetv %dc;
+        symbol [ dc %tmp.1 20 16 18 ];
+        symbol [ getWidth %tmp.2 20 19 27 ];
+        %tmp.2 = getv function %tmp.1 :getWidth;
+        %tmp.3 = invoke %tmp.1 %tmp.2();
+        lputv %w.1 %tmp.3;
+        symbol [ w %w.1 20 12 13 ];
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_19_49_43_4_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_19_49_43_4_stop" ]
+        %h.2 = local;
+        symbol [ h %h.2 20 31 32 ];
+        %tmp.4 = lgetv %dc;
+        symbol [ dc %tmp.4 20 35 37 ];
+        symbol [ getHeight %tmp.5 20 38 47 ];
+        %tmp.5 = getv function %tmp.4 :getHeight;
+        %tmp.6 = invoke %tmp.4 %tmp.5();
+        lputv %h.2 %tmp.6;
+        symbol [ h %h.2 20 31 32 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 21 8 ]
+        %tmp.7 = lgetv %dc;
+        symbol [ dc %tmp.7 21 8 10 ];
+        symbol [ setColor %tmp.8 21 11 19 ];
+        %tmp.8 = getv function %tmp.7 :setColor;
+        symbol [ Graphics %tmp.9 21 20 28 ];
+        %tmp.9 = getm $.Toybox.Graphics;
+        symbol [ COLOR_WHITE %tmp.10 21 29 40 ];
+        %tmp.10 = getv %tmp.9 :COLOR_WHITE;
+        symbol [ Graphics %tmp.11 21 42 50 ];
+        %tmp.11 = getm $.Toybox.Graphics;
+        symbol [ COLOR_BLACK %tmp.12 21 51 62 ];
+        %tmp.12 = getv %tmp.11 :COLOR_BLACK;
+        invoke %tmp.7 %tmp.8(%tmp.10, %tmp.12);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 22 8 ]
+        %tmp.13 = lgetv %dc;
+        symbol [ dc %tmp.13 22 8 10 ];
+        symbol [ clear %tmp.14 22 11 16 ];
+        %tmp.14 = getv function %tmp.13 :clear;
+        invoke %tmp.13 %tmp.14();
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 23 8 ]
+        %tmp.15 = lgetv %dc;
+        symbol [ dc %tmp.15 23 8 10 ];
+        symbol [ drawText %tmp.16 23 11 19 ];
+        %tmp.16 = getv function %tmp.15 :drawText;
+        %tmp.17 = lgetv %w.1;
+        symbol [ w %tmp.17 23 20 21 ];
+        %tmp.18 = 2;
+        %tmp.19 = div %tmp.17 %tmp.18;
+        %tmp.20 = lgetv %h.2;
+        symbol [ h %tmp.20 23 27 28 ];
+        %tmp.21 = 0.14;
+        %tmp.22 = mul %tmp.20 %tmp.21;
+        symbol [ Graphics %tmp.23 23 37 45 ];
+        %tmp.23 = getm $.Toybox.Graphics;
+        symbol [ FONT_SMALL %tmp.24 23 46 56 ];
+        %tmp.24 = getv %tmp.23 :FONT_SMALL;
+        %tmp.25 = "TIMEATHON";
+        symbol [ Graphics %tmp.26 23 71 79 ];
+        %tmp.26 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.27 23 80 99 ];
+        %tmp.27 = getv %tmp.26 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.15 %tmp.16(%tmp.19, %tmp.22, %tmp.24, %tmp.25, %tmp.27);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 24 8 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_8_38_8_if_stmt:
+        %tmp.28 = self;
+        symbol [ paired %tmp.29 24 12 18 ];
+        %tmp.29 = getv function %tmp.28 :paired;
+        %tmp.30 = invoke %tmp.28 %tmp.29();
+        bf %tmp.30 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_8_38_8_if_else_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_8_38_8_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_22_34_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 25 12 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_22_34_8_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_22_34_8_stop" ]
+        %name.3 = local;
+        symbol [ name %name.3 25 16 20 ];
+        symbol [ Application %tmp.31 25 23 34 ];
+        %tmp.31 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.32 25 35 42 ];
+        %tmp.32 = getv %tmp.31 :Storage;
+        symbol [ getValue %tmp.33 25 43 51 ];
+        %tmp.33 = getv function %tmp.32 :getValue;
+        %tmp.34 = "athleteName";
+        %tmp.35 = invoke %tmp.32 %tmp.33(%tmp.34);
+        lputv %name.3 %tmp.35;
+        symbol [ name %name.3 25 16 20 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 26 12 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_22_34_8_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_22_34_8_stop" ]
+        %code.4 = local;
+        symbol [ code %code.4 26 16 20 ];
+        symbol [ Application %tmp.36 26 23 34 ];
+        %tmp.36 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.37 26 35 42 ];
+        %tmp.37 = getv %tmp.36 :Storage;
+        symbol [ getValue %tmp.38 26 43 51 ];
+        %tmp.38 = getv function %tmp.37 :getValue;
+        %tmp.39 = "raceCode";
+        %tmp.40 = invoke %tmp.37 %tmp.38(%tmp.39);
+        lputv %code.4 %tmp.40;
+        symbol [ code %code.4 26 16 20 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 27 12 ]
+        %tmp.41 = lgetv %dc;
+        symbol [ dc %tmp.41 27 12 14 ];
+        symbol [ drawText %tmp.42 27 15 23 ];
+        %tmp.42 = getv function %tmp.41 :drawText;
+        %tmp.43 = lgetv %w.1;
+        symbol [ w %tmp.43 27 24 25 ];
+        %tmp.44 = 2;
+        %tmp.45 = div %tmp.43 %tmp.44;
+        %tmp.46 = lgetv %h.2;
+        symbol [ h %tmp.46 27 31 32 ];
+        %tmp.47 = 0.32;
+        %tmp.48 = mul %tmp.46 %tmp.47;
+        symbol [ Graphics %tmp.49 27 41 49 ];
+        %tmp.49 = getm $.Toybox.Graphics;
+        symbol [ FONT_MEDIUM %tmp.50 27 50 61 ];
+        %tmp.50 = getv %tmp.49 :FONT_MEDIUM;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_begin:
+        %tmp.51 = lgetv %name.3;
+        symbol [ name %tmp.51 27 63 67 ];
+        %tmp.52 = null;
+        %tmp.53 = ne %tmp.51 %tmp.52;
+        bf %tmp.53 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_else_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_true:
+        %tmp.54 = lgetv %name.3;
+        symbol [ name %tmp.54 27 78 82 ];
+        %tmp.55 = as %tmp.54 { (!Null) };
+        symbol [ toString %tmp.56 27 83 91 ];
+        %tmp.56 = getv function %tmp.55 :toString;
+        %tmp.57 = invoke %tmp.55 %tmp.56();
+        push %tmp.57;
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_else_false:
+        %tmp.58 = "Athlete";
+        push %tmp.58;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_end:
+        %tmp.59 = phi [%tmp.53 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_begin] [%tmp.57 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_true] [%tmp.58 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_else_false] [%tmp.59 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_27_63_27_96_end];
+        symbol [ Graphics %tmp.60 27 107 115 ];
+        %tmp.60 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.61 27 116 135 ];
+        %tmp.61 = getv %tmp.60 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.41 %tmp.42(%tmp.45, %tmp.48, %tmp.50, %tmp.59, %tmp.61);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 28 12 ]
+        %tmp.62 = lgetv %dc;
+        symbol [ dc %tmp.62 28 12 14 ];
+        symbol [ setColor %tmp.63 28 15 23 ];
+        %tmp.63 = getv function %tmp.62 :setColor;
+        %tmp.64 = 0xAAAAAA;
+        symbol [ Graphics %tmp.65 28 34 42 ];
+        %tmp.65 = getm $.Toybox.Graphics;
+        symbol [ COLOR_TRANSPARENT %tmp.66 28 43 60 ];
+        %tmp.66 = getv %tmp.65 :COLOR_TRANSPARENT;
+        invoke %tmp.62 %tmp.63(%tmp.64, %tmp.66);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 29 12 ]
+        %tmp.67 = lgetv %dc;
+        symbol [ dc %tmp.67 29 12 14 ];
+        symbol [ drawText %tmp.68 29 15 23 ];
+        %tmp.68 = getv function %tmp.67 :drawText;
+        %tmp.69 = lgetv %w.1;
+        symbol [ w %tmp.69 29 24 25 ];
+        %tmp.70 = 2;
+        %tmp.71 = div %tmp.69 %tmp.70;
+        %tmp.72 = lgetv %h.2;
+        symbol [ h %tmp.72 29 31 32 ];
+        %tmp.73 = 0.47;
+        %tmp.74 = mul %tmp.72 %tmp.73;
+        symbol [ Graphics %tmp.75 29 41 49 ];
+        %tmp.75 = getm $.Toybox.Graphics;
+        symbol [ FONT_SMALL %tmp.76 29 50 60 ];
+        %tmp.76 = getv %tmp.75 :FONT_SMALL;
+        %tmp.77 = "Race ";
+        %tmp.78 = lgetv %code.4;
+        symbol [ code %tmp.78 29 72 76 ];
+        symbol [ toString %tmp.79 29 77 85 ];
+        %tmp.79 = getv function %tmp.78 :toString;
+        %tmp.80 = invoke %tmp.78 %tmp.79();
+        %tmp.81 = add %tmp.77 %tmp.80;
+        symbol [ Graphics %tmp.82 29 89 97 ];
+        %tmp.82 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.83 29 98 117 ];
+        %tmp.83 = getv %tmp.82 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.67 %tmp.68(%tmp.71, %tmp.74, %tmp.76, %tmp.81, %tmp.83);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 30 12 ]
+        %tmp.84 = lgetv %dc;
+        symbol [ dc %tmp.84 30 12 14 ];
+        symbol [ setColor %tmp.85 30 15 23 ];
+        %tmp.85 = getv function %tmp.84 :setColor;
+        %tmp.86 = 0x2FC27A;
+        symbol [ Graphics %tmp.87 30 34 42 ];
+        %tmp.87 = getm $.Toybox.Graphics;
+        symbol [ COLOR_TRANSPARENT %tmp.88 30 43 60 ];
+        %tmp.88 = getv %tmp.87 :COLOR_TRANSPARENT;
+        invoke %tmp.84 %tmp.85(%tmp.86, %tmp.88);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 31 12 ]
+        %tmp.89 = lgetv %dc;
+        symbol [ dc %tmp.89 31 12 14 ];
+        symbol [ drawText %tmp.90 31 15 23 ];
+        %tmp.90 = getv function %tmp.89 :drawText;
+        %tmp.91 = lgetv %w.1;
+        symbol [ w %tmp.91 31 24 25 ];
+        %tmp.92 = 2;
+        %tmp.93 = div %tmp.91 %tmp.92;
+        %tmp.94 = lgetv %h.2;
+        symbol [ h %tmp.94 31 31 32 ];
+        %tmp.95 = 0.62;
+        %tmp.96 = mul %tmp.94 %tmp.95;
+        symbol [ Graphics %tmp.97 31 41 49 ];
+        %tmp.97 = getm $.Toybox.Graphics;
+        symbol [ FONT_SMALL %tmp.98 31 50 60 ];
+        %tmp.98 = getv %tmp.97 :FONT_SMALL;
+        %tmp.99 = "START = begin";
+        symbol [ Graphics %tmp.100 31 79 87 ];
+        %tmp.100 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.101 31 88 107 ];
+        %tmp.101 = getv %tmp.100 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.89 %tmp.90(%tmp.93, %tmp.96, %tmp.98, %tmp.99, %tmp.101);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 32 12 ]
+        %tmp.102 = lgetv %dc;
+        symbol [ dc %tmp.102 32 12 14 ];
+        symbol [ setColor %tmp.103 32 15 23 ];
+        %tmp.103 = getv function %tmp.102 :setColor;
+        %tmp.104 = 0xAAAAAA;
+        symbol [ Graphics %tmp.105 32 34 42 ];
+        %tmp.105 = getm $.Toybox.Graphics;
+        symbol [ COLOR_TRANSPARENT %tmp.106 32 43 60 ];
+        %tmp.106 = getv %tmp.105 :COLOR_TRANSPARENT;
+        invoke %tmp.102 %tmp.103(%tmp.104, %tmp.106);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 33 12 ]
+        %tmp.107 = lgetv %dc;
+        symbol [ dc %tmp.107 33 12 14 ];
+        symbol [ drawText %tmp.108 33 15 23 ];
+        %tmp.108 = getv function %tmp.107 :drawText;
+        %tmp.109 = lgetv %w.1;
+        symbol [ w %tmp.109 33 24 25 ];
+        %tmp.110 = 2;
+        %tmp.111 = div %tmp.109 %tmp.110;
+        %tmp.112 = lgetv %h.2;
+        symbol [ h %tmp.112 33 31 32 ];
+        %tmp.113 = 0.75;
+        %tmp.114 = mul %tmp.112 %tmp.113;
+        symbol [ Graphics %tmp.115 33 41 49 ];
+        %tmp.115 = getm $.Toybox.Graphics;
+        symbol [ FONT_XTINY %tmp.116 33 50 60 ];
+        %tmp.116 = getv %tmp.115 :FONT_XTINY;
+        %tmp.117 = "Hold UP for a new code";
+        symbol [ Graphics %tmp.118 33 88 96 ];
+        %tmp.118 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.119 33 97 116 ];
+        %tmp.119 = getv %tmp.118 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.107 %tmp.108(%tmp.111, %tmp.114, %tmp.116, %tmp.117, %tmp.119);
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_22_34_8_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_8_38_8_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_8_38_8_if_else_false:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_34_15_38_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 35 12 ]
+        %tmp.120 = lgetv %dc;
+        symbol [ dc %tmp.120 35 12 14 ];
+        symbol [ drawText %tmp.121 35 15 23 ];
+        %tmp.121 = getv function %tmp.120 :drawText;
+        %tmp.122 = lgetv %w.1;
+        symbol [ w %tmp.122 35 24 25 ];
+        %tmp.123 = 2;
+        %tmp.124 = div %tmp.122 %tmp.123;
+        %tmp.125 = lgetv %h.2;
+        symbol [ h %tmp.125 35 31 32 ];
+        %tmp.126 = 0.36;
+        %tmp.127 = mul %tmp.125 %tmp.126;
+        symbol [ Graphics %tmp.128 35 41 49 ];
+        %tmp.128 = getm $.Toybox.Graphics;
+        symbol [ FONT_SMALL %tmp.129 35 50 60 ];
+        %tmp.129 = getv %tmp.128 :FONT_SMALL;
+        %tmp.130 = "Press START";
+        symbol [ Graphics %tmp.131 35 77 85 ];
+        %tmp.131 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.132 35 86 105 ];
+        %tmp.132 = getv %tmp.131 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.120 %tmp.121(%tmp.124, %tmp.127, %tmp.129, %tmp.130, %tmp.132);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 36 12 ]
+        %tmp.133 = lgetv %dc;
+        symbol [ dc %tmp.133 36 12 14 ];
+        symbol [ drawText %tmp.134 36 15 23 ];
+        %tmp.134 = getv function %tmp.133 :drawText;
+        %tmp.135 = lgetv %w.1;
+        symbol [ w %tmp.135 36 24 25 ];
+        %tmp.136 = 2;
+        %tmp.137 = div %tmp.135 %tmp.136;
+        %tmp.138 = lgetv %h.2;
+        symbol [ h %tmp.138 36 31 32 ];
+        %tmp.139 = 0.48;
+        %tmp.140 = mul %tmp.138 %tmp.139;
+        symbol [ Graphics %tmp.141 36 41 49 ];
+        %tmp.141 = getm $.Toybox.Graphics;
+        symbol [ FONT_SMALL %tmp.142 36 50 60 ];
+        %tmp.142 = getv %tmp.141 :FONT_SMALL;
+        %tmp.143 = "to type your";
+        symbol [ Graphics %tmp.144 36 78 86 ];
+        %tmp.144 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.145 36 87 106 ];
+        %tmp.145 = getv %tmp.144 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.133 %tmp.134(%tmp.137, %tmp.140, %tmp.142, %tmp.143, %tmp.145);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 37 12 ]
+        %tmp.146 = lgetv %dc;
+        symbol [ dc %tmp.146 37 12 14 ];
+        symbol [ drawText %tmp.147 37 15 23 ];
+        %tmp.147 = getv function %tmp.146 :drawText;
+        %tmp.148 = lgetv %w.1;
+        symbol [ w %tmp.148 37 24 25 ];
+        %tmp.149 = 2;
+        %tmp.150 = div %tmp.148 %tmp.149;
+        %tmp.151 = lgetv %h.2;
+        symbol [ h %tmp.151 37 31 32 ];
+        %tmp.152 = 0.60;
+        %tmp.153 = mul %tmp.151 %tmp.152;
+        symbol [ Graphics %tmp.154 37 41 49 ];
+        %tmp.154 = getm $.Toybox.Graphics;
+        symbol [ FONT_SMALL %tmp.155 37 50 60 ];
+        %tmp.155 = getv %tmp.154 :FONT_SMALL;
+        %tmp.156 = "watch code";
+        symbol [ Graphics %tmp.157 37 76 84 ];
+        %tmp.157 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.158 37 85 104 ];
+        %tmp.158 = getv %tmp.157 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.146 %tmp.147(%tmp.150, %tmp.153, %tmp.155, %tmp.156, %tmp.158);
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_34_15_38_8_stop:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_24_8_38_8_if_end:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 39 8 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_39_8_42_8_if_stmt:
+        symbol [ status %tmp.160 39 13 19 ];
+        %tmp.160 = getv ? :status;
+        symbol [ equals %tmp.161 39 20 26 ];
+        %tmp.161 = getv function %tmp.160 :equals;
+        %tmp.162 = "";
+        %tmp.163 = invoke %tmp.160 %tmp.161(%tmp.162);
+        %tmp.164 = not %tmp.163;
+        bf %tmp.164 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_39_8_42_8_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_39_8_42_8_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_39_32_42_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 40 12 ]
+        %tmp.165 = lgetv %dc;
+        symbol [ dc %tmp.165 40 12 14 ];
+        symbol [ setColor %tmp.166 40 15 23 ];
+        %tmp.166 = getv function %tmp.165 :setColor;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_begin:
+        symbol [ busy %tmp.168 40 24 28 ];
+        %tmp.168 = getv ? :busy;
+        bf %tmp.168 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_else_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_true:
+        %tmp.169 = 0xAAAAAA;
+        push %tmp.169;
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_else_false:
+        %tmp.170 = 0xFF5A5A;
+        push %tmp.170;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_end:
+        %tmp.171 = phi [%tmp.168 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_begin] [%tmp.169 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_true] [%tmp.170 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_else_false] [%tmp.171 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_40_24_40_42_end];
+        symbol [ Graphics %tmp.172 40 52 60 ];
+        %tmp.172 = getm $.Toybox.Graphics;
+        symbol [ COLOR_TRANSPARENT %tmp.173 40 61 78 ];
+        %tmp.173 = getv %tmp.172 :COLOR_TRANSPARENT;
+        invoke %tmp.165 %tmp.166(%tmp.171, %tmp.173);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 41 12 ]
+        %tmp.174 = lgetv %dc;
+        symbol [ dc %tmp.174 41 12 14 ];
+        symbol [ drawText %tmp.175 41 15 23 ];
+        %tmp.175 = getv function %tmp.174 :drawText;
+        %tmp.176 = lgetv %w.1;
+        symbol [ w %tmp.176 41 24 25 ];
+        %tmp.177 = 2;
+        %tmp.178 = div %tmp.176 %tmp.177;
+        %tmp.179 = lgetv %h.2;
+        symbol [ h %tmp.179 41 31 32 ];
+        %tmp.180 = 0.86;
+        %tmp.181 = mul %tmp.179 %tmp.180;
+        symbol [ Graphics %tmp.182 41 41 49 ];
+        %tmp.182 = getm $.Toybox.Graphics;
+        symbol [ FONT_XTINY %tmp.183 41 50 60 ];
+        %tmp.183 = getv %tmp.182 :FONT_XTINY;
+        symbol [ status %tmp.185 41 62 68 ];
+        %tmp.185 = getv ? :status;
+        symbol [ Graphics %tmp.186 41 70 78 ];
+        %tmp.186 = getm $.Toybox.Graphics;
+        symbol [ TEXT_JUSTIFY_CENTER %tmp.187 41 79 98 ];
+        %tmp.187 = getv %tmp.186 :TEXT_JUSTIFY_CENTER;
+        invoke %tmp.174 %tmp.175(%tmp.178, %tmp.181, %tmp.183, %tmp.185, %tmp.187);
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_39_32_42_8_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_39_8_42_8_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_39_8_42_8_if_end:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_19_49_43_4_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 46; @symbol_functiondef = [lookUp,46,13,19]; @symbol_param<0> = [code,46,20,24]; @symbol_param<0>_type<0> = [String,46,28,34]; ]
+    function lookUp(code as String) as Void {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_46_44_52_4_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 47 8 ]
+        %tmp.1 = true;
+        symbol [ busy ? 47 8 12 ];
+        putv self :busy %tmp.1;
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 47 21 ]
+        %tmp.2 = "Checking ";
+        %tmp.3 = lgetv %code;
+        symbol [ code %tmp.3 47 44 48 ];
+        %tmp.4 = add %tmp.2 %tmp.3;
+        %tmp.5 = "…";
+        %tmp.6 = add %tmp.4 %tmp.5;
+        symbol [ status ? 47 21 27 ];
+        putv self :status %tmp.6;
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 48 8 ]
+        symbol [ WatchUi %tmp.7 48 8 15 ];
+        %tmp.7 = getm $.Toybox.WatchUi;
+        symbol [ requestUpdate %tmp.8 48 16 29 ];
+        %tmp.8 = getv function %tmp.7 :requestUpdate;
+        invoke %tmp.7 %tmp.8();
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 49 8 ]
+        symbol [ Communications %tmp.9 49 8 22 ];
+        %tmp.9 = getm $.Toybox.Communications;
+        symbol [ makeWebRequest %tmp.10 49 23 37 ];
+        %tmp.10 = getv function %tmp.9 :makeWebRequest;
+        symbol [ Tm %tmp.12 49 38 40 ];
+        %tmp.12 = getv ? :Tm;
+        symbol [ RTDB %tmp.13 49 41 45 ];
+        %tmp.13 = getv %tmp.12 :RTDB;
+        %tmp.14 = "/watchTokens/";
+        %tmp.15 = add %tmp.13 %tmp.14;
+        %tmp.16 = lgetv %code;
+        symbol [ code %tmp.16 49 66 70 ];
+        %tmp.17 = add %tmp.15 %tmp.16;
+        %tmp.18 = ".json";
+        %tmp.19 = add %tmp.17 %tmp.18;
+        %tmp.20 = null;
+        %tmp.21 = newd 2;
+        %tmp.23 = const :method;
+        symbol [ method %tmp.23 50 15 21 const ];
+        symbol [ Communications %tmp.24 50 25 39 ];
+        %tmp.24 = getm $.Toybox.Communications;
+        symbol [ HTTP_REQUEST_METHOD_GET %tmp.25 50 40 63 ];
+        %tmp.25 = getv %tmp.24 :HTTP_REQUEST_METHOD_GET;
+        %tmp.26 = dup %tmp.21;
+        %tmp.27 = aputv %tmp.26 %tmp.23 %tmp.25;
+        %tmp.29 = const :responseType;
+        symbol [ responseType %tmp.29 50 66 78 const ];
+        symbol [ Communications %tmp.30 50 82 96 ];
+        %tmp.30 = getm $.Toybox.Communications;
+        symbol [ HTTP_RESPONSE_CONTENT_TYPE_JSON %tmp.31 50 97 128 ];
+        %tmp.31 = getv %tmp.30 :HTTP_RESPONSE_CONTENT_TYPE_JSON;
+        %tmp.32 = dup %tmp.27;
+        %tmp.33 = aputv %tmp.32 %tmp.29 %tmp.31;
+        %tmp.34 = self;
+        symbol [ method %tmp.35 51 12 18 ];
+        %tmp.35 = getv function %tmp.34 :method;
+        %tmp.37 = const :onToken;
+        symbol [ onToken %tmp.37 51 20 27 const ];
+        %tmp.38 = invoke %tmp.34 %tmp.35(%tmp.37);
+        invoke %tmp.9 %tmp.10(%tmp.19, %tmp.20, %tmp.33, %tmp.38);
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_46_44_52_4_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 54; @symbol_functiondef = [onToken,54,13,20]; @symbol_param<0> = [code,54,21,25]; @symbol_param<0>_type<0> = [Number,54,29,35]; @symbol_param<1> = [data,54,37,41]; @symbol_param<1>_type<0> = [Dictionary,54,45,55]; @symbol_param<1>_type<1> = [String,54,59,65]; ]
+    function onToken(code as Number, data as Dictionary or String or Null) as Void {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_54_83_71_4_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 55 8 ]
+        %tmp.1 = false;
+        symbol [ busy ? 55 8 12 ];
+        putv self :busy %tmp.1;
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 56 8 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_stmt:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_12_56_111_begin:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_12_56_81_begin:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_12_56_43_begin:
+        %tmp.2 = lgetv %code;
+        symbol [ code %tmp.2 56 12 16 ];
+        %tmp.3 = 200;
+        %tmp.4 = eq %tmp.2 %tmp.3;
+        bf %tmp.4 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_27_56_43_true:
+        %tmp.5 = lgetv %data;
+        symbol [ data %tmp.5 56 27 31 ];
+        symbol [ Dictionary %tmp.7 56 43 53 ];
+        %tmp.7 = getv ? :Dictionary;
+        %tmp.8 = isa %tmp.5 %tmp.7;
+        push %tmp.8;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_27_56_43_end:
+        %tmp.9 = phi [%tmp.4 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_12_56_43_begin] [%tmp.8 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_27_56_43_true] [%tmp.9 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_27_56_43_end];
+        bf %tmp.9 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_57_56_81_true:
+        %tmp.10 = lgetv %data;
+        symbol [ data %tmp.10 56 57 61 ];
+        %tmp.11 = as %tmp.10 { (Dictionary) };
+        symbol [ get %tmp.12 56 62 65 ];
+        %tmp.12 = getv function %tmp.11 :get;
+        %tmp.13 = "raceCode";
+        %tmp.14 = invoke %tmp.11 %tmp.12(%tmp.13);
+        %tmp.15 = null;
+        %tmp.16 = ne %tmp.14 %tmp.15;
+        push %tmp.16;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_57_56_81_end:
+        %tmp.17 = phi [%tmp.9 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_12_56_81_begin] [%tmp.16 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_57_56_81_true] [%tmp.17 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_57_56_81_end];
+        bf %tmp.17 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_89_56_111_true:
+        %tmp.18 = lgetv %data;
+        symbol [ data %tmp.18 56 89 93 ];
+        %tmp.19 = as %tmp.18 { (Dictionary) };
+        symbol [ get %tmp.20 56 94 97 ];
+        %tmp.20 = getv function %tmp.19 :get;
+        %tmp.21 = "athIdx";
+        %tmp.22 = invoke %tmp.19 %tmp.20(%tmp.21);
+        %tmp.23 = null;
+        %tmp.24 = ne %tmp.22 %tmp.23;
+        push %tmp.24;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_89_56_111_end:
+        %tmp.25 = phi [%tmp.17 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_12_56_111_begin] [%tmp.24 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_89_56_111_true] [%tmp.25 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_89_56_111_end];
+        bf %tmp.25 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_117_63_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 57 12 ]
+        symbol [ Application %tmp.26 57 12 23 ];
+        %tmp.26 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.27 57 24 31 ];
+        %tmp.27 = getv %tmp.26 :Storage;
+        symbol [ setValue %tmp.28 57 32 40 ];
+        %tmp.28 = getv function %tmp.27 :setValue;
+        %tmp.29 = "raceCode";
+        %tmp.30 = lgetv %data;
+        symbol [ data %tmp.30 57 53 57 ];
+        %tmp.31 = as %tmp.30 { (Dictionary) };
+        symbol [ get %tmp.32 57 58 61 ];
+        %tmp.32 = getv function %tmp.31 :get;
+        %tmp.33 = "raceCode";
+        %tmp.34 = invoke %tmp.31 %tmp.32(%tmp.33);
+        symbol [ toString %tmp.35 57 74 82 ];
+        %tmp.35 = getv function %tmp.34 :toString;
+        %tmp.36 = invoke %tmp.34 %tmp.35();
+        invoke %tmp.27 %tmp.28(%tmp.29, %tmp.36);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 58 12 ]
+        symbol [ Application %tmp.37 58 12 23 ];
+        %tmp.37 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.38 58 24 31 ];
+        %tmp.38 = getv %tmp.37 :Storage;
+        symbol [ setValue %tmp.39 58 32 40 ];
+        %tmp.39 = getv function %tmp.38 :setValue;
+        %tmp.40 = "athIdx";
+        %tmp.41 = lgetv %data;
+        symbol [ data %tmp.41 58 51 55 ];
+        %tmp.42 = as %tmp.41 { (Dictionary) };
+        symbol [ get %tmp.43 58 56 59 ];
+        %tmp.43 = getv function %tmp.42 :get;
+        %tmp.44 = "athIdx";
+        %tmp.45 = invoke %tmp.42 %tmp.43(%tmp.44);
+        invoke %tmp.38 %tmp.39(%tmp.40, %tmp.45);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 59 12 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_117_63_8_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_117_63_8_stop" ]
+        %nm.1 = local;
+        symbol [ nm %nm.1 59 16 18 ];
+        %tmp.46 = lgetv %data;
+        symbol [ data %tmp.46 59 21 25 ];
+        %tmp.47 = as %tmp.46 { (Dictionary) };
+        symbol [ get %tmp.48 59 26 29 ];
+        %tmp.48 = getv function %tmp.47 :get;
+        %tmp.49 = "athleteName";
+        %tmp.50 = invoke %tmp.47 %tmp.48(%tmp.49);
+        lputv %nm.1 %tmp.50;
+        symbol [ nm %nm.1 59 16 18 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 60 12 ]
+        symbol [ Application %tmp.51 60 12 23 ];
+        %tmp.51 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.52 60 24 31 ];
+        %tmp.52 = getv %tmp.51 :Storage;
+        symbol [ setValue %tmp.53 60 32 40 ];
+        %tmp.53 = getv function %tmp.52 :setValue;
+        %tmp.54 = "athleteName";
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_begin:
+        %tmp.55 = lgetv %nm.1;
+        symbol [ nm %tmp.55 60 56 58 ];
+        %tmp.56 = null;
+        %tmp.57 = ne %tmp.55 %tmp.56;
+        bf %tmp.57 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_else_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_true:
+        %tmp.58 = lgetv %nm.1;
+        symbol [ nm %tmp.58 60 69 71 ];
+        %tmp.59 = as %tmp.58 { (!Null) };
+        symbol [ toString %tmp.60 60 72 80 ];
+        %tmp.60 = getv function %tmp.59 :toString;
+        %tmp.61 = invoke %tmp.59 %tmp.60();
+        push %tmp.61;
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_else_false:
+        %tmp.62 = "Athlete";
+        push %tmp.62;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_end:
+        %tmp.63 = phi [%tmp.57 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_begin] [%tmp.61 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_true] [%tmp.62 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_else_false] [%tmp.63 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_60_56_60_85_end];
+        invoke %tmp.52 %tmp.53(%tmp.54, %tmp.63);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 61 12 ]
+        symbol [ Application %tmp.64 61 12 23 ];
+        %tmp.64 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.65 61 24 31 ];
+        %tmp.65 = getv %tmp.64 :Storage;
+        symbol [ setValue %tmp.66 61 32 40 ];
+        %tmp.66 = getv function %tmp.65 :setValue;
+        %tmp.67 = "leg";
+        %tmp.68 = 0;
+        invoke %tmp.65 %tmp.66(%tmp.67, %tmp.68);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 62 12 ]
+        %tmp.69 = "";
+        symbol [ status ? 62 12 18 ];
+        putv self :status %tmp.69;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_117_63_8_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_false:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 63 15 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_15_69_8_if_stmt:
+        %tmp.70 = lgetv %code;
+        symbol [ code %tmp.70 63 19 23 ];
+        %tmp.71 = 200;
+        %tmp.72 = eq %tmp.70 %tmp.71;
+        bf %tmp.72 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_15_69_8_if_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_15_69_8_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_32_65_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 64 12 ]
+        %tmp.73 = "Code not found";
+        symbol [ status ? 64 12 18 ];
+        putv self :status %tmp.73;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_32_65_8_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_15_69_8_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_15_69_8_if_false:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 65 15 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_15_69_8_if_stmt:
+        %tmp.74 = lgetv %code;
+        symbol [ code %tmp.74 65 19 23 ];
+        %tmp.75 = 0;
+        %tmp.76 = lt %tmp.74 %tmp.75;
+        bf %tmp.76 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_15_69_8_if_else_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_15_69_8_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_29_67_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 66 12 ]
+        %tmp.77 = "No phone connection (";
+        %tmp.78 = lgetv %code;
+        symbol [ code %tmp.78 66 47 51 ];
+        %tmp.79 = add %tmp.77 %tmp.78;
+        %tmp.80 = ")";
+        %tmp.81 = add %tmp.79 %tmp.80;
+        symbol [ status ? 66 12 18 ];
+        putv self :status %tmp.81;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_29_67_8_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_15_69_8_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_15_69_8_if_else_false:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_67_15_69_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 68 12 ]
+        %tmp.82 = "Error ";
+        %tmp.83 = lgetv %code;
+        symbol [ code %tmp.83 68 32 36 ];
+        %tmp.84 = add %tmp.82 %tmp.83;
+        symbol [ status ? 68 12 18 ];
+        putv self :status %tmp.84;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_67_15_69_8_stop:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_65_15_69_8_if_end:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_63_15_69_8_if_end:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_56_8_69_8_if_end:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 70 8 ]
+        symbol [ WatchUi %tmp.85 70 8 15 ];
+        %tmp.85 = getm $.Toybox.WatchUi;
+        symbol [ requestUpdate %tmp.86 70 16 29 ];
+        %tmp.86 = getv function %tmp.85 :requestUpdate;
+        invoke %tmp.85 %tmp.86();
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_54_83_71_4_stop:
+    }
+}
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 74; @symbol_classdef = [PairDelegate,74,6,18]; @symbol_extends<0> = [WatchUi,74,27,34]; @symbol_extends<1> = [BehaviorDelegate,74,35,51]; ]
+class PairDelegate extends WatchUi.BehaviorDelegate {
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 74; ]
+    <init> {
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 74; ]
+    static
+    <init> {
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 75; @position = 8; @symbol_vardef = [view,75,8,12]; @symbol_type<0> = [PairView,75,16,24]; ]
+    var view as PairView;
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 76; @symbol_functiondef = [initialize,76,13,23]; @symbol_param<0> = [v,76,24,25]; @symbol_param<0>_type<0> = [PairView,76,29,37]; ]
+    function initialize(v as PairView) as Void {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_76_39_76_82_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 76 41 ]
+        symbol [ BehaviorDelegate %tmp.2 76 41 57 ];
+        %tmp.2 = getv ? :BehaviorDelegate;
+        symbol [ initialize %tmp.3 76 58 68 ];
+        %tmp.3 = getv function %tmp.2 :initialize;
+        invoke %tmp.2 %tmp.3();
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 76 72 ]
+        %tmp.4 = lgetv %v;
+        symbol [ v %tmp.4 76 79 80 ];
+        symbol [ view ? 76 72 76 ];
+        putv self :view %tmp.4;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_76_39_76_82_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 78; @symbol_functiondef = [onSelect,78,13,21]; @symbol_return<0> = [Boolean,78,27,34]; ]
+    function onSelect() as Boolean {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_78_35_87_4_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 79 8 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_79_8_79_38_if_stmt:
+        symbol [ view %tmp.2 79 12 16 ];
+        %tmp.2 = getv ? :view;
+        symbol [ busy %tmp.3 79 17 21 ];
+        %tmp.3 = getv %tmp.2 :busy;
+        bf %tmp.3 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_79_8_79_38_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_79_8_79_38_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_79_23_79_38_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 79 25 ]
+        %tmp.4 = true;
+        ret %tmp.4;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_79_23_79_38_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_79_8_79_38_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_79_8_79_38_if_end:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 80 8 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_8_85_8_if_stmt:
+        symbol [ view %tmp.6 80 12 16 ];
+        %tmp.6 = getv ? :view;
+        symbol [ paired %tmp.7 80 17 23 ];
+        %tmp.7 = getv function %tmp.6 :paired;
+        %tmp.8 = invoke %tmp.6 %tmp.7();
+        bf %tmp.8 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_8_85_8_if_else_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_8_85_8_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_27_83_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 81 12 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_27_83_8_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_27_83_8_stop" ]
+        %t.1 = local;
+        symbol [ t %t.1 81 16 17 ];
+        symbol [ TrackView %tmp.12 81 24 33 ];
+        %tmp.12 = getv ? :TrackView;
+        %tmp.9 = newc %tmp.12 ();
+        lputv %t.1 %tmp.9;
+        symbol [ t %t.1 81 16 17 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 82 12 ]
+        symbol [ WatchUi %tmp.13 82 12 19 ];
+        %tmp.13 = getm $.Toybox.WatchUi;
+        symbol [ switchToView %tmp.14 82 20 32 ];
+        %tmp.14 = getv function %tmp.13 :switchToView;
+        %tmp.15 = lgetv %t.1;
+        symbol [ t %tmp.15 82 33 34 ];
+        symbol [ TrackDelegate %tmp.19 82 40 53 ];
+        %tmp.19 = getv ? :TrackDelegate;
+        %tmp.20 = lgetv %t.1;
+        symbol [ t %tmp.20 82 54 55 ];
+        %tmp.16 = newc %tmp.19 (%tmp.20);
+        symbol [ WatchUi %tmp.21 82 58 65 ];
+        %tmp.21 = getm $.Toybox.WatchUi;
+        symbol [ SLIDE_LEFT %tmp.22 82 66 76 ];
+        %tmp.22 = getv %tmp.21 :SLIDE_LEFT;
+        invoke %tmp.13 %tmp.14(%tmp.15, %tmp.16, %tmp.22);
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_27_83_8_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_8_85_8_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_8_85_8_if_else_false:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_83_15_85_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 84 12 ]
+        symbol [ WatchUi %tmp.23 84 12 19 ];
+        %tmp.23 = getm $.Toybox.WatchUi;
+        symbol [ pushView %tmp.24 84 20 28 ];
+        %tmp.24 = getv function %tmp.23 :pushView;
+        symbol [ WatchUi %tmp.27 84 33 40 ];
+        %tmp.27 = getm $.Toybox.WatchUi;
+        symbol [ TextPicker %tmp.28 84 41 51 ];
+        %tmp.28 = getv function ? %tmp.27 :TextPicker;
+        %tmp.29 = "";
+        %tmp.25 = newc %tmp.28 (%tmp.29);
+        symbol [ CodeDelegate %tmp.33 84 61 73 ];
+        %tmp.33 = getv ? :CodeDelegate;
+        symbol [ view %tmp.35 84 74 78 ];
+        %tmp.35 = getv ? :view;
+        %tmp.30 = newc %tmp.33 (%tmp.35);
+        symbol [ WatchUi %tmp.36 84 81 88 ];
+        %tmp.36 = getm $.Toybox.WatchUi;
+        symbol [ SLIDE_UP %tmp.37 84 89 97 ];
+        %tmp.37 = getv %tmp.36 :SLIDE_UP;
+        invoke %tmp.23 %tmp.24(%tmp.25, %tmp.30, %tmp.37);
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_83_15_85_8_stop:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_80_8_85_8_if_end:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 86 8 ]
+        %tmp.38 = true;
+        ret %tmp.38;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_78_35_87_4_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 90; @symbol_functiondef = [onMenu,90,13,19]; @symbol_return<0> = [Boolean,90,25,32]; ]
+    function onMenu() as Boolean {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_90_33_96_4_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 91 8 ]
+        symbol [ Application %tmp.1 91 8 19 ];
+        %tmp.1 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.2 91 20 27 ];
+        %tmp.2 = getv %tmp.1 :Storage;
+        symbol [ deleteValue %tmp.3 91 28 39 ];
+        %tmp.3 = getv function %tmp.2 :deleteValue;
+        %tmp.4 = "raceCode";
+        invoke %tmp.2 %tmp.3(%tmp.4);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 92 8 ]
+        symbol [ Application %tmp.5 92 8 19 ];
+        %tmp.5 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.6 92 20 27 ];
+        %tmp.6 = getv %tmp.5 :Storage;
+        symbol [ deleteValue %tmp.7 92 28 39 ];
+        %tmp.7 = getv function %tmp.6 :deleteValue;
+        %tmp.8 = "athIdx";
+        invoke %tmp.6 %tmp.7(%tmp.8);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 93 8 ]
+        symbol [ Application %tmp.9 93 8 19 ];
+        %tmp.9 = getm $.Toybox.Application;
+        symbol [ Storage %tmp.10 93 20 27 ];
+        %tmp.10 = getv %tmp.9 :Storage;
+        symbol [ deleteValue %tmp.11 93 28 39 ];
+        %tmp.11 = getv function %tmp.10 :deleteValue;
+        %tmp.12 = "athleteName";
+        invoke %tmp.10 %tmp.11(%tmp.12);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 94 8 ]
+        symbol [ WatchUi %tmp.13 94 8 15 ];
+        %tmp.13 = getm $.Toybox.WatchUi;
+        symbol [ pushView %tmp.14 94 16 24 ];
+        %tmp.14 = getv function %tmp.13 :pushView;
+        symbol [ WatchUi %tmp.17 94 29 36 ];
+        %tmp.17 = getm $.Toybox.WatchUi;
+        symbol [ TextPicker %tmp.18 94 37 47 ];
+        %tmp.18 = getv function ? %tmp.17 :TextPicker;
+        %tmp.19 = "";
+        %tmp.15 = newc %tmp.18 (%tmp.19);
+        symbol [ CodeDelegate %tmp.23 94 57 69 ];
+        %tmp.23 = getv ? :CodeDelegate;
+        symbol [ view %tmp.25 94 70 74 ];
+        %tmp.25 = getv ? :view;
+        %tmp.20 = newc %tmp.23 (%tmp.25);
+        symbol [ WatchUi %tmp.26 94 77 84 ];
+        %tmp.26 = getm $.Toybox.WatchUi;
+        symbol [ SLIDE_UP %tmp.27 94 85 93 ];
+        %tmp.27 = getv %tmp.26 :SLIDE_UP;
+        invoke %tmp.13 %tmp.14(%tmp.15, %tmp.20, %tmp.27);
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 95 8 ]
+        %tmp.28 = true;
+        ret %tmp.28;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_90_33_96_4_stop:
+    }
+}
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 99; @symbol_classdef = [CodeDelegate,99,6,18]; @symbol_extends<0> = [WatchUi,99,27,34]; @symbol_extends<1> = [TextPickerDelegate,99,35,53]; ]
+class CodeDelegate extends WatchUi.TextPickerDelegate {
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 99; ]
+    <init> {
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 99; ]
+    static
+    <init> {
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 100; @position = 8; @symbol_vardef = [view,100,8,12]; @symbol_type<0> = [PairView,100,16,24]; ]
+    var view as PairView;
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 101; @symbol_functiondef = [initialize,101,13,23]; @symbol_param<0> = [v,101,24,25]; @symbol_param<0>_type<0> = [PairView,101,29,37]; ]
+    function initialize(v as PairView) as Void {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_101_39_101_84_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 101 41 ]
+        symbol [ TextPickerDelegate %tmp.2 101 41 59 ];
+        %tmp.2 = getv ? :TextPickerDelegate;
+        symbol [ initialize %tmp.3 101 60 70 ];
+        %tmp.3 = getv function %tmp.2 :initialize;
+        invoke %tmp.2 %tmp.3();
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 101 74 ]
+        %tmp.4 = lgetv %v;
+        symbol [ v %tmp.4 101 81 82 ];
+        symbol [ view ? 101 74 78 ];
+        putv self :view %tmp.4;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_101_39_101_84_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 103; @symbol_functiondef = [onTextEntered,103,13,26]; @symbol_param<0> = [text,103,27,31]; @symbol_param<0>_type<0> = [String,103,35,41]; @symbol_param<1> = [changed,103,43,50]; @symbol_param<1>_type<0> = [Boolean,103,54,61]; @symbol_return<0> = [Boolean,103,66,73]; ]
+    function onTextEntered(text as String, changed as Boolean) as Boolean {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 105 8 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_stop" ]
+        %up.1 = local;
+        symbol [ up %up.1 105 12 14 ];
+        %tmp.1 = lgetv %text;
+        symbol [ text %tmp.1 105 17 21 ];
+        symbol [ toUpper %tmp.2 105 22 29 ];
+        %tmp.2 = getv function %tmp.1 :toUpper;
+        %tmp.3 = invoke %tmp.1 %tmp.2();
+        lputv %up.1 %tmp.3;
+        symbol [ up %up.1 105 12 14 ];
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_stop" ]
+        %code.2 = local;
+        symbol [ code %code.2 105 33 37 ];
+        %tmp.4 = "";
+        lputv %code.2 %tmp.4;
+        symbol [ code %code.2 105 33 37 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 106 8 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_stop" ]
+        %chars.3 = local;
+        symbol [ chars %chars.3 106 12 17 ];
+        %tmp.5 = lgetv %up.1;
+        symbol [ up %tmp.5 106 20 22 ];
+        symbol [ toCharArray %tmp.6 106 23 34 ];
+        %tmp.6 = getv function %tmp.5 :toCharArray;
+        %tmp.7 = invoke %tmp.5 %tmp.6();
+        lputv %chars.3 %tmp.7;
+        symbol [ chars %chars.3 106 12 17 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 107 8 ]
+        for @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_test @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_incr @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_init:
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_begin" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_end" ]
+        %i.4 = local;
+        symbol [ i %i.4 107 17 18 ];
+        %tmp.8 = 0;
+        lputv %i.4 %tmp.8;
+        symbol [ i %i.4 107 17 18 ];
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_test:
+        %tmp.9 = lgetv %i.4;
+        symbol [ i %tmp.9 107 24 25 ];
+        %tmp.10 = lgetv %chars.3;
+        symbol [ chars %tmp.10 107 28 33 ];
+        symbol [ size %tmp.11 107 34 38 ];
+        %tmp.11 = getv function %tmp.10 :size;
+        %tmp.12 = invoke %tmp.10 %tmp.11();
+        %tmp.13 = lt %tmp.9 %tmp.12;
+        bf %tmp.13 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_begin:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_47_110_8_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 108 12 ]
+        [ "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_47_110_8_start" "C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_47_110_8_stop" ]
+        %c.5 = local;
+        symbol [ c %c.5 108 16 17 ];
+        %tmp.14 = lgetv %chars.3;
+        symbol [ chars %tmp.14 108 20 25 ];
+        %tmp.15 = lgetv %i.4;
+        symbol [ i %tmp.15 108 26 27 ];
+        %tmp.16 = agetv %tmp.14 %tmp.15;
+        lputv %c.5 %tmp.16;
+        symbol [ c %c.5 108 16 17 ];
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 109 12 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_12_109_90_if_stmt:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_16_109_63_begin:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_17_109_34_begin:
+        %tmp.17 = lgetv %c.5;
+        symbol [ c %tmp.17 109 17 18 ];
+        %tmp.18 = 'A';
+        %tmp.19 = gte %tmp.17 %tmp.18;
+        bf %tmp.19 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_42_109_63_false;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_29_109_34_true:
+        %tmp.20 = lgetv %c.5;
+        symbol [ c %tmp.20 109 29 30 ];
+        %tmp.21 = 'Z';
+        %tmp.22 = lte %tmp.20 %tmp.21;
+        push %tmp.22;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_29_109_34_end:
+        %tmp.23 = phi [%tmp.19 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_17_109_34_begin] [%tmp.22 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_29_109_34_true] [%tmp.23 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_29_109_34_end];
+        bt %tmp.23 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_12_109_90_if_true;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_42_109_63_false:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_43_109_60_begin:
+        %tmp.24 = lgetv %c.5;
+        symbol [ c %tmp.24 109 43 44 ];
+        %tmp.25 = '0';
+        %tmp.26 = gte %tmp.24 %tmp.25;
+        bf %tmp.26 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_12_109_90_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_55_109_60_true:
+        %tmp.27 = lgetv %c.5;
+        symbol [ c %tmp.27 109 55 56 ];
+        %tmp.28 = '9';
+        %tmp.29 = lte %tmp.27 %tmp.28;
+        push %tmp.29;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_55_109_60_end:
+        %tmp.30 = phi [%tmp.26 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_43_109_60_begin] [%tmp.29 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_55_109_60_true] [%tmp.30 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_55_109_60_end];
+        push %tmp.30;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_42_109_63_end:
+        %tmp.31 = phi [%tmp.23 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_16_109_63_begin] [%tmp.30 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_42_109_63_false] [%tmp.31 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_42_109_63_end];
+        bf %tmp.31 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_12_109_90_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_12_109_90_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_66_109_90_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 109 68 ]
+        %tmp.32 = lgetv %code.2;
+        symbol [ code %tmp.32 109 68 72 ];
+        %tmp.33 = lgetv %c.5;
+        symbol [ c %tmp.33 109 76 77 ];
+        symbol [ toString %tmp.34 109 78 86 ];
+        %tmp.34 = getv function %tmp.33 :toString;
+        %tmp.35 = invoke %tmp.33 %tmp.34();
+        %tmp.36 = add %tmp.32 %tmp.35;
+        lputv %code.2 %tmp.36;
+        symbol [ code %code.2 109 68 72 ];
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_66_109_90_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_12_109_90_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_109_12_109_90_if_end:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_47_110_8_stop:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_incr:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 107 ]
+        %tmp.39 = lgetv %i.4;
+        symbol [ i %tmp.39 107 42 43 ];
+        %tmp.40 = add %tmp.39 1;
+        lputv %i.4 %tmp.40;
+        symbol [ i %i.4 107 42 43 ];
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_test;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_107_8_110_8_for_end:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 111 8 ]
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_111_8_111_52_if_stmt:
+        %tmp.41 = lgetv %code.2;
+        symbol [ code %tmp.41 111 12 16 ];
+        symbol [ length %tmp.42 111 17 23 ];
+        %tmp.42 = getv function %tmp.41 :length;
+        %tmp.43 = invoke %tmp.41 %tmp.42();
+        %tmp.44 = 0;
+        %tmp.45 = gt %tmp.43 %tmp.44;
+        bf %tmp.45 @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_111_8_111_52_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_111_8_111_52_if_true:
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_111_31_111_52_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 111 33 ]
+        symbol [ view %tmp.47 111 33 37 ];
+        %tmp.47 = getv ? :view;
+        symbol [ lookUp %tmp.48 111 38 44 ];
+        %tmp.48 = getv function %tmp.47 :lookUp;
+        %tmp.49 = lgetv %code.2;
+        symbol [ code %tmp.49 111 45 49 ];
+        invoke %tmp.47 %tmp.48(%tmp.49);
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_111_31_111_52_stop:
+        goto @C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_111_8_111_52_if_end;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_111_8_111_52_if_end:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 112 8 ]
+        %tmp.50 = true;
+        ret %tmp.50;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_103_74_113_4_stop:
+    }
+    [ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 115; @symbol_functiondef = [onCancel,115,13,21]; @symbol_return<0> = [Boolean,115,27,34]; ]
+    function onCancel() as Boolean {
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_115_35_115_50_start:
+[ "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc" 115 37 ]
+        %tmp.1 = true;
+        ret %tmp.1;
+C__Users_User_Desktop_Claude_Apps_triathlon_timer_watch_source_PairView_mc_115_35_115_50_stop:
+    }
+}
+[ @file = "C:\Users\User\Desktop\Claude Apps\triathlon-timer\watch\source\PairView.mc"; @line = 1; ]
+<init> {
+}
