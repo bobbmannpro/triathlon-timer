@@ -144,8 +144,8 @@ class TrackView extends WatchUi.View {
             sending = true;
             patch({ "lat" => lat, "lng" => lng, "distanceMi" => distMi, "accuracy" => quality, "seg" => leg(),
                     "onBike" => leg() == 2, "src" => "watch", "tok" => token, "t" => { ".sv" => "timestamp" } }, method(:onGpsSent));
-        } else if (serverBase == null && tick % 3 == 0) {
-            // no GPS yet: still let the race know we're here (and learn the server's clock)
+        } else if (tick % 3 == 0) {
+            // no GPS yet: keep letting the race know we're here (and learn the server's clock)
             sending = true;
             patch({ "src" => "watch", "tok" => token, "t" => { ".sv" => "timestamp" } }, method(:onGpsSent));
         }
