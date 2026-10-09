@@ -6840,6 +6840,18 @@ ${html}</body></html>`);
                   setSetupStep(0); setView("setup");
                   return;
                 }
+                // Sign-ups still open: keep them open, keep the bibs handed out, and
+                // pull in everyone who signed up since this race was last saved.
+                if (ld.status === "registration" && ld.publishedBy === currentUser.uid) {
+                  const norm = x => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
+                  const liveByName = new Map(asList(ld.athletes).filter(Boolean).map(a => [norm(a.name), a]));
+                  setAthletes(prev => prev.map(a => {
+                    const l = liveByName.get(norm(athleteName(a) || a.name));
+                    return l ? { ...a, raceNumber: a.raceNumber ?? l.raceNumber ?? null, uid: a.uid || l.uid || null } : a;
+                  }));
+                  setRegistrationOpen(true);
+                  attachRegListener(race.code);
+                }
               }
             } catch(e) { console.error(e); }
           }
