@@ -47,7 +47,9 @@ class TrackView extends WatchUi.View {
     var legStartM as Float = 0.0;     // … when the leg on screen began
     var shownLeg as Number = -1;
     var quality as Number = 0;
-    var lastSentMs as Number = -1;
+    var lastSentMs as Number = 0;
+    var everSent as Boolean = false;   // System.getTimer() goes negative after ~25 days of uptime, so never test its sign
+    var everPressed as Boolean = false;
     var lastCode as Number = 0;
     var sending as Boolean = false;
     var lapsToSend as Array = [];     // { seg, n, press } not yet acknowledged
@@ -163,7 +165,7 @@ class TrackView extends WatchUi.View {
     function leg() as Number {
         if (!raceKnown) { return localLeg; }
         var r = raceLeg();
-        if (lapsToSend.size() > 0 || System.getTimer() - lastPressMs < 8000) { return localLeg > r ? localLeg : r; }
+        if (lapsToSend.size() > 0 || (everPressed && System.getTimer() - lastPressMs < 8000)) { return localLeg > r ? localLeg : r; }
         return r;
     }
 
@@ -213,8 +215,25 @@ class TrackView extends WatchUi.View {
             cb);
     }
 
+    // heart rate in its zone colour (resets the colour to grey afterwards)
+    function drawHr(dc as Graphics.Dc, x, y, just) as Void {
+        var hrNow = heartRate();
+        var zn = hrZone(hrNow);
+        dc.setColor(zoneColor(zn), Graphics.COLOR_TRANSPARENT);
+        dc.drawText(x, y, Graphics.FONT_XTINY, hrNow != null ? ("HR " + hrNow.format("%d") + (zn > 0 ? " Z" + zn.format("%d") : "")) : "HR --", just);
+        dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
+    }
+
     function onTick() as Void {
         tick++;
+        // Diagnostics: written to GARMIN/APPS/LOGS/TIMEATHON.TXT when that file exists.
+        if (tick % 15 == 1) {
+            var si = null;
+            try { si = Sensor.getInfo(); } catch (e) { }
+            System.println("t=" + tick + " sensorHr=" + sensorHr + " infoHr=" + (si != null ? si.heartRate : "n/a")
+                + " actHr=" + (Activity.getActivityInfo() != null ? Activity.getActivityInfo().currentHeartRate : "n/a")
+                + " code=" + lastCode + " sent=" + everSent + " rec=" + (session != null));
+        }
         WatchUi.requestUpdate();
         if (sending) { return; }
         if (lapsToSend.size() > 0) {
@@ -244,12 +263,12 @@ class TrackView extends WatchUi.View {
 
     function onGpsSent(code as Number, data as Dictionary or String or Null) as Void {
         sending = false; lastCode = code;
-        if (code == 200) { lastSentMs = System.getTimer(); if (data instanceof Dictionary) { learnServer(data.get("t")); } }
+        if (code == 200) { lastSentMs = System.getTimer(); everSent = true; if (data instanceof Dictionary) { learnServer(data.get("t")); } }
     }
     function onLapSent(code as Number, data as Dictionary or String or Null) as Void {
         sending = false; lastCode = code;
         if (code == 200) {
-            lapsToSend = lapsToSend.slice(1, null); lastSentMs = System.getTimer();
+            lapsToSend = lapsToSend.slice(1, null); lastSentMs = System.getTimer(); everSent = true;
             if (data instanceof Dictionary && data.get("watchLap") instanceof Dictionary) { learnServer((data.get("watchLap") as Dictionary).get("at")); }
         }
     }
@@ -257,6 +276,7 @@ class TrackView extends WatchUi.View {
         sending = false; lastCode = code;
         if (code != 200 || !(data instanceof Dictionary)) { return; }
         lastSentMs = System.getTimer();
+        everSent = true;
         raceKnown = true;
         started = data.get("started") == true;
         var sa = toMs(data.get("startAt"));
@@ -277,7 +297,7 @@ class TrackView extends WatchUi.View {
                 legUnit[i] = us[i] != null ? us[i].toString() : "";
             }
         }
-        if (lapsToSend.size() == 0 && System.getTimer() - lastPressMs >= 8000) { localLeg = raceLeg(); }
+        if (lapsToSend.size() == 0 && (!everPressed || System.getTimer() - lastPressMs >= 8000)) { localLeg = raceLeg(); }
     }
 
     // LAP: this leg is done.
@@ -292,6 +312,7 @@ class TrackView extends WatchUi.View {
         if (l >= 5) { return; }
         lapCount++;
         lastPressMs = System.getTimer();
+        everPressed = true;
         lapsToSend.add({ "seg" => l, "n" => lapCount, "press" => lastPressMs });
         localLeg = l + 1;
         if (session != null && session.isRecording() && !isRide) {
@@ -321,6 +342,7 @@ class TrackView extends WatchUi.View {
         if (l >= 5) {
             dc.setColor(0x2FC27A, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.22, Graphics.FONT_MEDIUM, "FINISHED", Graphics.TEXT_JUSTIFY_CENTER);
+            drawHr(dc, w / 2, h * 0.62, Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.38, Graphics.FONT_NUMBER_MEDIUM, total != null ? Tm.fmt(total.toNumber()) : "--", Graphics.TEXT_JUSTIFY_CENTER);
         } else if (raceKnown && !started) {
@@ -329,18 +351,15 @@ class TrackView extends WatchUi.View {
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.42, Graphics.FONT_SMALL, "Waiting to be", Graphics.TEXT_JUSTIFY_CENTER);
             dc.drawText(w / 2, h * 0.52, Graphics.FONT_SMALL, "sent off", Graphics.TEXT_JUSTIFY_CENTER);
+            drawHr(dc, w / 2, h * 0.64, Graphics.TEXT_JUSTIFY_CENTER);
         } else {
             dc.setColor(Tm.legColor(l), Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.17, Graphics.FONT_MEDIUM, (Tm.LEGS[l] as String).toUpper(), Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.32, Graphics.FONT_NUMBER_MEDIUM, legTime != null ? Tm.fmt(legTime.toNumber()) : "--:--", Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
-            var hrNow = heartRate();
-            var zn = hrZone(hrNow);
             dc.drawText(w / 2 - 6, h * 0.53, Graphics.FONT_XTINY, (isRide ? "Ride " : "Race ") + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_RIGHT);
-            dc.setColor(zoneColor(zn), Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w / 2 + 6, h * 0.53, Graphics.FONT_XTINY, hrNow != null ? ("HR " + hrNow.format("%d") + (zn > 0 ? " Z" + zn.format("%d") : "")) : "HR --", Graphics.TEXT_JUSTIFY_LEFT);
-            dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
+            drawHr(dc, w / 2 + 6, h * 0.53, Graphics.TEXT_JUSTIFY_LEFT);
             // distance on this leg: done of the leg's total, what's left, and a ring round the edge
             var u = legUnit[l] as String, goal = legDist[l] as Float;
             var done = inUnit(legMetres(), u.length() > 0 ? u : "mi");
@@ -367,10 +386,10 @@ class TrackView extends WatchUi.View {
             }
         }
         var nowT = System.getTimer();
-        var ok = lastSentMs >= 0 && nowT - lastSentMs < 10000;
+        var ok = everSent && nowT - lastSentMs < 10000;
         var gps = quality >= Position.QUALITY_USABLE;
         dc.setColor(ok ? 0x2FC27A : 0xFF5A5A, Graphics.COLOR_TRANSPARENT);
-        var line = ok ? "Connected" : (lastCode < 0 ? "No phone" : (lastSentMs < 0 ? "Connecting..." : "Not sending"));
+        var line = ok ? "Connected" : (lastCode < 0 ? "No phone" : (!everSent ? "Connecting..." : "Not sending"));
         if (lapsToSend.size() > 0) { line = "Sending lap..."; }
         dc.drawText(w / 2, h * 0.76, Graphics.FONT_XTINY, line + (gps ? "  GPS ok" : "  GPS ..."), Graphics.TEXT_JUSTIFY_CENTER);
         dc.setColor(0x777777, Graphics.COLOR_TRANSPARENT);
