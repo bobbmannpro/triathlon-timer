@@ -267,7 +267,7 @@
         }, [code, hasOwn]);
         const routes = hasOwn ? raceRoutes : (liveCourse && liveCourse.routes) || {};
         const wpts = ((waypoints || []).some(w => w.lat != null) ? waypoints : (liveCourse && liveCourse.waypoints)) || [];
-        const legRoute = (seg) => seg === 0 ? routes.swim : seg === 2 ? routes.bike : seg === 4 ? routes.run : null;
+        const legRoute = (seg) => kindAt(seg) ? routes[kindAt(seg)] : null;
         const allRoutes = [routes.swim, routes.bike, routes.run].filter(r => r && r.length > 1);
         // Where each athlete is and whether they're on course.
         const rows = (athletes || []).map((a, i) => {
@@ -544,12 +544,12 @@
           const t = parseFloat(total) || 0, l = parseFloat(lap) || 0;
           return { need: t > 0 && l > 0 ? Math.max(1, Math.round(t / l)) : 0, gap: gapMs, lap: l, total: t };
         };
-        if (seg === 0 && course.swimByLaps) return plan(course.swimYards, course.swimLap, gapFor(course.swimMinLapSec, 15));
+        if (kindAt(seg) === "swim" && course.swimByLaps) return plan(course.swimYards, course.swimLap, gapFor(course.swimMinLapSec, 15));
         if (seg === 2 && course.bikeType === "laps") return plan(course.bikeMiles, course.lapMi, gapFor(course.minLapSec, 20));
         // Spin bike: riders call out their miles and each tap is one mile, so a
         // 27-mile ride is 27 taps — and the taps give the average speed.
         if (seg === 2 && course.bikeType === "spin") return plan(course.bikeMiles, 1, 0);
-        if (seg === 4 && course.runByLaps) return plan(course.runMiles, course.runLap, gapFor(course.runMinLapSec, 30));
+        if (kindAt(seg) === "run" && course.runByLaps) return plan(course.runMiles, course.runLap, gapFor(course.runMinLapSec, 30));
         return null;
       }
       function courseHasLaps(c) { return !!(c && (c.swimByLaps || c.bikeType === "laps" || c.bikeType === "spin" || c.runByLaps)); }
@@ -629,7 +629,7 @@
       function legSplits(taps, a, seg, course, unitShort) {
         const full = legSplitsFull(taps, a, seg, course, unitShort);
         const p = legCountPlan(course, seg);
-        if (!full || !(p.lap > 0) || seg === 4) return full;
+        if (!full || !(p.lap > 0) || kindAt(seg) === "run") return full;
         if (seg === 2) return { items: [], avg: full.avg };
         const w = legWindow(a, seg, p.gap);
         const marks = lapMarks(taps, w[0], w[1], p.gap);
@@ -662,7 +662,7 @@
           return { items, avg: el > 0 ? `Average ${(dist / (el / 3600000)).toFixed(1)} ${speed}` : "" };
         }
         let prev = start;
-        const items = marks.map((t, k) => { const it = { label: `${seg === 0 ? "Length" : "Lap"} ${k + 1}`, ms: t - prev }; prev = t; return it; });
+        const items = marks.map((t, k) => { const it = { label: `${kindAt(seg) === "swim" ? "Length" : "Lap"} ${k + 1}`, ms: t - prev }; prev = t; return it; });
         return { items, avg: "" };
       }
       // m:ss for splits (h:mm:ss past an hour).
@@ -913,6 +913,31 @@
       }
       const LEG_COLOUR = { 0: TM.swim, 2: TM.bike, 4: TM.run };
       const LEG_NAME = { 0: "Swim", 2: "Bike", 4: "Run" };
+      // ── Leg order ──────────────────────────────────────────────────────────
+      // The three legs sit in slots 0, 2 and 4 (transitions in 1 and 3). A race
+      // can run them in another order — e.g. a reverse triathlon: Run, Bike, Swim.
+      // Times are by slot (in the order raced); anything about a *kind* of leg
+      // (swim yards, run pace, lap lengths) asks which slot that kind is in.
+      const LEG_ORDERS = { standard: ["swim", "bike", "run"], reverse: ["run", "bike", "swim"] };
+      const LEG_ORDER = ["swim", "bike", "run"];
+      const LEG_KIND_NAME = { swim: "Swim", bike: "Bike", run: "Run" };
+      const kindAt = slot => slot === 0 ? LEG_ORDER[0] : slot === 2 ? LEG_ORDER[1] : slot === 4 ? LEG_ORDER[2] : null;
+      const slotOf = kind => { const i = LEG_ORDER.indexOf(kind); return i < 0 ? null : i * 2; };
+      function legOrderOf(x) { return Array.isArray(x) && x.length === 3 && ["swim", "bike", "run"].every(k => x.includes(k)) ? x : LEG_ORDERS.standard; }
+      // Point every leg name, colour and the shared SEGMENTS labels at an order.
+      function applyLegOrder(order) {
+        const o = legOrderOf(order);
+        if (o.every((k, i) => LEG_ORDER[i] === k)) return false;
+        LEG_ORDER.splice(0, 3, ...o);
+        [0, 2, 4].forEach((slot, i) => {
+          const k = o[i];
+          SEGMENTS[slot] = LEG_KIND_NAME[k];
+          segColors[slot] = TM[k];
+          LEG_COLOUR[slot] = TM[k];
+          LEG_NAME[slot] = LEG_KIND_NAME[k];
+        });
+        return true;
+      }
 
 
       // Lap length, set three ways: quick picks (a 25/50/100 pool, a ¼/½/1 mile
@@ -3748,7 +3773,7 @@ ${html}</body></html>`);
         const crs = asList(race.courses);
         const c = crs.find(x => x.id === ath.courseId) || crs[0] || null;
         const u = race.units || {};
-        const paces = c ? [calcSwimPace(legs[0] && legs[0].ms, c.swimYards, u.swim), calcBikeMph(legs[2] && legs[2].ms, c.bikeMiles, u.bike), calcRunPace(legs[4] && legs[4].ms, c.runMiles, u.run)] : [];
+        const paces = c ? [calcSwimPace(legs[slotOf("swim")] && legs[slotOf("swim")].ms, c.swimYards, u.swim), calcBikeMph(legs[2] && legs[2].ms, c.bikeMiles, u.bike), calcRunPace(legs[slotOf("run")] && legs[slotOf("run")].ms, c.runMiles, u.run)] : [];
         const cert = race.cert || {};
         return {
           eventName: race.raceName || "Race", orgName: cert.orgName || "", accent: cert.accentColor || "#0B3FCC", logo: cert.logo || LOGO_B64,
@@ -4139,6 +4164,7 @@ ${html}</body></html>`);
         // trainer distance. Manual: counts keep adding up, but only the host's
         // own tap ends a leg. Switchable mid-race from the Race screen.
         const [autoSplits, setAutoSplits] = useState(true);
+        const [legOrder, setLegOrder] = useState(LEG_ORDERS.standard);   // this host's race: order of the three legs
         const [emailKind, setEmailKind] = useState("watch");     // watch | results | custom
         const [emailSkip, setEmailSkip] = useState({});           // athlete id → left off this email
         const [emailSubject, setEmailSubject] = useState("");
@@ -4522,6 +4548,8 @@ ${html}</body></html>`);
         const [joinBikeStats, setJoinBikeStats] = useState(null);
         const joinGpsTrailRef = useRef([]);
         const [joinLiveData, setJoinLiveData] = useState(null);
+        // The race this screen is showing sets the leg order everything is labelled by.
+        applyLegOrder(view === "join" && joinLiveData ? joinLiveData.legOrder : view === "watch" && liveRace ? liveRace.legOrder : legOrder);
         const [joinLiveClockMs, setJoinLiveClockMs] = useState(0);
         const joinLiveListenerRef = useRef(null);
         // True once the race this phone joined has ended or been deleted: stop
@@ -5709,8 +5737,9 @@ ${html}</body></html>`);
             if (!g || g.src !== "watch" || !g.tok || !ath) return;
             // each leg's distance and unit, so the watch can show done / left (transitions have none)
             const crs = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0] || {};
-            const dist = [+crs.swimYards || 0, 0, +crs.bikeMiles || 0, 0, +crs.runMiles || 0];
-            const unit = [UNIT_SHORT[units.swim] || "yd", "", UNIT_SHORT[units.bike] || "mi", "", UNIT_SHORT[units.run] || "mi"];
+            const legDist = { swim: +crs.swimYards || 0, bike: +crs.bikeMiles || 0, run: +crs.runMiles || 0 };
+            const dist = SEGMENTS.map((_, i) => kindAt(i) ? legDist[kindAt(i)] : 0);
+            const unit = SEGMENTS.map((_, i) => kindAt(i) ? (UNIT_SHORT[units[kindAt(i)]] || (kindAt(i) === "swim" ? "yd" : "mi")) : "");
             const key = JSON.stringify([ath.started, ath.startOffset, ath.splits, ath.finished, dist, unit]);
             if (watchRaceSentRef.current[g.tok] === key) return;
             watchRaceSentRef.current[g.tok] = key;
@@ -6114,6 +6143,7 @@ ${html}</body></html>`);
                           setClockRunning(ld.clockRunning || false);
                           setLiveRaceCode(code);
                           setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
+                          if (ld.legOrder) setLegOrder(legOrderOf(ld.legOrder));
                           setRaceInitialized(true);
                           setView("race");
                         } else {
@@ -6341,7 +6371,7 @@ ${html}</body></html>`);
           const code = customRaceCode || registrationCode || generateRaceCode();
           const id = Date.now();
           const raceAthletes = athletes.map(a => ({ name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, dob: a.dob || "", courseId: a.courseId || null , email: a.email || "" }));
-          const entry = { id, name, code, plannedCode: code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, raceRoutes, athletes: raceAthletes };
+          const entry = { id, name, code, plannedCode: code, savedAt: new Date().toLocaleDateString(), ageGroups, courses, units, certConfig, waypoints, raceRoutes, legOrder, athletes: raceAthletes };
           persistRaces([...savedRaces, entry]);
           mergeAthletesToLibrary(athletes);
           setLoadedRaceId(id);
@@ -6450,7 +6480,7 @@ ${html}</body></html>`);
                     logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
-            courses, units, autoSplits, ageGroups, courseMap: courseMapOn,
+            courses, units, autoSplits, ageGroups, courseMap: courseMapOn, legOrder,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes
           };
@@ -6476,7 +6506,7 @@ ${html}</body></html>`);
             updatedAt: Date.now(),
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes,
-            units, courses, autoSplits,
+            units, courses, autoSplits, legOrder,
           };
           athletes.forEach((ath, i) => {
             updates[`athletes/${i}/id`]          = ath.id;
@@ -6604,7 +6634,7 @@ ${html}</body></html>`);
           const certHTML = toprint.map(ath => {
             const place = finishers.findIndex(a => a.id === ath.id);
             const ac = raceCourses.find(c => c.id === ath.courseId) || raceCourses[0] || { name: "Race", swimYards: 0, bikeMiles: 0, runMiles: 0 };
-            const swimMs = archiveSegDur(ath, 0), bikeMs = archiveSegDur(ath, 2), runMs = archiveSegDur(ath, 4);
+            const swimMs = archiveSegDur(ath, slotOf("swim")), bikeMs = archiveSegDur(ath, slotOf("bike")), runMs = archiveSegDur(ath, slotOf("run"));
             const sp = calcSwimPace(swimMs, ac.swimYards, raceUnits.swim), bp = calcBikeMph(bikeMs, ac.bikeMiles, raceUnits.bike), rp = calcRunPace(runMs, ac.runMiles, raceUnits.run);
             const pColor = place >= 0 && place < 3 ? medalColors[place] : "#3D434B";
             const medal = place >= 0 && place < 3 ? medalEmoji[place] : "🏅";
@@ -6776,6 +6806,7 @@ ${html}</body></html>`);
           setCourseMapOn(race.courseMap !== false);
           setOldRaceCodes(race.oldCodes || []);
           if (race.units) setUnits(race.units);
+          setLegOrder(legOrderOf(race.legOrder));
           if (race.certConfig) setCertConfig(race.certConfig);
           if (race.ageGroups) setAgeGroups(race.ageGroups);
           if (race.waypoints) setWaypoints(race.waypoints.map(wp => ({ ...wp, lat: wp.lat ?? null, lng: wp.lng ?? null })));
@@ -6815,7 +6846,7 @@ ${html}</body></html>`);
         // Everything on the setup screens, as a saved race stores it.
         function raceSnapshot() {
           return {
-            ageGroups, courses, units, certConfig, waypoints, raceRoutes,
+            ageGroups, courses, units, certConfig, waypoints, raceRoutes, legOrder,
             listed: raceListed, oldCodes: oldRaceCodes, autoSplits, courseMap: courseMapOn,
             plannedCode: customRaceCode || null,
             athletes: athletes.map(a => ({
@@ -6867,7 +6898,7 @@ ${html}</body></html>`);
           if (autoSaveRef.current.snap === snap) return;
           const t = setTimeout(() => { autoSaveRef.current = { id: loadedRaceId, snap }; updateSavedRace(true); }, 1500);
           return () => clearTimeout(t);
-        }, [loadedRaceId, raceInitialized, athletes, ageGroups, courses, units, certConfig, waypoints, raceRoutes, raceListed, autoSplits, courseMapOn, saveRaceName, customRaceCode]);
+        }, [loadedRaceId, raceInitialized, athletes, ageGroups, courses, units, certConfig, waypoints, raceRoutes, raceListed, autoSplits, courseMapOn, saveRaceName, customRaceCode, legOrder]);
 
         async function loadRace(race) {
           // Opening a different race lets go of whichever race was live, so its
@@ -6884,6 +6915,7 @@ ${html}</body></html>`);
           setRegistrationOpen(false);
           stopRegListener();
           if (race.units) setUnits(race.units);
+          setLegOrder(legOrderOf(race.legOrder));
           if (race.certConfig) setCertConfig(race.certConfig);
           const loadedWaypoints = (race.waypoints || DEFAULT_WAYPOINTS).map(wp => ({
             ...wp, lat: wp.lat ?? null, lng: wp.lng ?? null
@@ -6936,6 +6968,7 @@ ${html}</body></html>`);
                   setClockRunning(ld.clockRunning || false);
                   setLiveRaceCode(race.code);
                   setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
+                          if (ld.legOrder) setLegOrder(legOrderOf(ld.legOrder));
                   // Prefer live athlete state (has splits/started/finished) over saved race state
                   const segs = ld.segments || SEGMENTS;
                   const byName = new Map(asList(race.athletes).map(a => [String(a.name || "").trim().toLowerCase(), a]));
@@ -7451,6 +7484,7 @@ ${html}</body></html>`);
           setRaceDrawLeg(null);
           setAgeGroups(DEFAULT_AGE_GROUPS);
           setCourseMapOn(true);
+          setLegOrder(LEG_ORDERS.standard);
           setCertConfig({ eventName: "Timeathon Race Event", accentColor: "#0B3FCC", orgName: "", customLogoB64: null });
           setRegistrationCode(null);
           setRegistrationOpen(false);
@@ -8411,9 +8445,9 @@ ${html}</body></html>`);
           const rows = sorted.map((ath, place) => {
             const chip = totalChipTime(ath);
             const gt   = gunTime(ath);
-            const swimMs = segmentDuration(ath, 0);
+            const swimMs = segmentDuration(ath, slotOf("swim"));
             const bikeMs = segmentDuration(ath, 2);
-            const runMs  = segmentDuration(ath, 4);
+            const runMs  = segmentDuration(ath, slotOf("run"));
             const agp = ageGroupPlace(ath);
             const ac = athleteCourse(ath);
             return [
@@ -8440,9 +8474,9 @@ ${html}</body></html>`);
           const certHTML = sorted.map((ath, place) => {
             const chip   = totalChipTime(ath);
             const gt     = gunTime(ath);
-            const swimMs = segmentDuration(ath, 0);
+            const swimMs = segmentDuration(ath, slotOf("swim"));
             const bikeMs = segmentDuration(ath, 2);
-            const runMs  = segmentDuration(ath, 4);
+            const runMs  = segmentDuration(ath, slotOf("run"));
             const ac = athleteCourse(ath);
             const sp = calcSwimPace(swimMs, ac.swimYards, units.swim);
             const bp = calcBikeMph(bikeMs, ac.bikeMiles, units.bike);
@@ -11562,7 +11596,7 @@ Start a new race anyway?`)) return;
                           const n = legCount(lapTaps[i], a, seg, course), need = plan.need;
                           const justTapped = flash && !flash.error && flash.idx === i;
                           const big = shown.length === 1;
-                          const legUnit = UNIT_SHORT[(race.units || {})[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || (seg === 0 ? "yd" : "mi");
+                          const legUnit = UNIT_SHORT[(race.units || {})[kindAt(seg)]] || (kindAt(seg) === "swim" ? "yd" : "mi");
                           const pct = need > 0 ? Math.min(100, (n / need) * 100) : 0;
                           const distLine = plan.lap > 0 ? `${fmtLegDist(Math.min(n * plan.lap, plan.total || Infinity), legUnit)} of ${fmtLegDist(plan.total, legUnit)}` : "";
                           if (big) return (
@@ -11644,7 +11678,7 @@ Start a new race anyway?`)) return;
                       const { a, i, course } = shown[0];
                       const legs = LAP_LEGS.map(([seg]) => {
                         if (a.splits[seg] == null) return null;
-                        const unit = UNIT_SHORT[(race.units || {})[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || (seg === 0 ? "yd" : "mi");
+                        const unit = UNIT_SHORT[(race.units || {})[kindAt(seg)]] || (kindAt(seg) === "swim" ? "yd" : "mi");
                         const sp = legSplits(lapTaps[i], a, seg, course, unit);
                         return sp && (sp.items.length || sp.avg) ? { seg, sp } : null;
                       }).filter(Boolean);
@@ -11951,7 +11985,7 @@ Start a new race anyway?`)) return;
                           </select>
                         </div>
                         {(() => {
-                          const segColors = [TM.swim, TM.inkMuted, TM.bike, TM.inkMuted, TM.run];
+                          const segColors = SEGMENTS.map((_, i) => kindAt(i) ? TM[kindAt(i)] : TM.inkMuted);
                           const resolvedMs = resolveSegsMs(ma);
                           const cumFromSegs = [];
                           let c = 0;
@@ -13937,6 +13971,19 @@ Start a new race anyway?`)) return;
                       return (
                         <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
                           <div>
+                            <div style={TM_LABEL}>Leg order</div>
+                            <div role="radiogroup" aria-label="Leg order" style={{ display: "flex", gap: 8 }}>
+                              {[["standard", "Swim → Bike → Run"], ["reverse", "Run → Bike → Swim"]].map(([k, l]) => {
+                                const on = LEG_ORDERS[k].every((x, i) => legOrderOf(legOrder)[i] === x);
+                                return <button key={k} role="radio" aria-checked={on} onClick={() => {
+                                  if (on) return;
+                                  if (athletes.some(a => a.started) && !confirm("Athletes have already started. Change the leg order anyway?")) return;
+                                  setLegOrder(LEG_ORDERS[k]);
+                                }} style={segStyle(on)}>{l}</button>;
+                              })}
+                            </div>
+                          </div>
+                          <div>
                             <div style={TM_LABEL}>Lap counting</div>
                             <div role="radiogroup" aria-label="Lap counting" style={{ display: "flex", gap: 8 }}>
                               {[[true, "On"], [false, "Off"]].map(([v, l]) => (
@@ -14825,7 +14872,7 @@ Start a new race anyway?`)) return;
                           const n = ath.started ? legCount(lapTaps[i], ath, seg, athCourse) : 0;
                           const col = LEG_COLOUR[seg];
                           const canCount = !!liveRaceCode && ath.started;
-                          const legUnit = UNIT_SHORT[units[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || "mi";
+                          const legUnit = UNIT_SHORT[units[kindAt(seg)]] || "mi";
                           const pct = plan.need > 0 ? Math.min(100, (n / plan.need) * 100) : 0;
                           const side = (label, onClick, disabled, filled) => (
                             <button onClick={onClick} disabled={disabled} aria-label={label}
@@ -14878,7 +14925,7 @@ Start a new race anyway?`)) return;
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
                           const legs = LAP_LEGS.map(([seg]) => {
                             if (ath.splits[seg] == null) return null;
-                            const unit = UNIT_SHORT[units[seg === 0 ? "swim" : seg === 2 ? "bike" : "run"]] || "mi";
+                            const unit = UNIT_SHORT[units[kindAt(seg)]] || "mi";
                             const sp = legSplits(lapTaps[i], ath, seg, athCourse, unit);
                             return sp && (sp.items.length || sp.avg) ? { seg, sp } : null;
                           }).filter(Boolean);
@@ -15122,9 +15169,9 @@ Start a new race anyway?`)) return;
                           {sorted.map((ath, place) => {
                             const chip = totalChipTime(ath);
                             const gt   = gunTime(ath);
-                            const swimMs = segmentDuration(ath, 0);
+                            const swimMs = segmentDuration(ath, slotOf("swim"));
                             const bikeMs = segmentDuration(ath, 2);
-                            const runMs  = segmentDuration(ath, 4);
+                            const runMs  = segmentDuration(ath, slotOf("run"));
                             const ac = athleteCourse(ath);
                             const sp = calcSwimPace(swimMs, ac.swimYards, units.swim);
                             const bp = calcBikeMph(bikeMs, ac.bikeMiles, units.bike);
