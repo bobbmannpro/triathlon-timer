@@ -5015,6 +5015,8 @@ ${html}</body></html>`);
         useEffect(() => { bikeRidingRef.current = bikeRiding; }, [bikeRiding]);
         const [bikeGpsStatus, setBikeGpsStatus] = useState("");
         const [bikeLive, setBikeLive]         = useState(null); // rider's own latest frame
+        const bikeLiveRef = useRef(null);
+        useEffect(() => { bikeLiveRef.current = bikeLive; }, [bikeLive]);
         const [bikeElapsedMs, setBikeElapsedMs] = useState(0);
         // Viewer side
         const [bikeWatchCode, setBikeWatchCode] = useState(() => {
@@ -5108,6 +5110,13 @@ ${html}</body></html>`);
         const bikeRidingRef = useRef(false);
         const bikeWatchLastTRef = useRef(null);
         const [bikeWatchSeen, setBikeWatchSeen] = useState(0);
+        // After Complete Ride: what to keep (the route as a course, the ride itself).
+        const [bikeDone, setBikeDone] = useState(null);       // { code, name, distM, elapsedMs }
+        const [bikeDoneOpts, setBikeDoneOpts] = useState({ saveRoute: true, leg: "bike", name: "", keepRide: false });
+        const [bikeDoneMsg, setBikeDoneMsg] = useState("");
+        // The rider's map fills the screen while riding.
+        const [bikeRideFull, setBikeRideFull] = useState(false);
+        const bikePipRef = useRef(null);                       // { video, canvas, timer }
         const bikeMapRef       = useRef(null);
         const bikeMarkerRef    = useRef(null);
         const bikeTrailLineRef = useRef(null);
@@ -8806,9 +8815,10 @@ ${html}</body></html>`);
             // Third element is speed in km/h, so viewers can colour the trail by
             // effort. Older two-element crumbs still render, just uncoloured.
             const kmh = mps != null ? Math.round(mps * 3.6 * 10) / 10 : null;
+            // 4th element: time (s since 1970), so the ride exports as a GPX
+            // Strava / Garmin Connect / TrainingPeaks will accept.
             rtdb.ref(`bikeFeeds/${code}/track`)
-              .push(kmh != null ? [+lat.toFixed(5), +lng.toFixed(5), kmh]
-                                : [+lat.toFixed(5), +lng.toFixed(5)])
+              .push([+lat.toFixed(5), +lng.toFixed(5), kmh != null ? kmh : 0, Math.round(Date.now() / 1000)])
               .catch(console.error);
           }
           persistBikeSession();
@@ -8864,6 +8874,8 @@ ${html}</body></html>`);
           setBikeElapsedMs(baseElapsed);
           setBikeRideCode(feed.code);
           setBikeRiding(true);
+          setBikeDone(null); setBikeDoneMsg("");
+          setBikeRideFull(true);
           acquireWakeLock();
 
           if (!resume && !restore) {
@@ -8962,6 +8974,7 @@ ${html}</body></html>`);
             }
             bikePrevFixRef.current = { lat, lng, t: now };
             setBikeGpsStatus(fromWatch ? "⌚ Watch GPS · route recording" : `GPS active · ±${Math.round(accuracy || 0)}m`);
+            bikePipRedraw();
             bikePublishFrame(bikeRideCodeRef.current || feedCode, lat, lng, {
               mps,
               hdg: (heading != null && !isNaN(heading)) ? Math.round(heading) : null,
@@ -9002,6 +9015,107 @@ ${html}</body></html>`);
           }
           setBikeWatchPair(null);
         }
+        // ── After the ride ──
+        async function bikeTrackPts(code) {
+          const snap = await rtdb.ref(`bikeFeeds/${code}/track`).once("value");
+          return Object.values(snap.val() || {}).filter(p => Array.isArray(p) && p.length >= 2);
+        }
+        function buildGpx(name, pts) {
+          const esc = x => String(x || "").replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
+          const t0 = pts.find(p => p[3]) ? pts.find(p => p[3])[3] : null;
+          const seg = pts.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}">${p[3] ? `<time>${new Date(p[3] * 1000).toISOString()}</time>` : ""}</trkpt>`).join("\n");
+          return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Timeathon" xmlns="http://www.topografix.com/GPX/1/1">\n<metadata><name>${esc(name)}</name>${t0 ? `<time>${new Date(t0 * 1000).toISOString()}</time>` : ""}</metadata>\n<trk><name>${esc(name)}</name><type>cycling</type><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>\n`;
+        }
+        async function downloadRideGpx(code, name) {
+          try {
+            const pts = await bikeTrackPts(code);
+            if (pts.length < 2) { alert("No route recorded for this ride."); return; }
+            const blob = new Blob([buildGpx(name || "Timeathon ride", pts)], { type: "application/gpx+xml" });
+            const file = new File([blob], `${(name || "ride").replace(/[^\w\- ]+/g, "").trim() || "ride"}.gpx`, { type: "application/gpx+xml" });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name || "Ride" }); return; }
+            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+          } catch (e) { if (e && e.name !== "AbortError") alert("Couldn't make the GPX file: " + (e.message || e)); }
+        }
+        async function finishBikeDone() {
+          const d = bikeDone; if (!d) return;
+          const o = bikeDoneOpts;
+          try {
+            if (o.saveRoute) {
+              const pts = (await bikeTrackPts(d.code)).map(p => [p[0], p[1]]);
+              if (pts.length < 2) { alert("No route was recorded, so there's no course to save."); return; }
+              const name = (o.name || "").trim() || "Ride route";
+              saveLibraryCourse({ name, routes: { [o.leg]: pts } });
+            }
+            if (!o.keepRide) {
+              persistBikeFeeds(bikeFeedList.filter(x => x.code !== d.code));
+              rtdb.ref(`bikeFeeds/${d.code}`).remove().catch(console.error);
+              unlistRace(d.code);
+              if (bikeWatchPairRef.current) unpairBikeWatch();
+              setBikeRideCode(null);
+            }
+            setBikeDoneMsg(o.saveRoute
+              ? `✓ Route saved as “${(o.name || "").trim() || "Ride route"}” — find it under Setup → Saved courses.${o.keepRide ? "" : " The ride itself wasn't kept."}`
+              : (o.keepRide ? "✓ Ride kept in My Races." : "✓ Done. Nothing was kept."));
+            setBikeDone(null);
+          } catch (e) { console.error(e); alert("Something went wrong: " + (e.message || e)); }
+        }
+
+        // ── Picture-in-picture (Android Chrome): a small live card of the ride
+        // that stays on top while you use music or other apps.
+        function drawBikePip(ctx, W, H) {
+          const live = bikeLiveRef.current || {};
+          const km = (bikeDraft && bikeDraft.units === "km");
+          ctx.fillStyle = "#0B0D10"; ctx.fillRect(0, 0, W, H);
+          const el = bikeElapsedBaseRef.current + (bikeRidingRef.current ? Date.now() - (bikeStartedAtRef.current || Date.now()) : 0);
+          const s = Math.floor(el / 1000), hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+          const clock = (hh ? hh + ":" + String(mm).padStart(2, "0") : mm) + ":" + String(ss).padStart(2, "0");
+          const dist = (bikeDistMRef.current || 0) / (km ? 1000 : 1609.344);
+          const spd = live.spd != null ? live.spd * (km ? 3.6 : 2.236936) : null;
+          ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 92px Archivo, Arial, sans-serif"; ctx.textBaseline = "top";
+          ctx.fillText(clock, 24, 20);
+          ctx.font = "bold 56px Archivo, Arial, sans-serif"; ctx.fillStyle = "#FF8A3D";
+          ctx.fillText(dist.toFixed(2) + (km ? " km" : " mi"), 24, 130);
+          ctx.fillStyle = "#2FC27A"; ctx.fillText(spd != null ? spd.toFixed(1) + (km ? " km/h" : " mph") : "— " + (km ? "km/h" : "mph"), 24, 200);
+          if (live.hr != null) { ctx.fillStyle = "#FF4040"; ctx.fillText("♥ " + live.hr, 24, 270); }
+          // the route so far
+          const pts = bikeRideTrailPtsRef.current || [];
+          if (pts.length > 1) {
+            let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
+            pts.forEach(p => { a = Math.min(a, p[0]); b = Math.max(b, p[0]); c = Math.min(c, p[1]); d = Math.max(d, p[1]); });
+            const bx = W - 250, by = 30, bw = 220, bh = H - 60, sc = Math.min(bw / Math.max(d - c, 1e-5), bh / Math.max(b - a, 1e-5));
+            ctx.strokeStyle = "#3D7BFF"; ctx.lineWidth = 5; ctx.beginPath();
+            pts.forEach((p, i) => { const x = bx + (p[1] - c) * sc, y = by + (b - p[0]) * sc; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+            ctx.stroke();
+            const l = pts[pts.length - 1]; ctx.fillStyle = "#FFFFFF"; ctx.beginPath(); ctx.arc(bx + (l[1] - c) * sc, by + (b - l[0]) * sc, 9, 0, 7); ctx.fill();
+          }
+        }
+        async function startBikePip() {
+          try {
+            if (!document.pictureInPictureEnabled) { alert("Picture-in-picture isn't available in this browser. On Android, use Chrome."); return; }
+            stopBikePip();
+            const W = 960, H = 400;
+            const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
+            const ctx = canvas.getContext("2d"); drawBikePip(ctx, W, H);
+            const video = document.createElement("video");
+            video.muted = true; video.playsInline = true; video.srcObject = canvas.captureStream(2);
+            const timer = setInterval(() => drawBikePip(ctx, W, H), 1000);
+            bikePipRef.current = { video, canvas, ctx, timer, W, H };
+            await video.play();
+            await video.requestPictureInPicture();
+            video.addEventListener("leavepictureinpicture", () => stopBikePip(), { once: true });
+          } catch (e) { console.error(e); alert("Couldn't open picture-in-picture: " + (e.message || e)); stopBikePip(); }
+        }
+        function stopBikePip() {
+          const p = bikePipRef.current; if (!p) return;
+          clearInterval(p.timer);
+          try { if (document.pictureInPictureElement === p.video) document.exitPictureInPicture().catch(() => {}); } catch (_) {}
+          try { p.video.srcObject = null; } catch (_) {}
+          bikePipRef.current = null;
+        }
+        // Background tabs throttle timers, so each new fix also redraws the card.
+        const bikePipRedraw = () => { const p = bikePipRef.current; if (p) drawBikePip(p.ctx, p.W, p.H); };
+
         // The watch's fixes → this ride (only while riding).
         useEffect(() => {
           if (!bikeWatchPair) return;
@@ -9071,6 +9185,13 @@ ${html}</body></html>`);
             rtdb.ref("liveRaces/" + wp.rcode + "/status").set("closed").catch(() => {});
           }
           clearBikeSession();   // nothing to auto-resume once stopped or paused
+          setBikeRideFull(false);
+          stopBikePip();
+          if (finish && code) {
+            const feed = bikeFeedList.find(f => f.code === code);
+            setBikeDone({ code, name: (feed && feed.eventName) || "", distM: totalDist, elapsedMs: totalElapsed });
+            setBikeDoneOpts(o => ({ ...o, name: (feed && feed.eventName) || o.name || "" }));
+          }
           setBikeRiding(false);
           setBikeGpsStatus(finish ? "Ride finished." : "Paused for the day — resume when you set off again.");
         }
@@ -18043,9 +18164,70 @@ Start a new race anyway?`)) return;
                         );
                       })()}
 
-                      {/* The rider's own map — where they are, and where they're going */}
-                      <div style={{ ...S.card, padding:0, overflow:"hidden", position:"relative" }}>
-                        <div ref={initBikeRideMap} style={{ height:280, background:"#EFEDE8" }} />
+                      {/* Ride complete: keep the route as a course, keep (or drop) the ride */}
+                      {bikeDone && !bikeRiding && (
+                        <div style={{ ...S.card, borderColor: "#04613F" }}>
+                          <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#04613F" }}>✓ Ride complete</div>
+                          <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 10 }}>{fmtDist(bikeDone.distM)} · {fmtRideClock(bikeDone.elapsedMs)}</div>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+                            <input type="checkbox" checked={bikeDoneOpts.saveRoute} onChange={e => setBikeDoneOpts(o => ({ ...o, saveRoute: e.target.checked }))} />
+                            Save the route as a course
+                          </label>
+                          {bikeDoneOpts.saveRoute && (
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginLeft: 30, marginBottom: 10 }}>
+                              <input value={bikeDoneOpts.name} onChange={e => setBikeDoneOpts(o => ({ ...o, name: e.target.value }))} placeholder="Course name, e.g. White Rock loop"
+                                style={{ ...S.input, flex: "1 1 180px" }} />
+                              {["bike", "run"].map(leg => (
+                                <button key={leg} onClick={() => setBikeDoneOpts(o => ({ ...o, leg }))}
+                                  style={{ ...btnStyle(leg === "bike" ? "#FF8A3D" : "#2FC27A", bikeDoneOpts.leg !== leg), padding: "0 12px", minHeight: 40, fontSize: 14 }}>{leg === "bike" ? "Bike course" : "Run course"}</button>
+                              ))}
+                            </div>
+                          )}
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, marginBottom: 12 }}>
+                            <input type="checkbox" checked={bikeDoneOpts.keepRide} onChange={e => setBikeDoneOpts(o => ({ ...o, keepRide: e.target.checked }))} />
+                            Keep this ride in My Races
+                          </label>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button onClick={finishBikeDone} style={{ ...btnStyle("#04613F"), padding: "0 18px" }}>Done</button>
+                            <button onClick={() => downloadRideGpx(bikeDone.code, bikeDoneOpts.name || bikeDone.name)} style={{ ...btnStyle("#0B3FCC", true), padding: "0 14px" }}>⬇ GPX for Strava / Garmin / TrainingPeaks</button>
+                          </div>
+                          <div style={{ fontSize: 14, color: "#3D434B", marginTop: 10 }}>
+                            Rode with the Timeathon watch app? It saved this ride as a Garmin activity, so it's already on its way to Garmin Connect — and to Strava or TrainingPeaks if they're linked there.
+                          </div>
+                        </div>
+                      )}
+                      {bikeDoneMsg && !bikeRiding && (
+                        <div style={{ ...S.card, borderColor: "#04613F", color: "#04613F", fontWeight: 700, fontSize: 14 }}>{bikeDoneMsg}</div>
+                      )}
+
+                      {/* The rider's own map — where they are, and where they're going.
+                          Fills the screen while riding so the rider can see themselves. */}
+                      <div style={ bikeRiding && bikeRideFull
+                          ? { position:"fixed", inset:0, zIndex:4000, background:"#0B0D10", overflow:"hidden" }
+                          : { ...S.card, padding:0, overflow:"hidden", position:"relative" } }>
+                        <div ref={initBikeRideMap} style={{ height: bikeRiding && bikeRideFull ? "100%" : 280, background:"#EFEDE8" }} />
+                        {bikeRiding && bikeRideFull && (
+                          <div style={{ position:"absolute", left:0, right:0, top:0, zIndex:700, display:"flex", justifyContent:"space-around",
+                            background:"rgba(11,13,16,0.82)", color:"#FFFFFF", padding:"10px 6px 8px", paddingTop:"max(10px, env(safe-area-inset-top))" }}>
+                            {[["TIME", fmtRideClock(bikeElapsedMs), "#FFFFFF"], ["DIST", fmtDist(bikeLive?.dst), "#FF8A3D"],
+                              ["SPEED", fmtSpeed(bikeLive?.spd), "#2FC27A"], ["HR", bikeLive?.hr != null ? bikeLive.hr : "—", "#FF6B6B"]].map(([l, v, c]) => (
+                              <div key={l} style={{ textAlign:"center", minWidth:0 }}>
+                                <div style={{ fontSize:14, letterSpacing:1, color:"#B8B3A9", fontWeight:700 }}>{l}</div>
+                                <div className="tm-metric" style={{ fontSize:24, fontWeight:900, color:c, whiteSpace:"nowrap" }}>{v}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {bikeRiding && bikeRideFull && (
+                          <div style={{ position:"absolute", right:8, top:84, zIndex:700, display:"flex", flexDirection:"column", gap:6 }}>
+                            <button onClick={() => { setBikeRideFull(false); setTimeout(() => { try { bikeRideMapRef.current?.invalidateSize(); } catch(_) {} }, 150); }}
+                              style={{ background:"rgba(255,255,255,0.92)", color:"#0B0D10", border:"2px solid #0B0D10", borderRadius:6, padding:"6px 10px", fontSize:14, fontWeight:700 }}>✕ Exit map</button>
+                            <button onClick={startBikePip}
+                              style={{ background:"rgba(255,255,255,0.92)", color:"#0B3FCC", border:"2px solid #0B3FCC", borderRadius:6, padding:"6px 10px", fontSize:14, fontWeight:700 }}>⧉ Mini window</button>
+                            <button onClick={() => { if (confirm("Complete this ride?")) stopBikeRide(true); }}
+                              style={{ background:"#B3001B", color:"#FFFFFF", border:"2px solid #B3001B", borderRadius:6, padding:"6px 10px", fontSize:14, fontWeight:700 }}>■ Complete</button>
+                          </div>
+                        )}
                         <div style={{ position:"absolute", left:8, top:8, zIndex:500, pointerEvents:"none",
                           background:"rgba(255,255,255,0.85)", borderRadius:6, padding:"4px 9px", fontSize:14, color:"#3D434B" }}>
                           {bikeSelfLat == null
@@ -18057,10 +18239,10 @@ Start a new race anyway?`)) return;
                         <button onClick={() => {
                           if (bikeSelfLat == null || !bikeRideMapRef.current) return;
                           try { bikeRideMapRef.current.setView([bikeSelfLat, bikeSelfLng], 16, { animate:true }); } catch(_) {}
-                        }} style={{ position:"absolute", right:8, bottom:8, zIndex:500,
+                        }} style={{ position:"absolute", right:8, bottom: bikeRiding && bikeRideFull ? "max(16px, env(safe-area-inset-bottom))" : 8, zIndex:700,
                           background:"#EFEDE8", color:"#0B3FCC", border:"2px solid #0B3FCC", borderRadius:6,
                           padding:"5px 11px", fontSize:14, fontWeight:700, cursor:"pointer" }}>⌖ Me</button>
-                        <div style={{ position:"absolute", left:8, bottom:8, zIndex:500, display:"flex", gap:3,
+                        <div style={{ position:"absolute", left:8, bottom: bikeRiding && bikeRideFull ? "max(16px, env(safe-area-inset-bottom))" : 8, zIndex:700, display:"flex", gap:3,
                           background:"rgba(255,255,255,0.88)", padding:3, borderRadius:7, border:"2px solid #C9C5BC" }}>
                           {BIKE_ORIENTS.map(([k, label, hint]) => (
                             <button key={k} title={hint} onClick={() => setBikeOrient(k)}
@@ -18118,7 +18300,7 @@ Start a new race anyway?`)) return;
                                 <button onClick={() => begin(true)}
                                   style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 28px" }}>⏭ Resume Tour</button>
                               )}
-                              {code.length >= 4 && (
+                              {code.length >= 4 && !bikeDone && (
                                 <div style={{ width: "100%", textAlign: "center", marginTop: 6 }}>
                                   <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 6 }}>Rode a course you'll use again? Save the route for building races:</div>
                                   {["bike", "run"].map(leg => (
@@ -18148,8 +18330,8 @@ Start a new race anyway?`)) return;
                                 <button onClick={() => { if (confirm("Pause for the day? Distance and time are kept, and the trail stays on the map.")) stopBikeRide(false); }}
                                   style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 24px" }}>⏸ Pause for Day</button>
                               )}
-                              <button onClick={() => { if (confirm(multi ? "Finish the whole tour? This ends the feed for good." : "End the live feed for this ride?")) stopBikeRide(true); }}
-                                style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 24px" }}>■ {multi ? "Finish Tour" : "End Ride"}</button>
+                              <button onClick={() => { if (confirm(multi ? "Finish the whole tour? This ends the feed for good." : "Complete this ride?")) stopBikeRide(true); }}
+                                style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 24px" }}>■ {multi ? "Finish Tour" : "Complete Ride"}</button>
                             </div>
                           );
                         })()}
@@ -18228,6 +18410,12 @@ Start a new race anyway?`)) return;
                                       </div>
                                       <div style={{ fontSize:14, color:"#3D434B", letterSpacing:1 }}>{useKm ? "KM/H" : "MPH"}</div>
                                     </div>
+                                    <button title="Unfollow" aria-label={`Unfollow ${r.name}`} onClick={e => {
+                                      e.stopPropagation();
+                                      const rest = bikeWatchCodes.filter(c => c !== r.code);
+                                      setBikeWatchCodes(rest);
+                                      if (r.code === (bikeWatchCode || "").toUpperCase()) setBikeWatchCode(rest[0] || "");
+                                    }} style={{ ...btnStyle("#3D434B", true), minHeight: 34, padding: "0 10px", fontSize: 14, flexShrink: 0 }}>Unfollow</button>
                                   </div>
                                 );
                               })}
@@ -18418,29 +18606,25 @@ Start a new race anyway?`)) return;
                               borderRadius:6, padding:"5px 10px", fontSize:14, fontWeight:700, cursor:"pointer" }}>
                               {bikeFullscreen ? "✕ Exit" : "⛶ Full"}
                             </button>
-                            <div style={{ position:"absolute", right:10, top:10, zIndex:500, display:"flex", gap:4,
-                              background:"rgba(255,255,255,0.85)", padding:3, borderRadius:7, border:"2px solid #C9C5BC" }}>
-                              {Object.entries(BIKE_BASEMAPS).map(([k, b]) => (
-                                <button key={k} onClick={() => setBikeBasemap(k)}
-                                  style={{ padding:"5px 10px", fontSize:14, fontWeight:700, letterSpacing:0.5, borderRadius:5, cursor:"pointer",
-                                    background: bikeBasemap === k ? "#8A5A00" : "transparent",
-                                    color: bikeBasemap === k ? "#FFFFFF" : "#3D434B",
-                                    border:"none" }}>{b.label}</button>
-                              ))}
-                            </div>
+                            <select value={bikeBasemap} onChange={e => setBikeBasemap(e.target.value)} aria-label="Map type"
+                              style={{ position:"absolute", right:10, top:10, zIndex:500, maxWidth:130, minHeight:36,
+                                background:"rgba(255,255,255,0.92)", border:"2px solid #C9C5BC", borderRadius:7,
+                                padding:"4px 8px", fontSize:14, fontWeight:700, color:"#3D434B" }}>
+                              {Object.entries(BIKE_BASEMAPS).map(([k, b]) => <option key={k} value={k}>{b.label}</option>)}
+                            </select>
                             <button onClick={() => {
                               setBikeFollowing(true);
                               if (bikeWatchLive && bikeMapRef.current) {
                                 try { bikeMapRef.current.setView([bikeWatchLive.lat, bikeWatchLive.lng], 15, { animate:true }); } catch(_) {}
                               }
-                            }} style={{ position:"absolute", right:10, bottom:10, zIndex:500,
+                            }} style={{ position:"absolute", right:10, bottom: bikeStandings.length ? 74 : 10, zIndex:650,
                               background: bikeFollowing ? "#8A5A00" : "#EFEDE8",
                               color: bikeFollowing ? "#FFFFFF" : "#8A5A00",
                               border:"2px solid #8A5A00", borderRadius:6, padding:"6px 12px",
                               fontSize:14, fontWeight:700, letterSpacing:1, cursor:"pointer" }}>
                               {bikeFollowing ? "◎ Following" : "◎ Recentre"}
                             </button>
-                            <div style={{ position:"absolute", left:10, bottom:10, zIndex:500, display:"flex", gap:3,
+                            <div style={{ position:"absolute", left:10, bottom: bikeStandings.length ? 74 : 10, zIndex:650, display:"flex", gap:3,
                               background:"rgba(255,255,255,0.88)", padding:3, borderRadius:7, border:"2px solid #C9C5BC" }}>
                               {BIKE_ORIENTS.map(([k, label, hint]) => (
                                 <button key={k} title={hint} onClick={() => setBikeWatchOrient(k)}
@@ -18452,13 +18636,13 @@ Start a new race anyway?`)) return;
                             {/* Speed legend — the coloured trail is meaningless without one */}
                             <div onClick={() => setBikeTrailSpeed(v => { try { localStorage.setItem("bike-trail-speed", v ? "0" : "1"); } catch(_) {} return !v; })}
                               title={bikeTrailSpeed ? "Trail coloured by speed — tap for a plain trail" : "Tap to colour the trail by speed"}
-                              style={{ position:"absolute", left:10, top:10, zIndex:500, cursor:"pointer",
-                                background:"rgba(255,255,255,0.88)", padding:"6px 9px", borderRadius:7,
+                              style={{ position:"absolute", left:10, top:10, zIndex:500, cursor:"pointer", maxWidth:"calc(100% - 160px)",
+                                background:"rgba(255,255,255,0.88)", padding:"5px 8px", borderRadius:7,
                                 border:"2px solid #C9C5BC", opacity: bikeTrailSpeed ? 1 : 0.5 }}>
                               <div style={{ fontSize:14, letterSpacing:1.5, textTransform:"uppercase", color:"#3D434B", fontWeight:700, marginBottom:4 }}>
                                 {bikeTrailSpeed ? "Speed" : "Speed off"}
                               </div>
-                              <div style={{ display:"flex", height:7, width:112, borderRadius:4, overflow:"hidden" }}>
+                              <div style={{ display:"flex", height:7, width:96, maxWidth:"100%", borderRadius:4, overflow:"hidden" }}>
                                 {BIKE_SPEED_STOPS.map(([kmh, col]) => <div key={kmh} style={{ flex:1, background:col }} />)}
                               </div>
                               <div style={{ display:"flex", justifyContent:"space-between", fontSize:14, color:"#3D434B", marginTop:2 }}>
