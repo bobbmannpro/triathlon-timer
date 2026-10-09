@@ -83,6 +83,7 @@
       input[type="range"], input[type="file"], input[type="color"] { min-height: 0; accent-color: var(--tm-ink); }
       /* Placeholders must never look like something already typed: light, italic,
          plain weight and spacing, whatever the field itself uses. */
+      .tm-ride-full .leaflet-top { top: 78px; }
       input::placeholder, textarea::placeholder { color: #9AA0A8; opacity: 1; font-style: italic; font-weight: 400;
                                                   letter-spacing: normal; text-transform: none; }
       input:focus, select:focus, textarea:focus { outline: 3px solid var(--tm-ink); outline-offset: 1px; }
@@ -5117,6 +5118,11 @@ ${html}</body></html>`);
         // The rider's map fills the screen while riding.
         const [bikeRideFull, setBikeRideFull] = useState(false);
         const bikePipRef = useRef(null);                       // { video, canvas, timer }
+        useEffect(() => {
+          if (!bikeDone) return;
+          const t = setTimeout(() => { const el = document.getElementById("bike-done-panel"); if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }); }, 250);
+          return () => clearTimeout(t);
+        }, [bikeDone && bikeDone.code]);
         const bikeMapRef       = useRef(null);
         const bikeMarkerRef    = useRef(null);
         const bikeTrailLineRef = useRef(null);
@@ -18166,7 +18172,7 @@ Start a new race anyway?`)) return;
 
                       {/* Ride complete: keep the route as a course, keep (or drop) the ride */}
                       {bikeDone && !bikeRiding && (
-                        <div style={{ ...S.card, borderColor: "#04613F" }}>
+                        <div id="bike-done-panel" style={{ ...S.card, borderColor: "#04613F" }}>
                           <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#04613F" }}>✓ Ride complete</div>
                           <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 10 }}>{fmtDist(bikeDone.distM)} · {fmtRideClock(bikeDone.elapsedMs)}</div>
                           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
@@ -18202,7 +18208,7 @@ Start a new race anyway?`)) return;
 
                       {/* The rider's own map — where they are, and where they're going.
                           Fills the screen while riding so the rider can see themselves. */}
-                      <div style={ bikeRiding && bikeRideFull
+                      <div className={bikeRiding && bikeRideFull ? "tm-ride-full" : ""} style={ bikeRiding && bikeRideFull
                           ? { position:"fixed", inset:0, zIndex:4000, background:"#0B0D10", overflow:"hidden" }
                           : { ...S.card, padding:0, overflow:"hidden", position:"relative" } }>
                         <div ref={initBikeRideMap} style={{ height: bikeRiding && bikeRideFull ? "100%" : 280, background:"#EFEDE8" }} />
@@ -18228,7 +18234,7 @@ Start a new race anyway?`)) return;
                               style={{ background:"#B3001B", color:"#FFFFFF", border:"2px solid #B3001B", borderRadius:6, padding:"6px 10px", fontSize:14, fontWeight:700 }}>■ Complete</button>
                           </div>
                         )}
-                        <div style={{ position:"absolute", left:8, top:8, zIndex:500, pointerEvents:"none",
+                        <div style={{ position:"absolute", left:8, top:8, zIndex:500, pointerEvents:"none", display: bikeRiding && bikeRideFull ? "none" : "block",
                           background:"rgba(255,255,255,0.85)", borderRadius:6, padding:"4px 9px", fontSize:14, color:"#3D434B" }}>
                           {bikeSelfLat == null
                             ? "Finding your location…"
