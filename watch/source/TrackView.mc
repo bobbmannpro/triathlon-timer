@@ -224,6 +224,34 @@ class TrackView extends WatchUi.View {
         dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
     }
 
+    // Heart-rate zone ticker: Z1-Z5 in colour, a marker at the current heart rate.
+    function drawZoneBar(dc as Graphics.Dc, cx, y, bw) as Void {
+        var hrNow = heartRate();
+        var segW = bw / 5;
+        var x0 = cx - bw / 2;
+        var bh = 8;
+        for (var z = 1; z <= 5; z++) {
+            dc.setColor(zoneColor(z), Graphics.COLOR_TRANSPARENT);
+            dc.fillRectangle(x0 + (z - 1) * segW + 1, y, segW - 2, bh);
+        }
+        if (hrNow != null && zones != null && zones.size() >= 6) {
+            var z = hrZone(hrNow);
+            var pos;
+            if (z <= 0) { pos = 0.0; }
+            else {
+                var lo = zones[z - 1], hi = zones[z];
+                var f = hi > lo ? (hrNow - lo).toFloat() / (hi - lo) : 0.5;
+                if (f < 0) { f = 0.0; } if (f > 1) { f = 1.0; }
+                pos = (z - 1) + f;
+            }
+            var mx = x0 + (pos * segW).toNumber();
+            dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
+            dc.fillPolygon([[mx - 7, y - 9], [mx + 7, y - 9], [mx, y]]);
+            dc.fillRectangle(mx - 1, y, 3, bh + 3);
+        }
+        dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
+    }
+
     function onTick() as Void {
         tick++;
         // Diagnostics: written to GARMIN/APPS/LOGS/TIMEATHON.TXT when that file exists.
@@ -342,7 +370,8 @@ class TrackView extends WatchUi.View {
         if (l >= 5) {
             dc.setColor(0x2FC27A, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.22, Graphics.FONT_MEDIUM, "FINISHED", Graphics.TEXT_JUSTIFY_CENTER);
-            drawHr(dc, w / 2, h * 0.62, Graphics.TEXT_JUSTIFY_CENTER);
+            drawHr(dc, w / 2, h * 0.60, Graphics.TEXT_JUSTIFY_CENTER);
+            drawZoneBar(dc, w / 2, (h * 0.68).toNumber(), (w * 0.56).toNumber());
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.38, Graphics.FONT_NUMBER_MEDIUM, total != null ? Tm.fmt(total.toNumber()) : "--", Graphics.TEXT_JUSTIFY_CENTER);
         } else if (raceKnown && !started) {
@@ -351,15 +380,17 @@ class TrackView extends WatchUi.View {
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.42, Graphics.FONT_SMALL, "Waiting to be", Graphics.TEXT_JUSTIFY_CENTER);
             dc.drawText(w / 2, h * 0.52, Graphics.FONT_SMALL, "sent off", Graphics.TEXT_JUSTIFY_CENTER);
-            drawHr(dc, w / 2, h * 0.64, Graphics.TEXT_JUSTIFY_CENTER);
+            drawHr(dc, w / 2, h * 0.63, Graphics.TEXT_JUSTIFY_CENTER);
+            drawZoneBar(dc, w / 2, (h * 0.71).toNumber(), (w * 0.56).toNumber());
         } else {
             dc.setColor(Tm.legColor(l), Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.17, Graphics.FONT_MEDIUM, (Tm.LEGS[l] as String).toUpper(), Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.32, Graphics.FONT_NUMBER_MEDIUM, legTime != null ? Tm.fmt(legTime.toNumber()) : "--:--", Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w / 2 - 6, h * 0.53, Graphics.FONT_XTINY, (isRide ? "Ride " : "Race ") + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_RIGHT);
-            drawHr(dc, w / 2 + 6, h * 0.53, Graphics.TEXT_JUSTIFY_LEFT);
+            dc.drawText(w / 2 - 6, h * 0.49, Graphics.FONT_XTINY, (isRide ? "Ride " : "Race ") + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_RIGHT);
+            drawHr(dc, w / 2 + 6, h * 0.49, Graphics.TEXT_JUSTIFY_LEFT);
+            drawZoneBar(dc, w / 2, (h * 0.575).toNumber(), (w * 0.56).toNumber());
             // distance on this leg: done of the leg's total, what's left, and a ring round the edge
             var u = legUnit[l] as String, goal = legDist[l] as Float;
             var done = inUnit(legMetres(), u.length() > 0 ? u : "mi");
@@ -375,10 +406,10 @@ class TrackView extends WatchUi.View {
                 }
                 dc.setPenWidth(1);
                 dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(w / 2, h * 0.59, Graphics.FONT_SMALL, fmtDist(done, u) + " / " + fmtDist(goal, u) + " " + u, Graphics.TEXT_JUSTIFY_CENTER);
+                dc.drawText(w / 2, h * 0.605, Graphics.FONT_SMALL, fmtDist(done, u) + " / " + fmtDist(goal, u) + " " + u, Graphics.TEXT_JUSTIFY_CENTER);
                 var left = goal - done;
                 dc.setColor(left > 0 ? 0xAAAAAA : 0x2FC27A, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(w / 2, h * 0.68, Graphics.FONT_XTINY, left > 0 ? fmtDist(left, u) + " " + u + " left" : "Distance done", Graphics.TEXT_JUSTIFY_CENTER);
+                dc.drawText(w / 2, h * 0.69, Graphics.FONT_XTINY, left > 0 ? fmtDist(left, u) + " " + u + " left" : "Distance done", Graphics.TEXT_JUSTIFY_CENTER);
             } else if (l == 1 || l == 3) {
                 dc.drawText(w / 2, h * 0.63, Graphics.FONT_XTINY, "Transition", Graphics.TEXT_JUSTIFY_CENTER);
             } else {
