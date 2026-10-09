@@ -13745,8 +13745,7 @@ Start a new race anyway?`)) return;
                     open={setupStep === 2}
                     summary={ageGroups.length === 0 ? "No age groups — everyone scores together"
                       : `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}`}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 10 }}>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button onClick={addAgeGroupItem} style={{ ...btnStyle("#04613F", true), padding: "3px 8px", fontSize: 14 }}>+ Group</button>
                       </div>
@@ -13794,7 +13793,7 @@ Start a new race anyway?`)) return;
                                 <span style={{ fontSize: 14, color: "#3D434B" }}>{s.type === "under" ? "and under" : "and over"}</span>
                               </>
                             )}
-                            <div style={{ flex: 1, textAlign: "right", fontSize: 14, color: "#3D434B", fontStyle: "italic" }}>{ag}</div>
+                            <div style={{ flex: 1, textAlign: "right", fontSize: 14, color: "#3D434B", fontStyle: "italic", whiteSpace: "nowrap" }}>{ag}</div>
                             {ageGroups.length > 1 && (
                               <button onClick={() => removeAgeGroupItem(ag)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 16, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>&times;</button>
                             )}
