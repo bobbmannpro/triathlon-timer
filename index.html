@@ -5012,6 +5012,7 @@ ${html}</body></html>`);
         const [bikeDraft, setBikeDraft] = useState(null);     // feed being edited in Setup
         const [bikeRideCode, setBikeRideCode] = useState(null); // feed the rider is publishing to
         const [bikeRiding, setBikeRiding]     = useState(false);
+        useEffect(() => { bikeRidingRef.current = bikeRiding; }, [bikeRiding]);
         const [bikeGpsStatus, setBikeGpsStatus] = useState("");
         const [bikeLive, setBikeLive]         = useState(null); // rider's own latest frame
         const [bikeElapsedMs, setBikeElapsedMs] = useState(0);
@@ -5095,6 +5096,18 @@ ${html}</body></html>`);
         const bikeStartedAtRef = useRef(null);
         const bikeSensorRef    = useRef({ cadence: null, power: null, hr: null, sensorSpeed: null });
         const bikeRideCodeRef  = useRef(null);
+        // ── Garmin watch as the ride's GPS ──────────────────────────────────────
+        // The Timeathon watch app only knows how to send to a race, so pairing makes
+        // a private one-athlete race (code "W" + the 6 digits) for it to send to;
+        // its fixes are fed into this ride exactly like the phone's own GPS.
+        const [bikeWatchPair, setBikeWatchPairRaw] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("bike-watch-pair") || "null"); } catch(_) { return null; }
+        });
+        const setBikeWatchPair = v => { setBikeWatchPairRaw(v); try { v ? localStorage.setItem("bike-watch-pair", JSON.stringify(v)) : localStorage.removeItem("bike-watch-pair"); } catch(_) {} };
+        const bikeWatchPairRef = useRef(null);
+        const bikeRidingRef = useRef(false);
+        const bikeWatchLastTRef = useRef(null);
+        const [bikeWatchSeen, setBikeWatchSeen] = useState(0);
         const bikeMapRef       = useRef(null);
         const bikeMarkerRef    = useRef(null);
         const bikeTrailLineRef = useRef(null);
@@ -8901,10 +8914,28 @@ ${html}</body></html>`);
             return;
           }
 
+          // ── Garmin watch ─────────────────────────────────────────────────────
+          if (bikeWatchPairRef.current) {
+            const wp = bikeWatchPairRef.current;
+            const t0 = serverNow();
+            rtdb.ref("liveRaces/" + wp.rcode).update({ status: "live", updatedAt: Date.now() }).catch(console.error);
+            rtdb.ref(`watchTokens/${wp.token}/race`).set({ started: true, finished: false, startAt: t0,
+              splits: [t0, t0, 0, 0, 0], dist: [0, 0, 0, 0, 0], unit: ["", "", feed.units === "km" ? "km" : "mi", "", ""] }).catch(console.error);
+            setBikeGpsStatus("Using your Garmin watch's GPS — open Timeathon on the watch and press START.");
+            return;
+          }
+
           // ── Real GPS ─────────────────────────────────────────────────────────
           setBikeGpsStatus("Acquiring GPS signal…");
           bikeGpsWatchRef.current = navigator.geolocation.watchPosition(pos => {
             const { latitude: lat, longitude: lng, heading, speed, altitude, accuracy } = pos.coords;
+            bikeHandleFix(feed.code, lat, lng, { heading, speed, altitude, accuracy });
+          }, err => setBikeGpsStatus("GPS error: " + err.message),
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+        }
+
+        // One GPS fix for the ride, from the phone or a paired watch.
+        function bikeHandleFix(feedCode, lat, lng, { heading = null, speed = null, altitude = null, accuracy = null, fromWatch = false } = {}) {
             const now  = Date.now();
             const prev = bikePrevFixRef.current;
             if (prev) {
@@ -8930,16 +8961,63 @@ ${html}</body></html>`);
               if (dtS > 0.2 && dtS < 30) mps = dM / dtS;
             }
             bikePrevFixRef.current = { lat, lng, t: now };
-            setBikeGpsStatus(`GPS active · ±${Math.round(accuracy || 0)}m`);
-            bikePublishFrame(bikeRideCodeRef.current || feed.code, lat, lng, {
+            setBikeGpsStatus(fromWatch ? "⌚ Watch GPS · route recording" : `GPS active · ±${Math.round(accuracy || 0)}m`);
+            bikePublishFrame(bikeRideCodeRef.current || feedCode, lat, lng, {
               mps,
               hdg: (heading != null && !isNaN(heading)) ? Math.round(heading) : null,
               alt: altitude != null ? Math.round(altitude) : null,
               acc: accuracy != null ? Math.round(accuracy) : null,
             });
-          }, err => setBikeGpsStatus("GPS error: " + err.message),
-          { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
         }
+
+        useEffect(() => { bikeWatchPairRef.current = bikeWatchPair; }, [bikeWatchPair]);
+        async function pairBikeWatch(feed) {
+          if (!currentUser) { alert("Sign in first."); return; }
+          const token = String(Math.floor(100000 + Math.random() * 900000));
+          const rcode = "W" + token;
+          const name = (feed && feed.eventName) || "Bike ride";
+          try {
+            await rtdb.ref("liveRaces/" + rcode).set({
+              code: rcode, kind: "ride", status: "live", publishedBy: currentUser.uid,
+              publisherName: userProfile?.displayName || currentUser.email, raceName: name,
+              segments: SEGMENTS, updatedAt: Date.now(), clockMs: 0, clockRunning: false,
+              athletes: [{ name, started: true, startOffset: 0, finished: false }],
+            });
+            const t0 = serverNow();
+            await rtdb.ref("watchTokens/" + token).set({
+              raceCode: rcode, athIdx: 0, athleteName: name, expiresAt: Date.now() + 12 * 60 * 60 * 1000,
+              race: { started: !!bikeRidingRef.current, finished: false, startAt: bikeRidingRef.current ? t0 : 0,
+                      splits: bikeRidingRef.current ? [t0, t0, 0, 0, 0] : [0, 0, 0, 0, 0],
+                      dist: [0, 0, 0, 0, 0], unit: ["", "", feed && feed.units === "km" ? "km" : "mi", "", ""] },
+            });
+            bikeWatchLastTRef.current = null;
+            setBikeWatchPair({ token, rcode, feedCode: feed ? feed.code : null });
+          } catch (e) { console.error(e); alert("Couldn't set up the watch: " + (e.message || e)); }
+        }
+        function unpairBikeWatch() {
+          const wp = bikeWatchPairRef.current;
+          if (wp) {
+            rtdb.ref("watchTokens/" + wp.token).remove().catch(() => {});
+            rtdb.ref("liveRaces/" + wp.rcode).remove().catch(() => {});
+          }
+          setBikeWatchPair(null);
+        }
+        // The watch's fixes → this ride (only while riding).
+        useEffect(() => {
+          if (!bikeWatchPair) return;
+          const ref = rtdb.ref(`liveRaces/${bikeWatchPair.rcode}/athletes/0/gps`);
+          const fn = snap => {
+            const g = snap.val();
+            if (!g || g.lat == null || g.lng == null) return;
+            const key = `${g.t}|${g.lat}|${g.lng}`;
+            if (bikeWatchLastTRef.current === key) return;
+            bikeWatchLastTRef.current = key;
+            setBikeWatchSeen(Date.now());
+            if (bikeRidingRef.current) bikeHandleFix(bikeRideCodeRef.current, +g.lat, +g.lng, { fromWatch: true });
+          };
+          ref.on("value", fn);
+          return () => ref.off("value", fn);
+        }, [bikeWatchPair && bikeWatchPair.rcode]);
 
         // Snapshot the running ride locally so a refresh — or the browser reloading
         // the tab under memory pressure — can pick tracking straight back up.
@@ -8985,6 +9063,12 @@ ${html}</body></html>`);
               ? { status: "finished", finishedAt: Date.now() }
               : { status: "paused" }
             ).catch(console.error);
+          }
+          if (bikeWatchPairRef.current) {
+            const wp = bikeWatchPairRef.current, t1 = serverNow();
+            rtdb.ref(`watchTokens/${wp.token}/race`).update(finish
+              ? { finished: true, splits: [t1, t1, t1, t1, t1] } : { started: false }).catch(() => {});
+            rtdb.ref("liveRaces/" + wp.rcode + "/status").set("closed").catch(() => {});
           }
           clearBikeSession();   // nothing to auto-resume once stopped or paused
           setBikeRiding(false);
@@ -17986,6 +18070,36 @@ Start a new race anyway?`)) return;
                           ))}
                         </div>
                       </div>
+
+                      {(() => {
+                        const code = (bikeRideCode || "").trim().toUpperCase();
+                        const feed = bikeFeedList.find(f => f.code === code) || (code ? { code } : null);
+                        const live = bikeWatchSeen && Date.now() - bikeWatchSeen < 15000;
+                        return (
+                          <div style={{ ...S.card, borderColor: live ? "#04613F" : "#C9C5BC", marginBottom: 12 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#0B3FCC" }}>⌚ GARMIN WATCH <span style={{ color: "#3D434B", fontWeight: 400, letterSpacing: 0 }}>· optional</span></div>
+                              {bikeWatchPair && (live
+                                ? <span style={{ fontSize: 14, fontWeight: 700, color: "#04613F" }}>● Watch sending</span>
+                                : <span style={{ fontSize: 14, color: "#3D434B" }}>Waiting for watch…</span>)}
+                            </div>
+                            {!bikeWatchPair ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                                <div style={{ flex: 1, minWidth: 180, fontSize: 14, color: "#3D434B" }}>Record the route with your watch's GPS instead of this phone's. Keep the phone with you — the watch sends through Garmin Connect.</div>
+                                <button disabled={!feed} onClick={() => pairBikeWatch(feed)} style={{ ...btnStyle("#0B3FCC", true), padding: "8px 14px", fontSize: 14 }}>Use my Garmin watch</button>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                                <div style={{ flex: 1, minWidth: 180 }}>
+                                  <div style={{ fontFamily: "var(--tm-font)", fontSize: 30, color: "#0B3FCC", lineHeight: 1.1 }}>{bikeWatchPair.token.slice(0, 3)} {bikeWatchPair.token.slice(3)}</div>
+                                  <div style={{ fontSize: 14, color: "#3D434B" }}>On the watch: open Timeathon, hold UP for a new code, type this, then press START. Then tap Start Ride here.</div>
+                                </div>
+                                <button onClick={unpairBikeWatch} style={{ ...btnStyle("#3D434B", true), padding: "6px 12px", fontSize: 14 }}>Stop using watch</button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <div style={{ ...S.row, gap:8, justifyContent:"center", marginBottom:16 }}>
                         {(() => {
