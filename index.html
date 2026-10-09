@@ -2301,14 +2301,15 @@
       const SERVER_CLOCK = { offset: 0 };
       try { rtdb.ref(".info/serverTimeOffset").on("value", sn => { if (!SERVER_CLOCK.synced) SERVER_CLOCK.offset = sn.val() || 0; }); } catch (_) {}
       function serverNow() { return Date.now() + SERVER_CLOCK.offset; }
-      // Watch connection is still being tested: its panels only show on a
-      // device opened once with ?watchbeta=1 (and ?watchbeta=0 hides them again).
+      // Garmin watch panels (the Timeathon app is in the Connect IQ Store).
+      // On for everyone; ?watchbeta=0 hides them on one device if ever needed.
+      const GARMIN_STORE_URL = "https://apps.garmin.com/apps/eb093a47-ab7a-4bbc-99ea-1e8b40b3336a";
       const WATCH_BETA = (() => {
         try {
           const q = new URLSearchParams(location.search);
           if (q.has("watchbeta")) localStorage.setItem("tm-watch-beta", q.get("watchbeta") === "0" ? "0" : "1");
-          return localStorage.getItem("tm-watch-beta") === "1";
-        } catch (_) { return false; }
+          return localStorage.getItem("tm-watch-beta") !== "0";
+        } catch (_) { return true; }
       })();
       // Connection lights. Each side writes a heartbeat (server time) every
       // second; the other side shows green only while the latest heartbeat is
@@ -12373,7 +12374,7 @@ ${html}</body></html>`);
                           })()}
 
                           {/* Garmin watch panel — only when the race uses GPS */}
-                          {WATCH_BETA && ((joinLiveData || joinRace)?.courseMap !== false || asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")) && (() => {
+                          {WATCH_BETA && (() => {
                             const gpsData = joinLiveData?.athletes?.[joinAthIdx]?.gps;
                             const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
                             const curSeg = (() => { const s = splits.findIndex(x => x === null); return s === -1 ? SEGMENTS.length - 1 : s; })();
@@ -12381,7 +12382,7 @@ ${html}</body></html>`);
                               <div style={{ background: "#EFEDE8", borderRadius: 8, padding: "10px 14px", marginBottom: 12, border: `2px solid ${watchConnected ? "#C9C5BC" : "#C9C5BC"}` }}>
                                 {/* Header row */}
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: watchConnected ? 10 : 6 }}>
-                                  <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1.2 }}>⌚ WATCH</div>
+                                  <div style={{ fontSize: 14, color: "#0B3FCC", letterSpacing: 1.2 }}>⌚ GARMIN WATCH <span style={{ color: "#3D434B", letterSpacing: 0 }}>· optional</span></div>
                                   {watchConnected
                                     ? <span style={{ fontSize: 14, color: "#04613F", letterSpacing: 1, animation: "gpsping 1.4s ease-out infinite" }}>● WORKOUT ACTIVE</span>
                                     : watchToken && <span style={{ fontSize: 14, color: "#3D434B" }}>Waiting for watch…</span>}
@@ -12440,7 +12441,7 @@ ${html}</body></html>`);
                                 {/* Pair / token row */}
                                 {!watchToken ? (
                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                    <div style={{ fontSize: 14, color: "#3D434B" }}>Open Timeathon on your watch, press START and type the code.</div>
+                                    <div style={{ fontSize: 14, color: "#3D434B" }}>Racing with a Garmin? Get the free <a href={GARMIN_STORE_URL} target="_blank" rel="noopener" style={{ color: "#0B3FCC" }}>Timeathon watch app</a>, then tap Connect and type the code on your watch. No watch? Nothing to do.</div>
                                     <button onClick={generateWatchToken} disabled={watchTokenLoading}
                                       style={{ ...btnStyle("#0B3FCC", true), padding: "5px 12px", fontSize: 14, flexShrink: 0, marginLeft: 8 }}>
                                       {watchTokenLoading ? "…" : "Connect watch"}
@@ -12645,22 +12646,23 @@ ${html}</body></html>`);
                     )}
                   </div>
 
-                  {/* Watch card (test switch only) */}
+                  {/* Garmin watch card */}
                   <div style={{ display: WATCH_BETA ? "block" : "none", background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>
-                      Watch
+                      Garmin watch (optional)
                     </div>
 
                     {!joinRace || joinAthIdx === null ? (
                       <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "14px" }}>
                         <div style={{ fontSize: 14, color: "#0B0D10", fontWeight: 700, marginBottom: 6 }}>⌚ Garmin Watch</div>
                         <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 12, lineHeight: 1.6 }}>
-                          Garmin watches connect via <strong style={{ color: "#0B3FCC" }}>WiFi</strong> — not Bluetooth.
-                          The watch reads a token from the internet and streams GPS directly to the race.
+                          Install the free <a href={GARMIN_STORE_URL} target="_blank" rel="noopener" style={{ color: "#0B3FCC" }}>Timeathon app</a> from the
+                          Garmin Connect IQ Store. The watch sends its GPS and lap presses through the Garmin Connect app on your phone,
+                          so keep your phone nearby. Racing without a watch works just the same.
                         </div>
                         <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 12, lineHeight: 1.8 }}>
                           To pair:{" "}
-                          <span style={{ color: "#0B0D10" }}>Join tab</span> → enter race code → select your name → token appears here automatically.
+                          <span style={{ color: "#0B0D10" }}>Join</span> → enter the race code → pick your name → tap Connect watch, and type the 6-digit code on your watch.
                         </div>
                         <button onClick={() => setView("join")} style={{ ...btnStyle("#0B3FCC", true), fontSize: 14, padding: "8px 16px" }}>
                           Go to Join Tab →
