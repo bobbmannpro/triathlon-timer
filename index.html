@@ -6736,7 +6736,7 @@ ${html}</body></html>`);
 
         // Save every change to the race being edited: name, code, roster (bibs
         // included), distances, laps, age groups, certificate, map, Auto/Manual.
-        function updateSavedRace() {
+        function updateSavedRace(quiet) {
           if (!loadedRaceId) return;
           const updated = savedRaces.map(r => r.id === loadedRaceId ? {
             ...r, ...raceSnapshot(),
@@ -6748,8 +6748,20 @@ ${html}</body></html>`);
           } : r);
           persistRaces(updated);
           mergeAthletesToLibrary(athletes);
-          setSavedFlash({ text: "Saved all changes", at: Date.now() });
+          if (!quiet) setSavedFlash({ text: "Saved all changes", at: Date.now() });
         }
+        // Edits to a saved race (roster, distances, map, certificate…) save
+        // themselves a moment after the last change, so a reload or a dropped
+        // phone never loses them. Times aren't part of this; they live with the race.
+        const autoSaveRef = useRef(null);
+        useEffect(() => {
+          if (!loadedRaceId || !raceInitialized) { autoSaveRef.current = null; return; }
+          const snap = JSON.stringify({ ...raceSnapshot(), name: saveRaceName });
+          if (!autoSaveRef.current || autoSaveRef.current.id !== loadedRaceId) { autoSaveRef.current = { id: loadedRaceId, snap }; return; }
+          if (autoSaveRef.current.snap === snap) return;
+          const t = setTimeout(() => { autoSaveRef.current = { id: loadedRaceId, snap }; updateSavedRace(true); }, 1500);
+          return () => clearTimeout(t);
+        }, [loadedRaceId, raceInitialized, athletes, ageGroups, courses, units, certConfig, waypoints, raceRoutes, raceListed, autoSplits, courseMapOn, saveRaceName, customRaceCode]);
 
         async function loadRace(race) {
           // Opening a different race lets go of whichever race was live, so its
@@ -13236,7 +13248,7 @@ Start a new race anyway?`)) return;
                 const saveControls = (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {loadedRace ? (<>
-                      <button onClick={updateSavedRace} style={{ ...btnStyle(TM.ink), width: "100%" }}>
+                      <button onClick={() => updateSavedRace()} style={{ ...btnStyle(TM.ink), width: "100%" }}>
                         Save changes to “{(saveRaceName || loadedRace.name || "this race").trim()}”
                       </button>
                       {!saveAsOpen ? (
