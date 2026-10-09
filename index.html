@@ -4407,6 +4407,68 @@ ${html}</body></html>`);
         const fmtRaceDist = (m, leg) => units[leg || "bike"] === "km"
           ? (m / 1000).toFixed(2) + " km"
           : (m / 1609.344).toFixed(2) + " mi";
+
+        // ── Course library ──────────────────────────────────────────────────────
+        // Named courses saved to the host's account — drawn in Setup or recorded
+        // on a bike ride — so a new race can start from one instead of redrawing.
+        // users/{uid}/courseLibrary/{id} = { id, name, savedAt, routes:{swim,bike,run}, waypoints? }
+        const [courseLibrary, setCourseLibrary] = useState([]);
+        const [courseLibMsg, setCourseLibMsg] = useState("");
+        useEffect(() => {
+          if (!currentUser) { setCourseLibrary([]); return; }
+          const ref = rtdb.ref("users/" + currentUser.uid + "/courseLibrary");
+          const fn = snap => setCourseLibrary(Object.values(snap.val() || {}).filter(c => c && c.id).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)));
+          ref.on("value", fn, err => console.warn("course library:", err && err.code));
+          return () => ref.off("value", fn);
+        }, [currentUser]);
+        const libLegSummary = c => RACE_LEGS.filter(([leg]) => c.routes && (c.routes[leg] || []).length > 1)
+          .map(([leg, label]) => `${label} ${fmtRaceDist(raceRouteDist(c.routes[leg]), leg)}`).join(" · ");
+        function saveLibraryCourse(entry) {
+          if (!currentUser) { alert("Sign in to save courses to your account."); return false; }
+          const id = entry.id || ("c" + Date.now());
+          const clean = JSON.parse(JSON.stringify({ ...entry, id, savedAt: Date.now() }));
+          rtdb.ref("users/" + currentUser.uid + "/courseLibrary/" + id).set(clean)
+            .then(() => { setCourseLibMsg(`✓ Saved “${entry.name}” to your courses`); setTimeout(() => setCourseLibMsg(""), 6000); })
+            .catch(e => { console.error(e); setCourseLibMsg("Couldn't save the course — check your connection."); });
+          return true;
+        }
+        function saveRaceCourseToLibrary() {
+          const has = RACE_LEGS.some(([leg]) => (raceRoutes[leg] || []).length > 1);
+          if (!has) { alert("Draw at least one leg on the map first."); return; }
+          const name = (prompt("Name this course (e.g. White Rock Lake sprint):", saveRaceName || "") || "").trim();
+          if (!name) return;
+          saveLibraryCourse({ name, routes: raceRoutes, waypoints: waypoints.filter(w => w.lat != null) });
+        }
+        function useLibraryCourse(c) {
+          const legs = RACE_LEGS.filter(([leg]) => c.routes && (c.routes[leg] || []).length > 1);
+          setRaceRoutes(r => { const n = { ...r }; legs.forEach(([leg]) => { n[leg] = c.routes[leg]; }); return n; });
+          if (c.waypoints && c.waypoints.length && confirm(`Also use the ${c.waypoints.length} split pins saved with “${c.name}”?`)) {
+            const byId = Object.fromEntries(c.waypoints.map(w => [w.id, w]));
+            setWaypoints(ws => ws.map(w => byId[w.id] ? { ...w, lat: byId[w.id].lat, lng: byId[w.id].lng } : w));
+          }
+          // Leg distances follow the course, so paces come out right.
+          setCourses(cs => cs.map((crs, i) => {
+            if (i !== 0) return crs;
+            const n = { ...crs };
+            legs.forEach(([leg]) => {
+              const m = raceRouteDist(c.routes[leg]);
+              if (leg === "swim") n.swimYards = Math.round(units.swim === "meters" ? m : m * 1.09361);
+              if (leg === "bike") n.bikeMiles = +(units.bike === "km" ? m / 1000 : m / 1609.344).toFixed(2);
+              if (leg === "run")  n.runMiles  = +(units.run  === "km" ? m / 1000 : m / 1609.344).toFixed(2);
+            });
+            return n;
+          }));
+          setCourseLibMsg(`✓ Using “${c.name}” — ${libLegSummary(c)}. Leg distances updated.`);
+          setTimeout(() => setCourseLibMsg(""), 7000);
+        }
+        function renameLibraryCourse(c) {
+          const name = (prompt("Rename course:", c.name) || "").trim();
+          if (name && currentUser) rtdb.ref(`users/${currentUser.uid}/courseLibrary/${c.id}/name`).set(name).catch(console.error);
+        }
+        function deleteLibraryCourse(c) {
+          if (currentUser && confirm(`Delete the saved course “${c.name}”? Races already using it keep their map.`))
+            rtdb.ref(`users/${currentUser.uid}/courseLibrary/${c.id}`).remove().catch(console.error);
+        }
         const [joinCode, setJoinCode] = useState("");
         const [joinRace, setJoinRace] = useState(null);
         const [joinAthIdx, setJoinAthIdx] = useState(null);
@@ -13834,6 +13896,28 @@ Start a new race anyway?`)) return;
                         </div>
                       </div>
 
+                      {/* Saved courses: start from one, or save this one for next time */}
+                      <div style={{ border: "2px solid #C9C5BC", borderRadius: 8, padding: "10px 12px", marginBottom: 10, background: "#FFFFFF" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: courseLibrary.length ? 8 : 4 }}>
+                          <span style={{ fontSize: 14, letterSpacing: 1.5, textTransform: "uppercase", color: "#3D434B", fontWeight: 700 }}>📚 Saved courses</span>
+                          <button onClick={saveRaceCourseToLibrary} style={{ ...btnStyle("#04613F", true), padding: "4px 10px", fontSize: 14 }}>💾 Save this course</button>
+                        </div>
+                        {courseLibrary.length === 0 ? (
+                          <div style={{ fontSize: 14, color: "#3D434B" }}>None yet. Draw a course and save it, or record one on a bike ride (Bike ride → End Ride → Save route as a course).</div>
+                        ) : courseLibrary.map(c => (
+                          <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", borderTop: "1px solid #E2DFD8", flexWrap: "wrap" }}>
+                            <div style={{ flex: 1, minWidth: 140 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: "#0B0D10" }}>{c.name}</div>
+                              <div style={{ fontSize: 14, color: "#3D434B" }}>{libLegSummary(c) || "no route"}</div>
+                            </div>
+                            <button onClick={() => useLibraryCourse(c)} style={{ ...btnStyle("#0B3FCC"), minHeight: 36, padding: "0 12px", fontSize: 14 }}>Use</button>
+                            <button onClick={() => renameLibraryCourse(c)} title="Rename" style={{ ...btnStyle("#3D434B", true), minHeight: 36, padding: "0 10px", fontSize: 14 }}>✎</button>
+                            <button onClick={() => deleteLibraryCourse(c)} title="Delete" style={{ ...btnStyle("#B3001B", true), minHeight: 36, padding: "0 10px", fontSize: 14 }}>×</button>
+                          </div>
+                        ))}
+                        {courseLibMsg && <div style={{ fontSize: 14, color: "#04613F", fontWeight: 700, marginTop: 6 }}>{courseLibMsg}</div>}
+                      </div>
+
                       {/* Course drawing — one route per leg so athletes can see the way round */}
                       <div style={{ display:"flex", alignItems:"center", gap:5, flexWrap:"wrap", marginBottom:8 }}>
                         <span style={{ fontSize:14, letterSpacing:1.5, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>Draw course</span>
@@ -17905,6 +17989,26 @@ Start a new race anyway?`)) return;
                               {multi && (
                                 <button onClick={() => begin(true)}
                                   style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 28px" }}>⏭ Resume Tour</button>
+                              )}
+                              {code.length >= 4 && (
+                                <div style={{ width: "100%", textAlign: "center", marginTop: 6 }}>
+                                  <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 6 }}>Rode a course you'll use again? Save the route for building races:</div>
+                                  {["bike", "run"].map(leg => (
+                                    <button key={leg} onClick={async () => {
+                                      try {
+                                        const snap = await rtdb.ref(`bikeFeeds/${code}/track`).once("value");
+                                        const pts = Object.values(snap.val() || {}).filter(p => Array.isArray(p) && p.length >= 2).map(p => [p[0], p[1]]);
+                                        if (pts.length < 2) { alert("No route recorded for this ride yet — start the ride and move a little first."); return; }
+                                        const name = (prompt(`Name this ${leg} course (${fmtRaceDist(raceRouteDist(pts), leg)}):`, feed?.eventName || "") || "").trim();
+                                        if (!name) return;
+                                        saveLibraryCourse({ name, routes: { [leg]: pts } });
+                                      } catch (e) { console.error(e); alert("Couldn't read the ride's route: " + (e.message || e)); }
+                                    }} style={{ ...btnStyle("#04613F", true), margin: "4px", padding: "8px 14px", fontSize: 14 }}>
+                                      💾 Save route as a {leg} course
+                                    </button>
+                                  ))}
+                                  {courseLibMsg && <div style={{ fontSize: 14, color: "#04613F", fontWeight: 700, marginTop: 6 }}>{courseLibMsg}</div>}
+                                </div>
                               )}
                             </div>
                           );
