@@ -84,6 +84,7 @@
       /* Placeholders must never look like something already typed: light, italic,
          plain weight and spacing, whatever the field itself uses. */
       .tm-ride-full .leaflet-top { top: 78px; }
+      .tm-follow-map .leaflet-top.leaflet-left { top: 74px; }
       input::placeholder, textarea::placeholder { color: #9AA0A8; opacity: 1; font-style: italic; font-weight: 400;
                                                   letter-spacing: normal; text-transform: none; }
       input:focus, select:focus, textarea:focus { outline: 3px solid var(--tm-ink); outline-offset: 1px; }
@@ -18557,7 +18558,7 @@ Start a new race anyway?`)) return;
                           </div>
 
                           {/* Map */}
-                          <div style={ bikeFullscreen
+                          <div className="tm-follow-map" style={ bikeFullscreen
                               ? { position:"fixed", inset:0, zIndex:4000, background:"#FFFFFF" }
                               : { position:"relative", marginBottom:12 } }>
                             <div ref={initBikeMap} style={{
@@ -18623,7 +18624,7 @@ Start a new race anyway?`)) return;
                               if (bikeWatchLive && bikeMapRef.current) {
                                 try { bikeMapRef.current.setView([bikeWatchLive.lat, bikeWatchLive.lng], 15, { animate:true }); } catch(_) {}
                               }
-                            }} style={{ position:"absolute", right:10, bottom: bikeStandings.length ? 74 : 10, zIndex:650,
+                            }} style={{ position:"absolute", right:10, bottom: (bikeStandings.length ? 74 : 10) + 50, zIndex:650,
                               background: bikeFollowing ? "#8A5A00" : "#EFEDE8",
                               color: bikeFollowing ? "#FFFFFF" : "#8A5A00",
                               border:"2px solid #8A5A00", borderRadius:6, padding:"6px 12px",
