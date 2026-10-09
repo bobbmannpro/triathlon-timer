@@ -8268,6 +8268,24 @@ ${html}</body></html>`);
           }));
         }
 
+        // Undo an accidental tap: drop the most recent split, so the athlete is back on
+        // that leg and the time since counts toward it again.
+        const [undoArm, setUndoArm] = useState(null);   // athlete index waiting for the confirm tap
+        function undoLastSplit(athleteIdx) {
+          setAthletes(a => a.map((ath, i) => {
+            if (i !== athleteIdx) return ath;
+            let last = -1;
+            ath.splits.forEach((s, si) => { if (s !== null) last = si; });
+            if (last < 0) return ath;
+            const newSplits = [...ath.splits]; newSplits[last] = null;
+            return { ...ath, splits: newSplits, finished: false };
+          }));
+          // a stopped clock (everyone had finished) starts again if they're back on course
+          if (clockStarted && !clockRunning) setClockRunning(true);
+          setUndoArm(null);
+          setEditTarget(null);
+        }
+
         function nextUnloggedSeg(athlete) {
           return athlete.splits.findIndex(s => s === null);
         }
@@ -14919,10 +14937,20 @@ Start a new race anyway?`)) return;
                             <div style={{ marginTop: 8, fontSize: 14, color: "#3D434B" }}>
                               Times are gun times from clock zero. Chip times recalculate automatically.
                             </div>
-                            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                               <button onClick={() => saveEdits(i)} style={{ ...btnStyle("#04613F"), padding: "7px 18px", fontSize: 14 }}>Save</button>
-                              <button onClick={() => setEditTarget(null)} style={{ ...btnStyle("#3D434B", true), padding: "7px 18px", fontSize: 14 }}>Cancel</button>
+                              <button onClick={() => { setUndoArm(null); setEditTarget(null); }} style={{ ...btnStyle("#3D434B", true), padding: "7px 18px", fontSize: 14 }}>Cancel</button>
+                              {(() => {
+                                let last = -1; ath.splits.forEach((sp, si) => { if (sp !== null) last = si; });
+                                if (last < 0) return null;
+                                return undoArm === i
+                                  ? <button onClick={() => undoLastSplit(i)} style={{ ...btnStyle("#B3001B"), padding: "7px 14px", fontSize: 14 }}>Yes, remove {SEGMENTS[last]} split</button>
+                                  : <button onClick={() => setUndoArm(i)} style={{ ...btnStyle("#B3001B", true), padding: "7px 14px", fontSize: 14 }}>↶ Undo last split ({SEGMENTS[last]})</button>;
+                              })()}
                             </div>
+                            {undoArm === i && (
+                              <div style={{ marginTop: 6, fontSize: 14, color: "#B3001B" }}>Puts them back on that leg — its time keeps running from the last real split.</div>
+                            )}
                           </div>
                         )}
                       </div>
