@@ -1,3 +1,5 @@
+import Toybox.Activity;
+import Toybox.ActivityRecording;
 import Toybox.Application;
 import Toybox.Attention;
 import Toybox.Communications;
@@ -5,7 +7,9 @@ import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.Math;
 import Toybox.Position;
+import Toybox.Sensor;
 import Toybox.System;
+import Toybox.UserProfile;
 import Toybox.Timer;
 import Toybox.WatchUi;
 
@@ -18,6 +22,9 @@ import Toybox.WatchUi;
 // The times shown are the race's: from when the host sent this athlete off,
 // and the leg is whatever the race says — the watch only guesses ahead of
 // the race for a few seconds after a LAP press.
+// It also records a normal Garmin activity (cycling for a bike ride, a
+// triathlon with one lap per leg for a race) from the send-off to the finish,
+// so the effort lands in Garmin Connect — and Strava / TrainingPeaks if linked.
 class TrackView extends WatchUi.View {
     var raceCode as String;
     var athIdx;
@@ -48,6 +55,10 @@ class TrackView extends WatchUi.View {
     var tick as Number = 0;
     var localStart as Number = 0;
     var timer as Timer.Timer;
+    // Garmin activity recording
+    var session = null;
+    var isRide as Boolean = false;    // a bike ride ("W" codes) rather than a race
+    var zones = null;                 // heart-rate zone thresholds from the watch's user profile
 
     function initialize() {
         View.initialize();
@@ -56,16 +67,63 @@ class TrackView extends WatchUi.View {
         token = Application.Storage.getValue("token");
         localStart = System.getTimer();
         timer = new Timer.Timer();
+        isRide = raceCode.length() > 0 && raceCode.substring(0, 1).equals("W");
+        try {
+            zones = UserProfile.getHeartRateZones(isRide ? UserProfile.HR_ZONE_SPORT_BIKING : UserProfile.HR_ZONE_SPORT_GENERIC);
+        } catch (e) { zones = null; }
     }
 
     function onShow() as Void {
         Position.enableLocationEvents(Position.LOCATION_CONTINUOUS, method(:onPosition));
+        try { Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE]); } catch (e) { }
         timer.start(method(:onTick), 1000, true);
     }
     function onHide() as Void { timer.stop(); }
     function stop() as Void {
         timer.stop();
+        finishRecording();
         Position.enableLocationEvents(Position.LOCATION_DISABLE, method(:onPosition));
+    }
+
+    // ── Garmin activity ──
+    function startRecording() as Void {
+        if (session != null || !(Toybox has :ActivityRecording)) { return; }
+        try {
+            session = ActivityRecording.createSession(isRide
+                ? { :name => "Timeathon ride", :sport => Activity.SPORT_CYCLING, :subSport => Activity.SUB_SPORT_ROAD }
+                : { :name => "Timeathon tri", :sport => Activity.SPORT_MULTISPORT, :subSport => Activity.SUB_SPORT_GENERIC });
+            session.start();
+        } catch (e) { session = null; }
+    }
+    function finishRecording() as Void {
+        if (session == null) { return; }
+        try {
+            if (session.isRecording()) { session.stop(); }
+            session.save();
+        } catch (e) { }
+        session = null;
+    }
+    // heart rate now, or null
+    function heartRate() {
+        var info = Activity.getActivityInfo();
+        if (info != null && info.currentHeartRate != null) { return info.currentHeartRate; }
+        return null;
+    }
+    // zone 1-5 for a heart rate (0 = below zone 1)
+    function hrZone(hr) as Number {
+        if (zones == null || hr == null || zones.size() < 6) { return 0; }
+        for (var z = 5; z >= 1; z--) {
+            if (hr > zones[z - 1]) { return z; }
+        }
+        return 0;
+    }
+    function zoneColor(z as Number) as Number {
+        if (z == 1) { return 0xAAAAAA; }
+        if (z == 2) { return 0x3D7BFF; }
+        if (z == 3) { return 0x2FC27A; }
+        if (z == 4) { return 0xFF8A3D; }
+        if (z == 5) { return 0xFF4040; }
+        return 0x777777;
     }
 
     // ── time ──
@@ -197,6 +255,8 @@ class TrackView extends WatchUi.View {
             for (var i = 0; i < 5 && i < sp.size(); i++) { out[i] = toMs(sp[i]); }
         }
         splits = out;
+        if (started && raceLeg() < 5) { startRecording(); }
+        if (raceLeg() >= 5 || data.get("finished") == true) { finishRecording(); }
         var ds = data.get("dist"), us = data.get("unit");
         if (ds instanceof Array && us instanceof Array) {
             for (var i = 0; i < 5 && i < ds.size() && i < us.size(); i++) {
@@ -210,12 +270,21 @@ class TrackView extends WatchUi.View {
 
     // LAP: this leg is done.
     function lap() as Void {
+        // On a bike ride LAP is an ordinary Garmin lap; the ride itself ends from the phone.
+        if (isRide) {
+            if (session != null && session.isRecording()) { try { session.addLap(); } catch (e) { } }
+            if (Attention has :vibrate) { Attention.vibrate([new Attention.VibeProfile(60, 200)]); }
+            return;
+        }
         var l = leg();
         if (l >= 5) { return; }
         lapCount++;
         lastPressMs = System.getTimer();
         lapsToSend.add({ "seg" => l, "n" => lapCount, "press" => lastPressMs });
         localLeg = l + 1;
+        if (session != null && session.isRecording() && !isRide) {
+            try { session.addLap(); } catch (e) { }
+        }
         if (Attention has :vibrate) { Attention.vibrate([new Attention.VibeProfile(80, 250)]); }
         WatchUi.requestUpdate();
     }
@@ -227,7 +296,9 @@ class TrackView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
         dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, h * 0.08, Graphics.FONT_XTINY, "Race " + raceCode, Graphics.TEXT_JUSTIFY_CENTER);
+        var ct = System.getClockTime();
+        var hr12 = ct.hour % 12 == 0 ? 12 : ct.hour % 12;
+        dc.drawText(w / 2, h * 0.08, Graphics.FONT_XTINY, hr12.format("%d") + ":" + ct.min.format("%02d") + (session != null ? "  REC" : ""), Graphics.TEXT_JUSTIFY_CENTER);
         var total = null, legTime = null;
         if (raceKnown && started && startAt != null && now != null) {
             total = now - startAt;
@@ -252,7 +323,12 @@ class TrackView extends WatchUi.View {
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h * 0.32, Graphics.FONT_NUMBER_MEDIUM, legTime != null ? Tm.fmt(legTime.toNumber()) : "--:--", Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w / 2, h * 0.53, Graphics.FONT_XTINY, "Race " + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_CENTER);
+            var hrNow = heartRate();
+            var zn = hrZone(hrNow);
+            dc.drawText(w / 2 - 6, h * 0.53, Graphics.FONT_XTINY, (isRide ? "Ride " : "Race ") + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_RIGHT);
+            dc.setColor(zoneColor(zn), Graphics.COLOR_TRANSPARENT);
+            dc.drawText(w / 2 + 6, h * 0.53, Graphics.FONT_XTINY, hrNow != null ? ("HR " + hrNow.format("%d") + (zn > 0 ? " Z" + zn.format("%d") : "")) : "HR --", Graphics.TEXT_JUSTIFY_LEFT);
+            dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
             // distance on this leg: done of the leg's total, what's left, and a ring round the edge
             var u = legUnit[l] as String, goal = legDist[l] as Float;
             var done = inUnit(legMetres(), u.length() > 0 ? u : "mi");
@@ -286,7 +362,7 @@ class TrackView extends WatchUi.View {
         if (lapsToSend.size() > 0) { line = "Sending lap..."; }
         dc.drawText(w / 2, h * 0.76, Graphics.FONT_XTINY, line + (gps ? "  GPS ok" : "  GPS ..."), Graphics.TEXT_JUSTIFY_CENTER);
         dc.setColor(0x777777, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, h * 0.84, Graphics.FONT_XTINY, l < 5 && (!raceKnown || started) ? "LAP = end " + Tm.LEGS[l] : "Hold UP for menu", Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(w / 2, h * 0.84, Graphics.FONT_XTINY, l < 5 && (!raceKnown || started) ? (isRide ? "LAP = lap" : "LAP = end " + Tm.LEGS[l]) : "Hold UP for menu", Graphics.TEXT_JUSTIFY_CENTER);
     }
 }
 
