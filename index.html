@@ -6549,7 +6549,26 @@ ${html}</body></html>`);
           win.document.close();
         }
 
+        // Put this race live for athletes' phones, watches and families.
+        async function goLiveNow() {
+          if (liveRaceCode || livePublishing) return;
+          setLivePublishError("");
+          setLivePublishing(true);
+          const code = (registrationOpen && registrationCode) || customRaceCode || registrationCode || generateRaceCode();
+          const ok = await publishLiveRace(code);
+          setLivePublishing(false);
+          if (ok === true) {
+            setLiveRaceCode(code);
+            forwardOldCode(registrationCode, code);
+            if (loadedRaceId) persistRaces(savedRaces.map(r => r.id === loadedRaceId ? { ...r, code, plannedCode: code } : r));
+          }
+          else { setLivePublishError(String(ok || "Could not go live.")); }
+        }
+
         function startClock() {
+          // Starting the race always shares it — otherwise athletes' phones and
+          // watches sit on "waiting to start" and parents see nothing.
+          if (!liveRaceCode && currentUser) goLiveNow();
           if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
           offsetRef.current = 0;
           setClockMs(0);
@@ -14146,19 +14165,7 @@ Start a new race anyway?`)) return;
                     <div style={{ marginTop: 10 }}>
                       {!liveRaceCode ? (
                         <div>
-                          <button disabled={livePublishing} onClick={async () => {
-                            setLivePublishError("");
-                            setLivePublishing(true);
-                            const code = (registrationOpen && registrationCode) || customRaceCode || registrationCode || generateRaceCode();
-                            const ok = await publishLiveRace(code);
-                            setLivePublishing(false);
-                            if (ok === true) {
-                              setLiveRaceCode(code);
-                              forwardOldCode(registrationCode, code);
-                              if (loadedRaceId) persistRaces(savedRaces.map(r => r.id === loadedRaceId ? { ...r, code, plannedCode: code } : r));
-                            }
-                            else { setLivePublishError(String(ok || "Could not go live.")); }
-                          }} style={{ ...btnStyle("#8A5A00", true), padding: "5px 14px", fontSize: 14, letterSpacing: 1, opacity: livePublishing ? 0.6 : 1 }}>
+                          <button disabled={livePublishing} onClick={goLiveNow} style={{ ...btnStyle("#8A5A00", true), padding: "5px 14px", fontSize: 14, letterSpacing: 1, opacity: livePublishing ? 0.6 : 1 }}>
                             {livePublishing ? "Publishing…" : "📡 Share Live Results"}
                           </button>
                           <button onClick={() => { setEmailKind("watch"); setView("email"); }}
