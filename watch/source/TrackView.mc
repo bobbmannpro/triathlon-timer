@@ -384,9 +384,9 @@ class TrackView extends WatchUi.View {
             drawZoneBar(dc, w / 2, (h * 0.71).toNumber(), (w * 0.56).toNumber());
         } else {
             dc.setColor(Tm.legColor(l), Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w / 2, h * 0.17, Graphics.FONT_MEDIUM, (Tm.LEGS[l] as String).toUpper(), Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawText(w / 2, h * 0.145, Graphics.FONT_MEDIUM, (Tm.LEGS[l] as String).toUpper(), Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w / 2, h * 0.32, Graphics.FONT_NUMBER_MEDIUM, legTime != null ? Tm.fmt(legTime.toNumber()) : "--:--", Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawText(w / 2, h * 0.27, Graphics.FONT_NUMBER_MEDIUM, legTime != null ? Tm.fmt(legTime.toNumber()) : "--:--", Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2 - 6, h * 0.49, Graphics.FONT_XTINY, (isRide ? "Ride " : "Race ") + (total != null ? Tm.fmt(total.toNumber()) : "--:--"), Graphics.TEXT_JUSTIFY_RIGHT);
             drawHr(dc, w / 2 + 6, h * 0.49, Graphics.TEXT_JUSTIFY_LEFT);

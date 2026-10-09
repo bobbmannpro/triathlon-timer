@@ -12820,10 +12820,10 @@ Start a new race anyway?`)) return;
                                 {/* Pair / token row */}
                                 {!watchToken ? (
                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                    <div style={{ fontSize: 14, color: "#3D434B" }}>Racing with a Garmin? Get the free <a href={GARMIN_STORE_URL} target="_blank" rel="noopener" style={{ color: "#0B3FCC" }}>Timeathon watch app</a>, then tap Connect and type the code on your watch. No watch? Nothing to do.</div>
+                                    <a href={GARMIN_STORE_URL} target="_blank" rel="noopener" style={{ fontSize: 14, color: "#0B3FCC" }}>Get the watch app</a>
                                     <button onClick={generateWatchToken} disabled={watchTokenLoading}
                                       style={{ ...btnStyle("#0B3FCC", true), padding: "5px 12px", fontSize: 14, flexShrink: 0, marginLeft: 8 }}>
-                                      {watchTokenLoading ? "…" : "Connect watch"}
+                                      {watchTokenLoading ? "…" : "⌚ Connect Garmin watch"}
                                     </button>
                                   </div>
                                 ) : !watchConnected ? (
@@ -12916,7 +12916,7 @@ Start a new race anyway?`)) return;
 
                     {!btSupported ? (
                       <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "12px 14px", fontSize: 14, color: "#04613F" }}>
-                        Web Bluetooth is not available in this browser. Use Chrome or Edge on HTTPS.
+                        Bluetooth devices need Chrome on Android.
                       </div>
                     ) : (
                       <>
@@ -12925,7 +12925,7 @@ Start a new race anyway?`)) return;
                           disabled={btScanning}
                           style={{ ...btnStyle("#0B3FCC"), width: "100%", padding: "14px", fontSize: 14, letterSpacing: 1, fontFamily: "var(--tm-font)", opacity: btScanning ? 0.6 : 1, cursor: btScanning ? "not-allowed" : "pointer" }}
                         >
-                          {btScanning ? "Scanning…" : "Scan for Bluetooth Devices"}
+                          {btScanning ? "Scanning…" : "+ Connect Bluetooth device"}
                         </button>
 
                         {btDevices.length > 0 && (
@@ -13028,29 +13028,18 @@ Start a new race anyway?`)) return;
                   {/* Garmin watch card */}
                   <div style={{ display: WATCH_BETA ? "block" : "none", background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", padding: "18px 16px", marginBottom: 14 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>
-                      Garmin watch (optional)
+                      Garmin watch
                     </div>
 
                     {!joinRace || joinAthIdx === null ? (
-                      <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "14px" }}>
-                        <div style={{ fontSize: 14, color: "#0B0D10", fontWeight: 700, marginBottom: 6 }}>⌚ Garmin Watch</div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 12, lineHeight: 1.6 }}>
-                          Install the free <a href={GARMIN_STORE_URL} target="_blank" rel="noopener" style={{ color: "#0B3FCC" }}>Timeathon app</a> from the
-                          Garmin Connect IQ Store. The watch sends its GPS and lap presses through the Garmin Connect app on your phone,
-                          so keep your phone nearby. Racing without a watch works just the same.
-                        </div>
-                        <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 12, lineHeight: 1.8 }}>
-                          To pair:{" "}
-                          <span style={{ color: "#0B0D10" }}>Join</span> → enter the race code → pick your name → tap Connect watch, and type the 6-digit code on your watch.
-                        </div>
-                        <button onClick={() => setView("join")} style={{ ...btnStyle("#0B3FCC", true), fontSize: 14, padding: "8px 16px" }}>
-                          Go to Join Tab →
-                        </button>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <button onClick={() => setView("join")} style={{ ...btnStyle("#0B3FCC", true), flex: "1 1 180px" }}>⌚ Connect Garmin watch</button>
+                        <a href={GARMIN_STORE_URL} target="_blank" rel="noopener" style={{ fontSize: 14, color: "#0B3FCC" }}>Get the watch app</a>
                       </div>
                     ) : !watchToken ? (
                       <button onClick={generateWatchToken} disabled={watchTokenLoading || joinGpsActive}
                         style={{ ...btnStyle("#0B3FCC", true), width: "100%", padding: "14px", fontSize: 14, letterSpacing: 1, opacity: (watchTokenLoading || joinGpsActive) ? 0.45 : 1, cursor: (watchTokenLoading || joinGpsActive) ? "not-allowed" : "pointer" }}>
-                        {watchTokenLoading ? "Generating…" : "⌚ Connect watch"}
+                        {watchTokenLoading ? "Generating…" : "⌚ Connect Garmin watch"}
                       </button>
                     ) : (
                       <div style={{ background: "#FFFFFF", border: `2px solid ${watchConnected ? "#04613F" : "#0B3FCC"}`, borderRadius: 8, padding: "16px", textAlign: "center" }}>
@@ -18068,39 +18057,21 @@ Start a new race anyway?`)) return;
 
                       <div style={S.card}>
                         <div style={{ ...S.row, justifyContent:"space-between" }}>
-                          <div style={{ ...S.label, marginBottom:0 }}>Sensors</div>
-                          <button onClick={() => scanBluetooth(false)} disabled={!btSupported || btScanning}
-                            style={{ ...btnStyle("#04613F", true), padding:"5px 11px", fontSize:14,
-                                     opacity: btSupported ? 1 : 0.5, cursor: btSupported ? "pointer" : "not-allowed" }}>
-                            {btScanning ? "Scanning…" : "+ Add sensor"}
+                          <div style={{ ...S.label, marginBottom:0 }}>Devices</div>
+                        </div>
+                        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8 }}>
+                          <button onClick={() => scanBluetooth(true)} disabled={!btSupported || btScanning}
+                            style={{ ...btnStyle("#04613F", true), flex:"1 1 160px", opacity: btSupported ? 1 : 0.5 }}>
+                            {btScanning ? "Scanning…" : "+ Connect Bluetooth device"}
                           </button>
+                          {!bikeWatchPair && (
+                            <button onClick={() => { const c = (bikeRideCode || "").trim().toUpperCase(); pairBikeWatch(bikeFeedList.find(f => f.code === c) || (c ? { code: c } : null)); }}
+                              disabled={!(bikeRideCode || "").trim()}
+                              style={{ ...btnStyle("#0B3FCC", true), flex:"1 1 160px" }}>⌚ Connect Garmin watch</button>
+                          )}
                         </div>
-                        <div style={{ fontSize:14, color:"#3D434B", margin:"6px 0 0", lineHeight:1.55 }}>
-                          Pair the <strong>sensors themselves</strong> — power meter, speed/cadence sensor, heart-rate strap.
-                          A head unit like an ELEMNT or Garmin will not appear here and can't be used: those devices
-                          <em> receive</em> sensor data, they don't rebroadcast it. Pairing the sensors directly gives the
-                          same numbers.
-                        </div>
-                        <div style={{ fontSize:14, color:"#8A5A00", marginTop:8, padding:"8px 10px", background:"#EFEDE8", border:"2px dashed #C9C5BC", borderRadius:6, lineHeight:1.55 }}>
-                          ⚠ A Bluetooth sensor only talks to one device at a time. If a head unit already holds them over
-                          Bluetooth, this phone can't connect. Pair the sensors to the head unit over <strong>ANT+</strong> instead
-                          — it broadcasts to any number of listeners, leaving Bluetooth free for this phone.
-                        </div>
-                        <div style={{ fontSize:14, color:"#3D434B", marginTop:8, lineHeight:1.55 }}>
-                          A <strong>WHOOP</strong> works as the heart-rate source — turn on <em>HR Broadcast</em> in the WHOOP
-                          app under Device Settings. It's Bluetooth only (no ANT+), so it can feed either this phone or a head
-                          unit, not both. Wrist optical readings lag a chest strap on hard or surging efforts, so it's ideal for
-                          testing and fine for a steady ride; use a strap when the number matters.
-                        </div>
-                        <button onClick={() => scanBluetooth(true)} disabled={!btSupported || btScanning}
-                          style={{ ...btnStyle("#0B3FCC", true), padding:"5px 11px", fontSize:14, marginTop:8,
-                                   opacity: btSupported ? 1 : 0.5, cursor: btSupported ? "pointer" : "not-allowed" }}>
-                          Can't see it? Show all nearby devices
-                        </button>
                         {!btSupported && (
-                          <div style={{ fontSize:14, color:"#B3001B", marginTop:8 }}>
-                            This browser has no Web Bluetooth. Use Chrome on Android — position still works without sensors.
-                          </div>
+                          <div style={{ fontSize:14, color:"#3D434B", marginTop:8 }}>Bluetooth devices need Chrome on Android.</div>
                         )}
                         {btDevices.length > 0 && (
                           <div style={{ marginTop:10 }}>
@@ -18125,11 +18096,7 @@ Start a new race anyway?`)) return;
                         <div style={{ ...S.row, justifyContent:"space-between", gap:10 }}>
                           <div style={{ minWidth:0 }}>
                             <div style={{ ...S.label, marginBottom:2 }}>Trainer mode</div>
-                            <div style={{ fontSize:14, color:"#3D434B", lineHeight:1.5 }}>
-                              For indoor testing on a smart trainer. Sensor data stays real — watts,
-                              cadence and speed come off the trainer — and the dot is moved along the
-                              planned route at whatever speed you're actually pedalling.
-                            </div>
+                            <div style={{ fontSize:14, color:"#3D434B", lineHeight:1.5 }}>Indoor ride on a smart trainer.</div>
                           </div>
                           <button onClick={() => { if (!bikeRiding) setBikeSimulate(v => !v); }}
                             disabled={bikeRiding}
@@ -18141,11 +18108,6 @@ Start a new race anyway?`)) return;
                             {bikeSimulate ? "● On" : "Off"}
                           </button>
                         </div>
-                        {bikeSimulate && (
-                          <div style={{ fontSize:14, color:"#0B3FCC", marginTop:8 }}>
-                            Viewers will see a "simulated" badge, so a test ride can't be mistaken for a real one.
-                          </div>
-                        )}
                       </div>
 
                       <div style={{ ...S.card, background: bikeRiding ? "#EFEDE8" : "#EFEDE8" }}>
@@ -18310,6 +18272,7 @@ Start a new race anyway?`)) return;
                         const code = (bikeRideCode || "").trim().toUpperCase();
                         const feed = bikeFeedList.find(f => f.code === code) || (code ? { code } : null);
                         const live = bikeWatchSeen && Date.now() - bikeWatchSeen < 15000;
+                        if (!bikeWatchPair) return null;
                         return (
                           <div style={{ ...S.card, borderColor: live ? "#04613F" : "#C9C5BC", marginBottom: 12 }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
@@ -18327,7 +18290,7 @@ Start a new race anyway?`)) return;
                               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
                                 <div style={{ flex: 1, minWidth: 180 }}>
                                   <div style={{ fontFamily: "var(--tm-font)", fontSize: 30, color: "#0B3FCC", lineHeight: 1.1 }}>{bikeWatchPair.token.slice(0, 3)} {bikeWatchPair.token.slice(3)}</div>
-                                  <div style={{ fontSize: 14, color: "#3D434B" }}>On the watch: open Timeathon, hold UP for a new code, type this, then press START. Then tap Start Ride here.</div>
+                                  <div style={{ fontSize: 14, color: "#3D434B" }}>Type this code in Timeathon on your watch (hold UP for a new code), then press START.</div>
                                 </div>
                                 <button onClick={unpairBikeWatch} style={{ ...btnStyle("#3D434B", true), padding: "6px 12px", fontSize: 14 }}>Stop using watch</button>
                               </div>
@@ -18388,18 +18351,6 @@ Start a new race anyway?`)) return;
                             </div>
                           );
                         })()}
-                      </div>
-
-                      <div style={{ ...S.card, borderColor:"#C9C5BC" }}>
-                        <div style={S.label}>Before setting off</div>
-                        <ul style={{ fontSize:14, color:"#3D434B", lineHeight:1.7, paddingLeft:18, margin:0 }}>
-                          <li>This page must stay open on the phone the rider is carrying — it's the GPS source.</li>
-                          <li>The screen lock is held off automatically, so plug into a battery pack for a long ride.</li>
-                          <li>Position updates about once a second; viewers see a smoothly moving dot.</li>
-                          <li>Losing signal is fine — the trail resumes when data comes back.</li>
-                          <li>Chrome on Android is the most reliable. iOS Safari suspends background tabs and has no Web Bluetooth, so watts and cadence won't work there.</li>
-                          <li>A head unit can keep recording the ride at the same time — it doesn't conflict with this.</li>
-                        </ul>
                       </div>
                     </div>
                   )}
