@@ -4410,7 +4410,7 @@ ${html}</body></html>`);
               <img src="${LOGO_B64}" class="logo" alt="">
               <div>
                 <div class="ttl">${esc(certConfig.eventName || "Race")}</div>
-                <div class="sub">Course Map · Swim · Bike · Run</div>
+                <div class="sub">Course Map · ${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" · ")}</div>
               </div>
             </div>
             <div class="wrap">${svg}</div>
@@ -6619,7 +6619,7 @@ ${html}</body></html>`);
             return `<div class="ag-section"><div class="ag-label">${label}</div><table><thead><tr><th>#</th><th>Athlete</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${rows}</tbody></table></div>`;
           }).join("");
           const win = window.open("", "_blank");
-          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${cfg.eventName}</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'Archivo',Arial,sans-serif;color:#0B0D10;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Archivo',Arial,sans-serif;font-size:32px;letter-spacing:4px;color:#0B0D10;}.subtitle{font-size:14px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;}.dist{font-size:14px;color:#3D434B;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#3D434B;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#0B0D10;color:#EFEDE8;font-size:14px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(3){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:2px solid #eef2f6;}td:nth-child(3){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;margin-bottom:4px;border-left:3px solid #0B3FCC;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${cfg.eventName || "Timeathon Results"}</div><div class="subtitle">Swim &middot; Bike &middot; Run</div></div></div><div class="dist">${raceCourses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${cfg.eventName}</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'Archivo',Arial,sans-serif;color:#0B0D10;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Archivo',Arial,sans-serif;font-size:32px;letter-spacing:4px;color:#0B0D10;}.subtitle{font-size:14px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;}.dist{font-size:14px;color:#3D434B;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#3D434B;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#0B0D10;color:#EFEDE8;font-size:14px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(3){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:2px solid #eef2f6;}td:nth-child(3){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;margin-bottom:4px;border-left:3px solid #0B3FCC;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${cfg.eventName || "Timeathon Results"}</div><div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div></div></div><div class="dist">${raceCourses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
           win.document.close();
         }
 
@@ -8631,7 +8631,7 @@ ${html}</body></html>`);
               <img src="${certConfig.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" />
               <div>
                 <div class="title">${certConfig.eventName || "Timeathon Results"}</div>
-                <div class="subtitle">Swim &middot; Bike &middot; Run</div>
+                <div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div>
               </div>
             </div>
             <div class="dist">${courses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div>
@@ -15115,7 +15115,7 @@ Start a new race anyway?`)) return;
                     <img src={certConfig.customLogoB64 || LOGO_B64} alt="Logo" style={{ height: 44, objectFit: "contain", flexShrink: 0 }} />
                     <div>
                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#0B0D10", lineHeight: 1 }}>{certConfig.eventName || "Timeathon Results"}</div>
-                      <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2, textTransform: "uppercase", marginTop: 2 }}>Swim &middot; Bike &middot; Run</div>
+                      <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1.2, textTransform: "uppercase", marginTop: 2 }}>{LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" · ")}</div>
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
