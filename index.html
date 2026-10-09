@@ -4522,6 +4522,9 @@ ${html}</body></html>`);
         const [joinLiveData, setJoinLiveData] = useState(null);
         const [joinLiveClockMs, setJoinLiveClockMs] = useState(0);
         const joinLiveListenerRef = useRef(null);
+        // True once the race this phone joined has ended or been deleted: stop
+        // writing to it, or a GPS fix or heartbeat recreates a stub nobody can delete.
+        const joinRaceEndedRef = useRef(false);
         const joinMapContainerRef = useRef(null);
         const joinLeafletMapRef = useRef(null);
         const joinLeafletTrailRef = useRef(null);
@@ -4574,7 +4577,7 @@ ${html}</body></html>`);
           const me = roster[joinAthIdx] || {};
           // Every beat says who this is, so a host's "Reset all times" (which
           // clears the node) is repaired within 30 s.
-          const beat = (first) => ref.update(first
+          const beat = (first) => joinRaceEndedRef.current ? Promise.resolve() : ref.update(first
             ? { uid: auth.currentUser.uid, name: me.name || "", at: Date.now(), seen: Date.now() }
             : { uid: auth.currentUser.uid, name: me.name || "", seen: Date.now() }).catch(() => {});
           beat(true);
@@ -5720,6 +5723,9 @@ ${html}</body></html>`);
           const fn = snap => {
             const v = snap.val();
             if (v && v.status === "moved" && v.movedTo) { followMovedJoin(joinRace.code, v.movedTo); return; }
+            const ended = !v || !v.status || v.status === "closed";
+            joinRaceEndedRef.current = ended;
+            if (ended) stopGpsTracking();
             setJoinLiveData(snap.exists() ? { ...v, code: snap.key } : null);
           };
           ref.on("value", fn);
@@ -7803,7 +7809,7 @@ ${html}</body></html>`);
             // Publish both so the organiser can judge which to trust.
             const lapMi = (lapWp && lapWp.lapMi > 0 && laps != null) ? +(laps * lapWp.lapMi).toFixed(3) : null;
 
-            rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`)
+            if (!joinRaceEndedRef.current) rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`)
               .update({ lat, lng, heading, speed,
                      distanceMi: +totalDistMi.toFixed(3),
                      accuracy: accM != null ? Math.round(accM) : null,
