@@ -76,6 +76,7 @@ class TrackView extends WatchUi.View {
     function onShow() as Void {
         Position.enableLocationEvents(Position.LOCATION_CONTINUOUS, method(:onPosition));
         try { Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE]); } catch (e) { }
+        try { Sensor.enableSensorEvents(method(:onSensor)); } catch (e) { }
         timer.start(method(:onTick), 1000, true);
     }
     function onHide() as Void { timer.stop(); }
@@ -83,6 +84,7 @@ class TrackView extends WatchUi.View {
         timer.stop();
         finishRecording();
         Position.enableLocationEvents(Position.LOCATION_DISABLE, method(:onPosition));
+        try { Sensor.enableSensorEvents(null); } catch (e) { }
     }
 
     // ── Garmin activity ──
@@ -104,7 +106,17 @@ class TrackView extends WatchUi.View {
         session = null;
     }
     // heart rate now, or null
+    var sensorHr = null;
+    function onSensor(info as Sensor.Info) as Void {
+        if (info != null && info.heartRate != null) { sensorHr = info.heartRate; }
+    }
+    // heart rate now: the live sensor, else the activity's reading, else null
     function heartRate() {
+        if (sensorHr != null) { return sensorHr; }
+        try {
+            var si = Sensor.getInfo();
+            if (si != null && si.heartRate != null) { return si.heartRate; }
+        } catch (e) { }
         var info = Activity.getActivityInfo();
         if (info != null && info.currentHeartRate != null) { return info.currentHeartRate; }
         return null;
@@ -221,7 +233,7 @@ class TrackView extends WatchUi.View {
         }
         if (tick % 3 == 0 && lat != null) {
             sending = true;
-            patch({ "lat" => lat, "lng" => lng, "distanceMi" => legMetres() / 1609.344, "accuracy" => quality, "seg" => leg(),
+            patch({ "lat" => lat, "lng" => lng, "distanceMi" => legMetres() / 1609.344, "accuracy" => quality, "seg" => leg(), "hr" => heartRate(),
                     "onBike" => leg() == 2, "src" => "watch", "tok" => token, "t" => { ".sv" => "timestamp" } }, method(:onGpsSent));
         } else if (tick % 3 == 0) {
             // no GPS yet: keep letting the race know we're here (and learn the server's clock)

@@ -9070,6 +9070,49 @@ ${html}</body></html>`);
 
         // ── Picture-in-picture (Android Chrome): a small live card of the ride
         // that stays on top while you use music or other apps.
+        // Street-map tiles for the mini window (Esri allows drawing them into a canvas).
+        const pipTileCache = useRef({});
+        function pipTile(z, x, y) {
+          const k = `${z}/${x}/${y}`, c = pipTileCache.current;
+          if (c[k]) return c[k].complete && c[k].naturalWidth ? c[k] : null;
+          const img = new Image(); img.crossOrigin = "anonymous";
+          img.onload = () => bikePipRedraw();
+          img.src = `${ESRI_TILES}/World_Street_Map/MapServer/tile/${z}/${y}/${x}`;
+          c[k] = img;
+          const keys = Object.keys(c); if (keys.length > 80) delete c[keys[0]];
+          return null;
+        }
+        function drawPipMap(ctx, X, Y, MW, MH) {
+          const pts = bikeRideTrailPtsRef.current || [];
+          const me = bikeLiveRef.current && bikeLiveRef.current.lat != null ? [bikeLiveRef.current.lat, bikeLiveRef.current.lng] : pts[pts.length - 1];
+          ctx.fillStyle = "#E5E3DF"; ctx.fillRect(X, Y, MW, MH);
+          if (!me) { ctx.fillStyle = "#3D434B"; ctx.font = "bold 28px Archivo, Arial"; ctx.fillText("Waiting for GPS…", X + 30, Y + MH / 2); return; }
+          const z = 16, n = 256 * Math.pow(2, z);
+          const wx = lng => (lng + 180) / 360 * n;
+          const wy = lat => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n; };
+          const cx = wx(me[1]), cy = wy(me[0]);
+          const left = cx - MW / 2, top = cy - MH / 2;
+          ctx.save(); ctx.beginPath(); ctx.rect(X, Y, MW, MH); ctx.clip();
+          for (let tx = Math.floor(left / 256); tx <= Math.floor((left + MW) / 256); tx++)
+            for (let ty = Math.floor(top / 256); ty <= Math.floor((top + MH) / 256); ty++) {
+              const img = pipTile(z, tx, ty);
+              if (img) ctx.drawImage(img, X + tx * 256 - left, Y + ty * 256 - top);
+            }
+          const P = p => [X + wx(p[1]) - left, Y + wy(p[0]) - top];
+          const course = bikeRideCourse && bikeRideCourse.route;
+          if (course && course.length > 1) {
+            ctx.strokeStyle = "rgba(11,63,204,0.75)"; ctx.lineWidth = 6; ctx.beginPath();
+            course.forEach((p, i) => { const [x, y] = P(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+          }
+          if (pts.length > 1) {
+            ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 7; ctx.lineJoin = "round"; ctx.beginPath();
+            pts.forEach((p, i) => { const [x, y] = P(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+          }
+          const [mx, my] = P(me);
+          ctx.fillStyle = "#FFFFFF"; ctx.beginPath(); ctx.arc(mx, my, 15, 0, 7); ctx.fill();
+          ctx.fillStyle = "#0B3FCC"; ctx.beginPath(); ctx.arc(mx, my, 10, 0, 7); ctx.fill();
+          ctx.restore();
+        }
         function drawBikePip(ctx, W, H) {
           const live = bikeLiveRef.current || {};
           const km = (bikeDraft && bikeDraft.units === "km");
@@ -9079,29 +9122,21 @@ ${html}</body></html>`);
           const clock = (hh ? hh + ":" + String(mm).padStart(2, "0") : mm) + ":" + String(ss).padStart(2, "0");
           const dist = (bikeDistMRef.current || 0) / (km ? 1000 : 1609.344);
           const spd = live.spd != null ? live.spd * (km ? 3.6 : 2.236936) : null;
-          ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 92px Archivo, Arial, sans-serif"; ctx.textBaseline = "top";
-          ctx.fillText(clock, 24, 20);
-          ctx.font = "bold 56px Archivo, Arial, sans-serif"; ctx.fillStyle = "#FF8A3D";
-          ctx.fillText(dist.toFixed(2) + (km ? " km" : " mi"), 24, 130);
-          ctx.fillStyle = "#2FC27A"; ctx.fillText(spd != null ? spd.toFixed(1) + (km ? " km/h" : " mph") : "— " + (km ? "km/h" : "mph"), 24, 200);
-          if (live.hr != null) { ctx.fillStyle = "#FF4040"; ctx.fillText("♥ " + live.hr, 24, 270); }
-          // the route so far
-          const pts = bikeRideTrailPtsRef.current || [];
-          if (pts.length > 1) {
-            let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
-            pts.forEach(p => { a = Math.min(a, p[0]); b = Math.max(b, p[0]); c = Math.min(c, p[1]); d = Math.max(d, p[1]); });
-            const bx = W - 250, by = 30, bw = 220, bh = H - 60, sc = Math.min(bw / Math.max(d - c, 1e-5), bh / Math.max(b - a, 1e-5));
-            ctx.strokeStyle = "#3D7BFF"; ctx.lineWidth = 5; ctx.beginPath();
-            pts.forEach((p, i) => { const x = bx + (p[1] - c) * sc, y = by + (b - p[0]) * sc; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-            ctx.stroke();
-            const l = pts[pts.length - 1]; ctx.fillStyle = "#FFFFFF"; ctx.beginPath(); ctx.arc(bx + (l[1] - c) * sc, by + (b - l[0]) * sc, 9, 0, 7); ctx.fill();
-          }
+          const NW = 330;   // numbers column
+          drawPipMap(ctx, NW, 0, W - NW, H);
+          const hr = live.hr != null ? live.hr : bikeSensorRef.current.hr;
+          ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 76px Archivo, Arial, sans-serif"; ctx.textBaseline = "top";
+          ctx.fillText(clock, 20, 24);
+          ctx.font = "bold 50px Archivo, Arial, sans-serif"; ctx.fillStyle = "#FF8A3D";
+          ctx.fillText(dist.toFixed(2) + (km ? " km" : " mi"), 20, 128);
+          ctx.fillStyle = "#2FC27A"; ctx.fillText(spd != null ? spd.toFixed(1) + (km ? " km/h" : " mph") : "— " + (km ? "km/h" : "mph"), 20, 200);
+          ctx.fillStyle = "#FF5A5A"; ctx.fillText("HR " + (hr != null ? hr : "—"), 20, 272);
         }
         async function startBikePip() {
           try {
             if (!document.pictureInPictureEnabled) { alert("Picture-in-picture isn't available in this browser. On Android, use Chrome."); return; }
             stopBikePip();
-            const W = 960, H = 400;
+            const W = 960, H = 400;   // 2.4 : 1 — numbers left, map right
             const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
             const ctx = canvas.getContext("2d"); drawBikePip(ctx, W, H);
             const video = document.createElement("video");
@@ -9120,6 +9155,8 @@ ${html}</body></html>`);
           try { p.video.srcObject = null; } catch (_) {}
           bikePipRef.current = null;
         }
+        // For checking the mini window's picture without opening one.
+        window.__tmPipPreview = () => { const c = document.createElement("canvas"); c.width = 960; c.height = 400; drawBikePip(c.getContext("2d"), 960, 400); return c.toDataURL("image/png"); };
         // Background tabs throttle timers, so each new fix also redraws the card.
         const bikePipRedraw = () => { const p = bikePipRef.current; if (p) drawBikePip(p.ctx, p.W, p.H); };
 
@@ -9134,6 +9171,7 @@ ${html}</body></html>`);
             if (bikeWatchLastTRef.current === key) return;
             bikeWatchLastTRef.current = key;
             setBikeWatchSeen(Date.now());
+            if (g.hr != null && +g.hr > 0) bikeSensorRef.current.hr = +g.hr;
             if (bikeRidingRef.current) bikeHandleFix(bikeRideCodeRef.current, +g.lat, +g.lng, { fromWatch: true });
           };
           ref.on("value", fn);
@@ -18205,6 +18243,14 @@ Start a new race anyway?`)) return;
                       )}
                       {bikeDoneMsg && !bikeRiding && (
                         <div style={{ ...S.card, borderColor: "#04613F", color: "#04613F", fontWeight: 700, fontSize: 14 }}>{bikeDoneMsg}</div>
+                      )}
+
+                      {bikeRiding && !bikeRideFull && (
+                        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                          <button onClick={() => { setBikeRideFull(true); setTimeout(() => { try { bikeRideMapRef.current?.invalidateSize(); } catch(_) {} }, 150); }}
+                            style={{ ...btnStyle("#0B0D10"), flex: 1, padding: "0 12px" }}>⛶ Full-screen map</button>
+                          <button onClick={startBikePip} style={{ ...btnStyle("#0B3FCC", true), flex: 1, padding: "0 12px" }}>⧉ Mini window</button>
+                        </div>
                       )}
 
                       {/* The rider's own map — where they are, and where they're going.
