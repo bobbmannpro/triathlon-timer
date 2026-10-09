@@ -6641,6 +6641,11 @@ ${html}</body></html>`);
           }
         }
         function pauseClock()  { setClockRunning(false); }
+        // Everyone across the line: stop the clock, so families don't watch it
+        // keep ticking. Resume brings it back if someone's added later.
+        useEffect(() => {
+          if (clockRunning && athletes.length > 0 && athletes.every(a => a.started && a.finished)) setClockRunning(false);
+        }, [athletes, clockRunning]);
         function resumeClock() { setClockRunning(true); }
         // The live race keeps its own copy of the clock, and the sync effects only
         // push while the clock is started — so a reset has to write it explicitly,
@@ -13192,7 +13197,7 @@ Start a new race anyway?`)) return;
                                 {(() => {
                                   const gps = ath.gps || watchLastGpsRef.current[ath.id];
                                   // Lap taps live under gps too; only a phone actually sending GPS counts here.
-                                  if (!gps || !gps.t) return null;
+                                  if (!gps || !gps.t || ath.finished) return null;
                                   const raceCourses = asList(liveRace.courses).length ? asList(liveRace.courses) : (courses || []);
                                   const crs = raceCourses.find(c => c.id === ath.courseId) || raceCourses[0];
                                   if (!["gps", "distance"].includes((crs && crs.bikeType) || "gps")) return null;
