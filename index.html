@@ -6501,7 +6501,11 @@ ${html}</body></html>`);
 
         function autoArchiveRace() {
           if (!athletes.some(a => a.finished)) return;
-          if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
+          // One results entry per race per day: a reload or reopening the race
+          // keeps updating the same entry instead of starting a copy.
+          const raceKey = liveRaceCode || registrationCode || loadedRaceId;
+          if (raceKey) archiveSessionRef.current = `race_${raceKey}_${new Date().toISOString().slice(0, 10)}`;
+          else if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
           const sessionId = archiveSessionRef.current;
           const entry = {
             id: sessionId, name: certConfig.eventName || "Race", date: new Date().toLocaleDateString(),
