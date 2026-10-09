@@ -8190,6 +8190,92 @@ ${html}</body></html>`);
         // advertisement packet. Plenty don't — WHOOP, some straps and trainers — so
         // showAll drops the filters and lists everything nearby. optionalServices is
         // still required either way, or the services can't be read after pairing.
+        // ── Keiser M3i spin bikes ───────────────────────────────────────────────
+        // They don't take connections; the computer broadcasts its numbers in
+        // Bluetooth adverts (manufacturer ID 0x0102) a few times a second.
+        // Layout after the company ID: [0] version major, [1] minor, [2] data type
+        // (0 = live), [3] bike ID, [4-5] cadence ×10, [6-7] HR ×10, [8-9] watts,
+        // [10-11] kcal, [12] minutes, [13] seconds, [14-15] trip distance ×10
+        // (top bit set = km), [16] gear.
+        function parseKeiser(dv) {
+          if (!dv) return null;
+          let o = 0;
+          if (dv.byteLength >= 19 && dv.getUint8(0) === 0x02 && dv.getUint8(1) === 0x01) o = 2;   // company ID left in
+          if (dv.byteLength - o < 16) return null;
+          const raw = dv.getUint16(o + 14, true);
+          const km = !!(raw & 0x8000), dist = (raw & 0x7FFF) / 10;
+          return {
+            version: dv.getUint8(o) + "." + dv.getUint8(o + 1),
+            type: dv.getUint8(o + 2), bikeId: dv.getUint8(o + 3),
+            cadence: Math.round(dv.getUint16(o + 4, true) / 10), hr: Math.round(dv.getUint16(o + 6, true) / 10),
+            power: dv.getUint16(o + 8, true), kcal: dv.getUint16(o + 10, true),
+            elapsedS: dv.getUint8(o + 12) * 60 + dv.getUint8(o + 13),
+            distMi: km ? dist * 0.621371 : dist, km,
+            gear: dv.byteLength - o > 16 ? dv.getUint8(o + 16) : null,
+          };
+        }
+        const [keiserMsg, setKeiserMsg] = useState("");
+        async function connectKeiser() {
+          setKeiserMsg("");
+          if (!btSupported) { setKeiserMsg("Bluetooth needs Chrome on Android."); return; }
+          let device;
+          try {
+            device = await navigator.bluetooth.requestDevice({
+              filters: [{ manufacturerData: [{ companyIdentifier: 0x0102 }] }, { namePrefix: "M3" }],
+              optionalManufacturerData: [0x0102],
+            });
+          } catch (err) {
+            if (err && err.name === "NotFoundError") return;
+            setKeiserMsg("Couldn't search for bikes: " + (err && err.message || err)); return;
+          }
+          if (!device.watchAdvertisements) {
+            setKeiserMsg("This Chrome can't read Keiser bikes yet. Open chrome://flags, turn on “Experimental Web Platform features”, restart Chrome and try again.");
+            return;
+          }
+          const id = "keiser-" + device.id;
+          setBtDevices(prev => prev.some(d => d.id === id) ? prev : [...prev, { id, name: device.name || "Keiser bike", device, keiser: true,
+            gattServer: null, connected: false, lastSeen: 0, readings: {}, hrHistory: [], keiserAcc: 0, keiserBase: null, keiserLast: null }]);
+          device.addEventListener("advertisementreceived", ev => {
+            const dv = ev.manufacturerData && ev.manufacturerData.get(0x0102);
+            const k = parseKeiser(dv);
+            const hex = dv ? Array.from(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength)).map(b => b.toString(16).padStart(2, "0")).join(" ") : "";
+            setBtDevices(prev => prev.map(d => {
+              if (d.id !== id) return d;
+              const r = { ...d.readings, keiserRaw: hex };
+              let acc = d.keiserAcc, base = d.keiserBase, last = d.keiserLast;
+              if (k && k.type === 0) {
+                // Trip distance from when it connected; a reset on the bike keeps the total.
+                if (base == null) base = k.distMi;
+                if (last != null && k.distMi < last - 0.05) { acc += last - base; base = 0; }
+                last = k.distMi;
+                r.trainerDistMi = +Math.max(0, acc + k.distMi - base).toFixed(3);
+                r.cadence = k.cadence; r.power = k.power;
+                if (k.hr > 0) r.heartRate = k.hr;
+                r.keiserBike = k.bikeId; r.gear = k.gear; r.keiserElapsedS = k.elapsedS;
+                bikeSensorRef.current.cadence = k.cadence; bikeSensorRef.current.power = k.power;
+                if (k.hr > 0) bikeSensorRef.current.hr = k.hr;
+                const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
+                if (code != null && idx != null) {
+                  rtdb.ref(`liveRaces/${code}/athletes/${idx}/trainer`)
+                    .set({ distMi: r.trainerDistMi, speed: null, cadence: k.cadence, power: k.power, src: "keiser", bike: k.bikeId, t: Date.now() }).catch(() => {});
+                }
+              } else if (k) {
+                r.keiserReview = true;
+              }
+              return { ...d, connected: true, lastSeen: Date.now(), readings: r, keiserAcc: acc, keiserBase: base, keiserLast: last };
+            }));
+          });
+          try {
+            await device.watchAdvertisements();
+            setKeiserMsg("Listening — pedal so the bike's screen wakes up.");
+          } catch (err) {
+            setKeiserMsg("Couldn't listen to the bike: " + (err && err.message || err) + ". In chrome://flags turn on “Experimental Web Platform features”.");
+          }
+        }
+        // A Keiser bike is "connected" while its broadcasts keep arriving.
+        const keiserLive = d => d.keiser && d.lastSeen && Date.now() - d.lastSeen < 5000;
+        useTicker(btDevices.some(d => d.keiser), 1000);
+
         async function scanBluetooth(showAll) {
           if (!btSupported) return;
           const SERVICES = ["heart_rate", "cycling_speed_and_cadence", "cycling_power",
@@ -12945,6 +13031,8 @@ Start a new race anyway?`)) return;
                         >
                           {btScanning ? "Scanning…" : "+ Connect Bluetooth device"}
                         </button>
+                        <button onClick={connectKeiser} style={{ ...btnStyle("#8A5A00", true), width: "100%", marginTop: 8 }}>🚲 Connect Keiser bike</button>
+                        {keiserMsg && <div style={{ fontSize: 14, color: "#3D434B", marginTop: 6 }}>{keiserMsg}</div>}
 
                         {btDevices.length > 0 && (
                           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -12952,10 +13040,11 @@ Start a new race anyway?`)) return;
                               <div key={dev.id} style={{ background: "#FFFFFF", border: `2px solid ${dev.connected ? "#04613F" : "#3D434B"}`, borderRadius: 8, padding: "14px 14px 10px" }}>
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                    {dev.connected && (
+                                    {(dev.keiser ? keiserLive(dev) : dev.connected) && (
                                       <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#04613F", animation: "gpsping 1.2s ease-in-out infinite" }} />
                                     )}
-                                    <span style={{ fontWeight: 700, fontSize: 14, color: "#0B0D10" }}>{dev.name}</span>
+                                    <span style={{ fontWeight: 700, fontSize: 14, color: "#0B0D10" }}>{dev.name}{dev.keiser && dev.readings.keiserBike != null ? ` · bike #${dev.readings.keiserBike}` : ""}</span>
+                                    {dev.keiser && <span style={{ fontSize: 14, fontWeight: 700, color: keiserLive(dev) ? "#04613F" : "#B3001B" }}>{keiserLive(dev) ? "Receiving" : (dev.lastSeen ? "No signal" : "Waiting…")}</span>}
                                   </div>
                                   <button onClick={() => disconnectBleDevice(dev.id)} style={{ ...btnStyle("#04613F", true), padding: "4px 10px", fontSize: 14 }}>
                                     Disconnect
@@ -13005,6 +13094,9 @@ Start a new race anyway?`)) return;
                                         Reset
                                       </button>
                                     </div>
+                                  )}
+                                  {dev.keiser && dev.readings.keiserRaw && (
+                                    <div style={{ width: "100%", fontSize: 12, color: "#3D434B", fontFamily: "monospace", wordBreak: "break-all" }}>raw: {dev.readings.keiserRaw}</div>
                                   )}
                                   {!dev.connected && Object.keys(dev.readings).filter(k => !["cscRaw", "trainerDistMi"].includes(k)).length === 0 && (
                                     <div style={{ fontSize: 14, color: "#3D434B" }}>Disconnected — no data</div>
@@ -18092,6 +18184,7 @@ Start a new race anyway?`)) return;
                             style={{ ...btnStyle("#04613F", true), flex:"1 1 160px", opacity: btSupported ? 1 : 0.5 }}>
                             {btScanning ? "Scanning…" : "+ Connect Bluetooth device"}
                           </button>
+                          <button onClick={connectKeiser} style={{ ...btnStyle("#8A5A00", true), flex:"1 1 160px" }}>🚲 Connect Keiser bike</button>
                           {!bikeWatchPair && (
                             <button onClick={() => { const c = (bikeRideCode || "").trim().toUpperCase(); pairBikeWatch(bikeFeedList.find(f => f.code === c) || (c ? { code: c } : null)); }}
                               disabled={!(bikeRideCode || "").trim()}
@@ -18101,12 +18194,14 @@ Start a new race anyway?`)) return;
                         {!btSupported && (
                           <div style={{ fontSize:14, color:"#3D434B", marginTop:8 }}>Bluetooth devices need Chrome on Android.</div>
                         )}
+                        {keiserMsg && <div style={{ fontSize:14, color:"#3D434B", marginTop:8 }}>{keiserMsg}</div>}
                         {btDevices.length > 0 && (
                           <div style={{ marginTop:10 }}>
                             {btDevices.map(d => (
                               <div key={d.id} style={{ ...S.row, justifyContent:"space-between", padding:"6px 0", borderTop:"2px solid #C9C5BC" }}>
-                                <span style={{ fontSize:14, color: d.connected ? "#04613F" : "#3D434B" }}>
-                                  {d.connected ? "●" : "○"} {d.name}
+                                <span style={{ fontSize:14, color: (d.keiser ? keiserLive(d) : d.connected) ? "#04613F" : "#B3001B" }}>
+                                  {(d.keiser ? keiserLive(d) : d.connected) ? "●" : "○"} {d.name}{d.keiser && d.readings?.keiserBike != null ? ` #${d.readings.keiserBike}` : ""}
+                                  {d.keiser && d.readings?.trainerDistMi != null ? ` · ${d.readings.trainerDistMi.toFixed(2)} mi` : ""}
                                 </span>
                                 <span style={{ fontSize:14, color:"#3D434B", fontVariantNumeric:"tabular-nums" }}>
                                   {[d.readings?.power != null ? d.readings.power + "W" : null,
