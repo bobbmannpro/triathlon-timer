@@ -10960,7 +10960,7 @@ ${html}</body></html>`);
           }, err => res(err && err.code === 1
               ? { ok: false, msg: "To count laps, allow location for this site — counting is only for people at the race. You can still watch." }
               : { ok: true }),   // no fix (indoors, timeout): don't lock out a parent at the pool
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }));
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }));
         }
         async function startSpectatorCount(race) {
           setLapGeo({ busy: true, msg: "" });
