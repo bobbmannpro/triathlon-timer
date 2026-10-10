@@ -4586,7 +4586,9 @@ ${html}</body></html>`);
           if (auth.currentUser) rtdb.ref("users/" + auth.currentUser.uid + "/keiserNames").set(n).catch(() => {});
           return n;
         });
-        const bikeName = id => { const v = bikeNames[id]; return v ? (/^\d+$/.test(v) ? `Bike ${v}` : v) : `#${id}`; };
+        // Bikes are keyed by their Bluetooth identity, not the console's bike ID —
+        // every console ships with the same ID, so that can't tell them apart.
+        const bikeName = key => { const v = bikeNames[key]; return v ? (/^\d+$/.test(v) ? `Bike ${v}` : v) : `Keiser ${String(key).slice(-4).toUpperCase()}`; };
         const [keiserAssign, setKeiserAssignRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-assign") || "{}"); } catch (_) { return {}; } });
         const setKeiserAssign = fn => setKeiserAssignRaw(prev => { const n = typeof fn === "function" ? fn(prev) : fn; try { localStorage.setItem("keiser-assign", JSON.stringify(n)); } catch (_) {} return n; });
         const [athleteHrData, setAthleteHrData] = useState({});
@@ -8482,7 +8484,7 @@ ${html}</body></html>`);
                 if (k.hr > 0) r.heartRate = k.hr;
                 r.keiserBike = k.bikeId; r.gear = k.gear; r.keiserElapsedS = k.elapsedS;
                 // Bikes connected here show up under 🚲 Pair on the Race screen too.
-                setKeiserBikes(b => ({ ...b, [k.bikeId]: { distMi: k.distMi, cadence: k.cadence, power: k.power, hr: k.hr, seen: Date.now() } }));
+                setKeiserBikes(b => ({ ...b, [device.id]: { bikeId: k.bikeId, distMi: k.distMi, cadence: k.cadence, power: k.power, hr: k.hr, seen: Date.now() } }));
                 bikeSensorRef.current.cadence = k.cadence; bikeSensorRef.current.power = k.power;
                 if (k.hr > 0) bikeSensorRef.current.hr = k.hr;
                 const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
@@ -8507,7 +8509,7 @@ ${html}</body></html>`);
         // One phone at the host table hears all bikes (Web Bluetooth scanning).
         // Each athlete is given a bike number; their distance counts from the
         // moment their bike leg starts, and goes to the race like a trainer's.
-        const [keiserBikes, setKeiserBikes] = useState({});      // bikeId → { distMi, cadence, power, hr, seen }
+        const [keiserBikes, setKeiserBikes] = useState({});      // bike key (Bluetooth id) → { bikeId, distMi, cadence, power, hr, seen }
         const [keiserScan, setKeiserScan] = useState(null);       // "on" | error text | null
         const keiserScanRef = useRef(null);
         const [keiserPairFor, setKeiserPairFor] = useState(null);   // race screen: athlete index choosing a bike
@@ -8526,7 +8528,8 @@ ${html}</body></html>`);
             const onAdv = ev => {
               const k = parseKeiser(ev.manufacturerData && ev.manufacturerData.get(0x0102));
               if (!k || k.type !== 0) return;
-              setKeiserBikes(b => ({ ...b, [k.bikeId]: { distMi: k.distMi, cadence: k.cadence, power: k.power, hr: k.hr, seen: Date.now() } }));
+              const key = (ev.device && ev.device.id) || ("bike" + k.bikeId);
+              setKeiserBikes(b => ({ ...b, [key]: { bikeId: k.bikeId, distMi: k.distMi, cadence: k.cadence, power: k.power, hr: k.hr, seen: Date.now() } }));
             };
             navigator.bluetooth.addEventListener("advertisementreceived", onAdv);
             keiserScanRef.current.onAdv = onAdv;
@@ -8551,7 +8554,7 @@ ${html}</body></html>`);
             b.last = bk.distMi;
             const distMi = +Math.max(0, b.acc + bk.distMi - b.base).toFixed(3);
             rtdb.ref(`liveRaces/${liveRaceCode}/athletes/${i}/trainer`)
-              .set({ distMi, speed: null, cadence: bk.cadence, power: bk.power, src: "keiser", bike: +id, t: Date.now() }).catch(() => {});
+              .set({ distMi, speed: null, cadence: bk.cadence, power: bk.power, src: "keiser", bike: bk.bikeId ?? null, t: Date.now() }).catch(() => {});
           });
         }, [keiserBikes, keiserAssign, athletes, liveRaceCode]);
         useTicker(keiserScan === "on", 1000);
@@ -13459,16 +13462,16 @@ Start a new race anyway?`)) return;
                           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
                             {btDevices.map(dev => dev.keiser ? (() => {
                               // Keiser bikes: just which one is moving, and its name.
-                              const id = dev.readings.keiserBike;
+                              const id = dev.device && dev.device.id;   // this bike's own key
                               const live = keiserLive(dev), ped = live && dev.readings.cadence > 0;
                               return (
                                 <div key={dev.id} style={{ background: "#FFFFFF", border: `2px solid ${ped ? "#04613F" : "#C9C5BC"}`, borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                                   <span aria-hidden="true" style={{ width: 12, height: 12, borderRadius: "50%", flexShrink: 0, background: ped ? "#1FA971" : live ? "#C9C5BC" : "#7A7F87", animation: ped ? "gpsping 1.2s ease-in-out infinite" : "none" }} />
-                                  <span style={{ fontWeight: 800, fontSize: 16, minWidth: 70 }}>{id != null ? bikeName(id) : "Keiser bike"}</span>
+                                  <span style={{ fontWeight: 800, fontSize: 16, minWidth: 70 }}>{id ? bikeName(id) : "Keiser bike"}</span>
                                   <span style={{ fontSize: 15, fontWeight: 700, color: ped ? "#04613F" : TM.inkMuted, flex: "1 1 120px" }}>
                                     {ped ? `${dev.readings.cadence} rpm pedaling` : live ? "stopped" : dev.lastSeen ? "💤 asleep — pedal to wake" : "Waiting… pedal to wake"}
                                   </span>
-                                  {id != null && (
+                                  {id && (
                                     <input key={"nm" + id} defaultValue={bikeNames[id] || ""} placeholder="Bike number" aria-label="Bike number"
                                       onChange={e => setBikeName(id, e.target.value)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                                       style={{ width: 110, minHeight: 40, fontSize: 16, padding: "0 10px", border: "2px solid #C9C5BC", borderRadius: 6 }} />
@@ -15183,7 +15186,7 @@ Start a new race anyway?`)) return;
                   </div>
 
                   {(courses || []).some(c => c.bikeType === "trainer") && (() => {
-                    const ids = Object.keys(keiserBikes).sort((a, b) => (keiserBikes[b].cadence || 0) - (keiserBikes[a].cadence || 0) || +a - +b);
+                    const ids = Object.keys(keiserBikes).sort((a, b) => (keiserBikes[b].cadence || 0) - (keiserBikes[a].cadence || 0) || bikeName(a).localeCompare(bikeName(b)));
                     const live = id => keiserBikes[id] && Date.now() - keiserBikes[id].seen < 5000;
                     return (
                       <div style={{ ...rowStyle(TM.bike), marginBottom: 12, padding: "10px 12px" }}>
@@ -15209,7 +15212,7 @@ Start a new race anyway?`)) return;
                                     style={{ minHeight: 36, fontSize: 15, fontWeight: 700, borderRadius: 6, border: "2px solid #C9C5BC", padding: "0 6px", maxWidth: 170 }}>
                                     <option value="">Bike…</option>
                                     {[...new Set([...(id !== "" ? [String(id)] : []), ...ids])].map(b => (
-                                      <option key={b} value={b}>#{b}{keiserBikes[b] ? ` · ${keiserBikes[b].cadence} rpm` : ""}{Object.entries(keiserAssign).some(([aid, v]) => String(v) === String(b) && aid !== String(ath.id)) ? " (taken)" : ""}</option>
+                                      <option key={b} value={b}>{bikeName(b)}{keiserBikes[b] ? ` · ${keiserBikes[b].cadence} rpm` : ""}{Object.entries(keiserAssign).some(([aid, v]) => String(v) === String(b) && aid !== String(ath.id)) ? " (taken)" : ""}</option>
                                     ))}
                                   </select>
                                 </div>
@@ -15365,14 +15368,14 @@ Start a new race anyway?`)) return;
                               // The bikes connected on the Devices tab, by bike number — awake or not.
                               // Only with none connected does it fall back to the room scan.
                               const devBikes = btDevices.filter(d => d.keiser);
-                              const unheard = devBikes.filter(d => d.readings?.keiserBike == null).length;
+                              const unheard = devBikes.filter(d => !keiserBikes[d.device.id]).length;
                               const now = Date.now();
                               const fresh = b => keiserBikes[b] && now - keiserBikes[b].seen < 8000;
                               const ids = devBikes.length
-                                ? [...new Set(devBikes.map(d => d.readings?.keiserBike).filter(v => v != null).map(String))]
+                                ? devBikes.map(d => d.device.id).filter(k => keiserBikes[k])
                                 : Object.keys(keiserBikes).filter(b => now - keiserBikes[b].seen < 10000);
                               const rank = b => fresh(b) ? (keiserBikes[b].cadence > 0 ? 2000 + keiserBikes[b].cadence : 1000) : 0;
-                              ids.sort((a, b) => rank(b) - rank(a) || +a - +b);
+                              ids.sort((a, b) => rank(b) - rank(a) || bikeName(a).localeCompare(bikeName(b), undefined, { numeric: true }));
                               if (!ids.length && keiserScan && keiserScan !== "on" && !devBikes.length)
                                 return <div style={{ fontSize: 14, color: TM.warn }}>Connect each bike on the Devices tab (🚲 Connect Keiser bike) — connected bikes show up here.</div>;
                               const taken = b => Object.entries(keiserAssign).some(([aid, v]) => String(v) === String(b) && aid !== String(ath.id));
@@ -15402,8 +15405,8 @@ Start a new race anyway?`)) return;
                                         const kb = keiserBikes[b] || {}, ped = fresh(b) && kb.cadence > 0;
                                         return (
                                           <label key={b} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700 }}>
-                                            <span style={{ width: 150, flexShrink: 0 }}>ID {b}{ped ? ` · ${kb.cadence} rpm` : ""}</span>
-                                            <input defaultValue={bikeNames[b] || ""} placeholder="Bike number" onChange={e => setBikeName(b, e.target.value)}
+                                            <span style={{ width: 150, flexShrink: 0 }}>{ped ? `🟢 ${kb.cadence} rpm` : "⚪ not moving"}</span>
+                                            <input key={"pn" + b} defaultValue={bikeNames[b] || ""} placeholder="Bike number" onChange={e => setBikeName(b, e.target.value)}
                                               onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                                               style={{ flex: 1, minWidth: 0, minHeight: 40, fontSize: 16, padding: "0 10px", border: "2px solid #C9C5BC", borderRadius: 6 }} />
                                           </label>
