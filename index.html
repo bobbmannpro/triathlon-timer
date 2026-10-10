@@ -4576,6 +4576,17 @@ ${html}</body></html>`);
         const [athleteGps, setAthleteGps] = useState({});
         const [athleteWatch, setAthleteWatch] = useState({});   // { idx: gps node } for athletes with a paired watch, GPS fix or not
         const [athleteTrainerData, setAthleteTrainerData] = useState({});
+        // Your own names for the bikes ("7", "Front row 3") in place of the console's bike ID.
+        const [bikeNames, setBikeNamesRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-names") || "{}"); } catch (_) { return {}; } });
+        const [namingBikes, setNamingBikes] = useState(false);
+        const setBikeName = (id, name) => setBikeNamesRaw(prev => {
+          const n = { ...prev }; const v = String(name || "").trim().slice(0, 20);
+          if (v) n[id] = v; else delete n[id];
+          try { localStorage.setItem("keiser-names", JSON.stringify(n)); } catch (_) {}
+          if (auth.currentUser) rtdb.ref("users/" + auth.currentUser.uid + "/keiserNames").set(n).catch(() => {});
+          return n;
+        });
+        const bikeName = id => { const v = bikeNames[id]; return v ? (/^\d+$/.test(v) ? `Bike ${v}` : v) : `#${id}`; };
         const [keiserAssign, setKeiserAssignRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-assign") || "{}"); } catch (_) { return {}; } });
         const setKeiserAssign = fn => setKeiserAssignRaw(prev => { const n = typeof fn === "function" ? fn(prev) : fn; try { localStorage.setItem("keiser-assign", JSON.stringify(n)); } catch (_) {} return n; });
         const [athleteHrData, setAthleteHrData] = useState({});
@@ -8426,6 +8437,13 @@ ${html}</body></html>`);
           };
         }
         const [keiserMsg, setKeiserMsg] = useState("");
+        useEffect(() => {
+          if (!currentUser) return;
+          rtdb.ref("users/" + currentUser.uid + "/keiserNames").once("value").then(sn => {
+            const v = sn.val(); if (!v) return;
+            setBikeNamesRaw(prev => { const n = { ...v, ...prev }; try { localStorage.setItem("keiser-names", JSON.stringify(n)); } catch (_) {} return n; });
+          }).catch(() => {});
+        }, [currentUser?.uid]);
         async function connectKeiser() {
           setKeiserMsg("");
           if (!btSupported) { setKeiserMsg("Bluetooth needs Chrome on Android."); return; }
@@ -15309,9 +15327,9 @@ Start a new race anyway?`)) return;
                             const ok = bid != null && bid !== "" && keiserBikes[bid] && Date.now() - keiserBikes[bid].seen < 5000;
                             return (
                               <button onClick={() => { setKeiserPairFor(p => p === i ? null : i); if (!btDevices.some(d => d.keiser) && keiserScan !== "on") startKeiserScan(); }}
-                                title={bid ? `Keiser bike #${bid}` : "Pair a Keiser bike"}
+                                title={bid ? `Keiser ${bikeName(bid)}` : "Pair a Keiser bike"}
                                 style={{ ...btnStyle(TM.bike, keiserPairFor !== i), minHeight: 40, padding: "0 10px", fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                🚲{bid ? ` #${bid}` : " Pair"}
+                                🚲{bid ? ` ${bikeName(bid)}` : " Pair"}
                                 {bid ? <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: "50%", background: ok ? "#1FA971" : "#B3001B" }} /> : null}
                               </button>
                             );
@@ -15352,10 +15370,29 @@ Start a new race anyway?`)) return;
                                         <button key={b} onClick={() => { setKeiserAssign(a => ({ ...a, [ath.id]: b })); setKeiserPairFor(null); }}
                                           style={{ ...btnStyle(TM.bike, String(keiserAssign[ath.id]) !== String(b)), minHeight: 40, padding: "0 12px", fontSize: 15, opacity: taken(b) ? 0.5 : 1 }}>
                                           <span aria-hidden="true" style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", marginRight: 6, background: ped ? "#1FA971" : f ? "#C9C5BC" : "#7A7F87" }} />
-                                          #{b} · {ped ? `${kb.cadence} rpm pedaling` : f ? "stopped" : "💤 asleep"}{taken(b) ? " (taken)" : ""}
+                                          {bikeName(b)} · {ped ? `${kb.cadence} rpm pedaling` : f ? "stopped" : "💤 asleep"}{taken(b) ? " (taken)" : ""}
                                         </button>
                                       );
                                     })}
+                                    {ids.length > 0 && <button onClick={() => setNamingBikes(v => !v)} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>{namingBikes ? "Done naming" : "✎ Name bikes"}</button>}
+                                  </div>
+                                  {namingBikes && ids.length > 0 && (
+                                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                                      <div style={{ fontSize: 14, color: TM.inkMuted }}>Type the number on each bike. Pedal one to see which is which — the moving one says "pedaling".</div>
+                                      {ids.map(b => {
+                                        const kb = keiserBikes[b] || {}, ped = fresh(b) && kb.cadence > 0;
+                                        return (
+                                          <label key={b} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700 }}>
+                                            <span style={{ width: 150, flexShrink: 0 }}>ID {b}{ped ? ` · ${kb.cadence} rpm` : ""}</span>
+                                            <input defaultValue={bikeNames[b] || ""} placeholder="Bike number" onBlur={e => setBikeName(b, e.target.value)}
+                                              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                              style={{ flex: 1, minWidth: 0, minHeight: 40, fontSize: 16, padding: "0 10px", border: "2px solid #C9C5BC", borderRadius: 6 }} />
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                  <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                                     {keiserAssign[ath.id] && <button onClick={() => { setKeiserAssign(a => { const n = { ...a }; delete n[ath.id]; return n; }); setKeiserPairFor(null); }}
                                       style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Unpair</button>}
                                   </div>
@@ -15537,7 +15574,7 @@ Start a new race anyway?`)) return;
                             <div style={{ padding: "0 14px 10px" }}>
                               <div style={{ background: "#FFFFFF", borderRadius: 6, padding: "8px 12px", border: `2px solid ${inBike ? "#8A5A00" : "#C9C5BC"}` }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: (isTrainerCourse && distMi != null) ? 4 : 0 }}>
-                                  <span style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>🚲 {athCourse?.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}{pairedBike != null ? ` #${pairedBike}` : ""}</span>
+                                  <span style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>🚲 {athCourse?.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}{pairedBike != null ? ` · ${bikeName(pairedBike).toUpperCase()}` : ""}</span>
                                   <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#8A5A00", letterSpacing: 1 }}>
                                     {isTrainerCourse
                                       ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData || pairedBike != null ? `0.00 / ${targetMi} mi` : 'No signal'))
@@ -15554,7 +15591,7 @@ Start a new race anyway?`)) return;
                                     ? [tData.speed != null ? `${(tData.speed * 0.621).toFixed(1)} mph` : null, tData.cadence != null ? `${tData.cadence} rpm` : null,
                                        tData.power != null ? `${tData.power}w` : null, isTrainerCourse && pct >= 100 ? '✓ target reached' : null].filter(Boolean).join(' · ')
                                     : pairedBike != null
-                                      ? (inBike ? `Bike #${pairedBike} asleep — pedal to wake it. (Bike button above advances by hand.)` : `Bike #${pairedBike} ready — miles start counting when the bike leg starts.`)
+                                      ? (inBike ? `${bikeName(pairedBike)} asleep — pedal to wake it. (Bike button above advances by hand.)` : `${bikeName(pairedBike)} ready — miles start counting when the bike leg starts.`)
                                       : (inBike ? 'No trainer signal — use Bike button above to advance manually' : 'Waiting for trainer signal…')}
                                 </div>
                               </div>
