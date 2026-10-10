@@ -6753,6 +6753,14 @@ ${html}</body></html>`);
             setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: 0, started: true }));
           }
         }
+        // All at once means everyone is off with the gun — however the clock got
+        // started (Start Race, Start clock, mode switched after) and whenever
+        // someone was added. Chip time counts from 0:00.
+        useEffect(() => {
+          if (raceMode !== "simultaneous" || !clockStarted) return;
+          if (athletes.some(a => !a.started))
+            setAthletes(a => a.map(ath => ath.started ? ath : { ...ath, startOffset: 0, started: true }));
+        }, [raceMode, clockStarted, athletes]);
         function pauseClock()  { setClockRunning(false); }
         // Everyone across the line: stop the clock, so families don't watch it
         // keep ticking. Resume brings it back if someone's added later.
