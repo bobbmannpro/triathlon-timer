@@ -19508,7 +19508,7 @@ Start a new race anyway?`)) return;
                         comp: String(info && info.componentStack || "").slice(0, 800), ua: navigator.userAgent.slice(0, 200) };
           try { localStorage.setItem("tm-last-crash", JSON.stringify(rep)); } catch (_) {}
           // So the developer can see what broke on a real phone.
-          try { if (window.firebase && firebase.auth().currentUser) firebase.database().ref("watchTokens/crash_" + rep.at).set(rep).catch(() => {}); } catch (_) {}
+          try { if (window.firebase && firebase.auth().currentUser) { firebase.database().ref("watchTokens/crash_" + rep.at).set(rep).catch(() => {}); firebase.database().ref("watchTokens/crash_latest").set(rep).catch(() => {}); } } catch (_) {}
         }
         render() {
           if (!this.state.err) return this.props.children;
