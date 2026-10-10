@@ -633,7 +633,8 @@
         if (kindAt(seg) === "bike") return { items: [], avg: full.avg };
         const w = legWindow(a, seg, p.gap);
         const marks = lapMarks(taps, w[0], w[1], p.gap);
-        const dist = marks.length * p.lap, el = marks[marks.length - 1] - a.startOffset;
+        const legStart = seg === 0 ? a.startOffset : a.splits[seg - 1];   // the swim isn't always first
+        const dist = marks.length * p.lap, el = legStart == null ? 0 : marks[marks.length - 1] - legStart;
         return { items: [], avg: dist > 0 && el > 0 ? `Average ${fmtSplit(el / (dist / 100))} per 100 ${unitShort || "yd"}` : "" };
       }
       function legSplitsFull(taps, a, seg, course, unitShort) {
@@ -5485,12 +5486,17 @@ ${html}</body></html>`);
           return () => window.removeEventListener("keydown", handler);
         }, [view, swimView, swimClockStarted, swimHostClickers, swimHostClickerDetecting, swimActiveEvent, swimActiveHeat, swimLiveCode]);
 
+        // At most one push a second — but a change inside that second is sent
+        // when it's up, never dropped (two athletes tapped together both land).
+        const pushLiveRef = useRef(null);
+        pushLiveRef.current = () => { if (liveRaceCode) { liveUpdateThrottleRef.current = Date.now(); updateLiveRace(liveRaceCode); } };
+        const livePushTimerRef = useRef(null);
         useEffect(() => {
           if (!liveRaceCode || !athletes.some(a => a.started)) return;
-          const now = Date.now();
-          if (now - liveUpdateThrottleRef.current < 1000) return;
-          liveUpdateThrottleRef.current = now;
-          updateLiveRace(liveRaceCode);
+          const wait = 1000 - (Date.now() - liveUpdateThrottleRef.current);
+          if (wait <= 0) { clearTimeout(livePushTimerRef.current); livePushTimerRef.current = null; pushLiveRef.current(); return; }
+          if (!livePushTimerRef.current)
+            livePushTimerRef.current = setTimeout(() => { livePushTimerRef.current = null; pushLiveRef.current(); }, wait);
         }, [athletes, liveRaceCode]);
 
         // Keep spectator/athlete clocks in sync independently of athlete state changes
@@ -11666,7 +11672,7 @@ Start a new race anyway?`)) return;
                   if (!a.started) return "Counter shows up when they're sent off";
                   if (a.finished) return "Finished";
                   const nextSeg = a.splits.findIndex(s => s == null);
-                  if (nextSeg === 1 || nextSeg === 3) return `In ${SEGMENTS[nextSeg]} — the ${nextSeg === 1 ? "bike" : "run"} counter comes up next`;
+                  if (nextSeg === 1 || nextSeg === 3) return `In ${SEGMENTS[nextSeg]} — the ${kindAt(nextSeg + 1)} counter comes up next`;
                   return `${SEGMENTS[nextSeg] || "Race"} — not counted by laps`;
                 };
                 return (
