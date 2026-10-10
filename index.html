@@ -4533,6 +4533,8 @@ ${html}</body></html>`);
         const [athleteGps, setAthleteGps] = useState({});
         const [athleteWatch, setAthleteWatch] = useState({});   // { idx: gps node } for athletes with a paired watch, GPS fix or not
         const [athleteTrainerData, setAthleteTrainerData] = useState({});
+        const [keiserAssign, setKeiserAssignRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-assign") || "{}"); } catch (_) { return {}; } });
+        const setKeiserAssign = fn => setKeiserAssignRaw(prev => { const n = typeof fn === "function" ? fn(prev) : fn; try { localStorage.setItem("keiser-assign", JSON.stringify(n)); } catch (_) {} return n; });
         const [athleteHrData, setAthleteHrData] = useState({});
         const athleteGpsListenerRef = useRef(null);
         const lastPushedRef = useRef([]);
@@ -5659,18 +5661,19 @@ ${html}</body></html>`);
             if (bikeStartOf(ath) == null || bikeEndOf(ath) != null) return; // bike not started, or already done
             const athCourse = courses.find(c => c.id === ath.courseId) || courses[0];
             const type = athCourse?.bikeType || "gps";
+            const pairedKeiser = keiserAssign[ath.id] != null && keiserAssign[ath.id] !== "";
             if (type === "gps") return;
-            if (type === "laps" || type === "spin") return;   // finished by the lap/mile taps below
+            if (type === "laps" || (type === "spin" && !pairedKeiser)) return;   // finished by the lap/mile taps below
             const targetMi = parseFloat(athCourse?.bikeMiles) || 0;
             if (targetMi <= 0) return;
             const g = athleteGps[i];
-            const distMi = type === "distance"
+            const distMi = type === "distance" && !pairedKeiser
               ? (g && g.onBike ? g.distanceMi : null)
               : (athleteTrainerData[i] ? athleteTrainerData[i].distMi : (spinMiles[i] ?? null));
             if (distMi == null || distMi < targetMi) return;
             logSplit(i, slotOf("bike"));
           });
-        }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps, autoSplits, spinMiles]);
+        }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps, autoSplits, spinMiles, keiserAssign]);
 
         useEffect(() => {
           if (liveRaceCode) rtdb.ref("liveRaces/" + liveRaceCode + "/autoSplits").set(autoSplits).catch(console.error);
@@ -8330,10 +8333,9 @@ ${html}</body></html>`);
         // Each athlete is given a bike number; their distance counts from the
         // moment their bike leg starts, and goes to the race like a trainer's.
         const [keiserBikes, setKeiserBikes] = useState({});      // bikeId → { distMi, cadence, power, hr, seen }
-        const [keiserAssign, setKeiserAssignRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-assign") || "{}"); } catch (_) { return {}; } });
-        const setKeiserAssign = fn => setKeiserAssignRaw(prev => { const n = typeof fn === "function" ? fn(prev) : fn; try { localStorage.setItem("keiser-assign", JSON.stringify(n)); } catch (_) {} return n; });
         const [keiserScan, setKeiserScan] = useState(null);       // "on" | error text | null
         const keiserScanRef = useRef(null);
+        const [keiserPairFor, setKeiserPairFor] = useState(null);   // race screen: athlete index choosing a bike
         const keiserBaseRef = useRef({});                         // athleteId → { base, last, acc } trip distance at bike start
         async function startKeiserScan() {
           if (!btSupported) { setKeiserScan("Bluetooth needs Chrome on Android."); return; }
@@ -14753,7 +14755,12 @@ Start a new race anyway?`)) return;
                   </div>
                   {!clockStarted && (
                     <div style={{ background: "#EFEDE8", border: `2px solid ${raceMode === "simultaneous" ? "#8A5A00" : "#0B3FCC"}`, borderRadius: 8, padding: "20px", marginBottom: 16, textAlign: "center" }}>
-                      <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#0B0D10", marginBottom: 4 }}>Ready to Race?</div>
+                      <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#0B0D10", marginBottom: 8 }}>Ready to Race?</div>
+                      <div role="radiogroup" aria-label="Start" style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 10 }}>
+                        {[["separate", "One at a time"], ["simultaneous", "All at once"]].map(([m, l]) => (
+                          <button key={m} role="radio" aria-checked={raceMode === m} onClick={() => setRaceMode(m)} style={{ ...segStyle(raceMode === m), flex: "0 1 170px" }}>{l}</button>
+                        ))}
+                      </div>
                       {raceMode === "simultaneous" && (
                         <div style={{ fontSize: 14, color: "#8A5A00", marginBottom: 10, letterSpacing: 1 }}>SIMULTANEOUS START — all athletes go at once</div>
                       )}
@@ -14966,12 +14973,52 @@ Start a new race anyway?`)) return;
                           {!ath.started && clockStarted && (
                             <button onClick={() => sendOff(i)} style={{ ...btnStyle(TM.ink), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Send off</button>
                           )}
+                          {(() => {
+                            const crs = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
+                            if (done || !crs || !["trainer", "spin"].includes(crs.bikeType)) return null;
+                            const bid = keiserAssign[ath.id];
+                            const ok = bid != null && bid !== "" && keiserBikes[bid] && Date.now() - keiserBikes[bid].seen < 5000;
+                            return (
+                              <button onClick={() => { setKeiserPairFor(p => p === i ? null : i); if (keiserScan !== "on") startKeiserScan(); }}
+                                title={bid ? `Keiser bike #${bid}` : "Pair a Keiser bike"}
+                                style={{ ...btnStyle(TM.bike, keiserPairFor !== i), minHeight: 40, padding: "0 10px", fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                🚲{bid ? ` #${bid}` : " Pair"}
+                                {bid ? <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: "50%", background: ok ? "#1FA971" : "#B3001B" }} /> : null}
+                              </button>
+                            );
+                          })()}
                           {ath.started && (
                             <button onClick={() => openEdit(i)} style={{ ...btnStyle(TM.ink, !isEditing), minHeight: 40, padding: "0 10px", fontSize: 15 }}>
                               {isEditing ? "Cancel" : "Edit"}
                             </button>
                           )}
                         </div>
+                        {keiserPairFor === i && (
+                          <div style={{ padding: "8px 14px 12px", borderTop: "2px solid #C9C5BC", background: "#FFFFFF" }}>
+                            {keiserScan && keiserScan !== "on" ? (
+                              <div style={{ fontSize: 14, color: TM.warn }}>{keiserScan}</div>
+                            ) : (() => {
+                              const ids = Object.keys(keiserBikes).filter(b => Date.now() - keiserBikes[b].seen < 10000)
+                                .sort((a, b) => (keiserBikes[b].cadence || 0) - (keiserBikes[a].cadence || 0) || +a - +b);
+                              const taken = b => Object.entries(keiserAssign).some(([aid, v]) => String(v) === String(b) && aid !== String(ath.id));
+                              return (
+                                <>
+                                  <div style={{ fontSize: 14, color: TM.inkMuted, marginBottom: 6 }}>{ids.length ? `Have ${ath.firstName || ath.name || "them"} pedal — their bike jumps to the front. Tap it.` : "Listening for bikes… pedal a bike to wake its screen."}</div>
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                    {ids.map(b => (
+                                      <button key={b} onClick={() => { setKeiserAssign(a => ({ ...a, [ath.id]: b })); setKeiserPairFor(null); }}
+                                        style={{ ...btnStyle(TM.bike, String(keiserAssign[ath.id]) !== String(b)), minHeight: 40, padding: "0 12px", fontSize: 15, opacity: taken(b) ? 0.5 : 1 }}>
+                                        #{b} · {keiserBikes[b].cadence} rpm{taken(b) ? " (taken)" : ""}
+                                      </button>
+                                    ))}
+                                    {keiserAssign[ath.id] && <button onClick={() => { setKeiserAssign(a => { const n = { ...a }; delete n[ath.id]; return n; }); setKeiserPairFor(null); }}
+                                      style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Unpair</button>}
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
 
                         {/* Lap counter for the leg they're on: − on the left, + on the right.
                             Swim, bike and run only — transitions have no counter. */}
