@@ -4579,6 +4579,8 @@ ${html}</body></html>`);
         const [keiserAssign, setKeiserAssignRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-assign") || "{}"); } catch (_) { return {}; } });
         const setKeiserAssign = fn => setKeiserAssignRaw(prev => { const n = typeof fn === "function" ? fn(prev) : fn; try { localStorage.setItem("keiser-assign", JSON.stringify(n)); } catch (_) {} return n; });
         const [athleteHrData, setAthleteHrData] = useState({});
+        const [raceViewers, setRaceViewers] = useState({});   // uid → { name, seen } — spectators watching this race
+        const [viewersOpen, setViewersOpen] = useState(false);
         const athleteGpsListenerRef = useRef(null);
         const lastPushedRef = useRef([]);
         // Which screen is running a live race. Each publish or reopen stamps the
@@ -5664,6 +5666,9 @@ ${html}</body></html>`);
             setAthleteGps(gpsMap);
             setAthleteTrainerData(trainerMap);
             setAthleteHrData(hrMap);
+            // Spectators check in under the first athlete's gps node (the only
+            // place the database lets anyone write during a live race).
+            setRaceViewers((athArr[0] && athArr[0].gps && athArr[0].gps.viewers) || {});
             // Phones log splits themselves (GPS waypoints, GPS-mile and trainer bike
             // finishes). Take any this screen doesn't have yet — unless it was this
             // screen that sent a blank there, which means the host cleared it.
@@ -6648,6 +6653,19 @@ ${html}</body></html>`);
           });
           rtdb.ref("liveRaces/" + code).update(updates).catch(console.error);
         }
+
+        // Watching a live race: check in every 30 s so the host can see who's watching.
+        useEffect(() => {
+          const code = liveRace && liveRace.code;
+          if (view !== "watch" || !code || liveRace.status !== "live" || !auth.currentUser) return;
+          const uid = auth.currentUser.uid;
+          const ref = rtdb.ref(`liveRaces/${code}/athletes/0/gps/viewers/${uid}`);
+          const name = [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(" ") || userProfile?.displayName || "";
+          const beat = () => ref.set({ name, seen: Date.now() }).catch(() => {});
+          beat();
+          const id = setInterval(beat, 30000);
+          return () => { clearInterval(id); ref.remove().catch(() => {}); };
+        }, [view, liveRace?.code, liveRace?.status, currentUser?.uid]);
 
         function watchRace(code) {
           if (!code.trim()) { setLiveRaceError("Enter a race code."); return; }
@@ -10587,6 +10605,29 @@ ${html}</body></html>`);
         const [spectateBusy, setSpectateBusy] = useState(false);
         const [spectateNeedsAccount, setSpectateNeedsAccount] = useState(false);
 
+        // Not signed in: go straight to "Create free account" (the message used to
+        // land below the fold, so the tap looked dead) and open the race after.
+        function askViewerToSignIn(code) {
+          try { localStorage.setItem("tri-pending-watch", code); } catch (_) {}
+          setSpectateNeedsAccount(true);
+          setSpectateError("Create a free account (or sign in) to watch — the race opens right after.");
+          setAuthMode("signup");
+          setSpectatorWantsLogin(true);
+          try { window.scrollTo(0, 0); } catch (_) {}
+        }
+        useEffect(() => {
+          if (!signedIn) return;
+          let code = null;
+          try { code = localStorage.getItem("tri-pending-watch"); localStorage.removeItem("tri-pending-watch"); } catch (_) {}
+          if (!code) return;
+          setSpectatorWantsLogin(false);
+          (async () => {
+            const c2 = await resolveMovedCode(code);
+            const kind = await findRaceKind(c2);
+            if (kind) { setSpectateError(""); setSpectateNeedsAccount(false); openRaceAsViewer(kind, c2); }
+          })();
+        }, [signedIn]);
+
         async function spectateByCode() {
           const c = spectateCode.trim().toUpperCase();
           if (c.length < 4) { setSpectateError("Enter the race code — it's on the start sheet or ask the organiser."); return; }
@@ -10597,8 +10638,7 @@ ${html}</body></html>`);
           setSpectateBusy(false);
           if (!kind) {
             if (!authed) {
-              setSpectateNeedsAccount(true);
-              setSpectateError("Sign in or create a free account to watch and count laps.");
+              askViewerToSignIn(c2);
             } else {
               setSpectateError("No race found with that code. Check it with the organiser.");
             }
@@ -10782,11 +10822,7 @@ ${html}</body></html>`);
           setSpectateCode(r.code); setSpectateError("");
           const authed = await ensureViewerAuth();
           setTodayBusy(null);
-          if (!authed && r.kind !== "bike") {
-            setSpectateNeedsAccount(true);
-            setSpectateError("Sign in or create a free account to watch and count laps.");
-            return;
-          }
+          if (!authed && r.kind !== "bike") { askViewerToSignIn(r.code); return; }
           openRaceAsViewer(r.kind, r.code);
         }
 
@@ -14994,6 +15030,13 @@ Start a new race anyway?`)) return;
                           {/* The code never shrinks below its own width: a long one gets a smaller
                               font, and if it still can't fit, the buttons wrap underneath. */}
                           <span style={{ ...TM_NUM, fontSize: String(liveRaceCode).length > 8 ? 18 : 22, letterSpacing: 0.5, color: TM.ink, flex: "1 0 auto", whiteSpace: "nowrap" }} title="Anyone with this code can follow along">{liveRaceCode}</span>
+                          {(() => {
+                            const watching = Object.values(raceViewers || {}).filter(v => v && Date.now() - (v.seen || 0) < 90000);
+                            return (
+                              <button onClick={() => setViewersOpen(o => !o)} aria-expanded={viewersOpen} title="Spectators watching right now"
+                                style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>👀 {watching.length} watching</button>
+                            );
+                          })()}
                           <span style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
                           <button onClick={() => { setEmailKind("watch"); setView("email"); }} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>✉ Email</button>
                           {/* Stopping deletes the live race for everyone watching — ask first. */}
@@ -15001,6 +15044,16 @@ Start a new race anyway?`)) return;
                             <button onClick={() => setStopLiveConfirm(true)} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 10px", fontSize: 15 }}>Stop</button>
                           ) : null}
                           </span>
+                          {viewersOpen && (() => {
+                            const watching = Object.values(raceViewers || {}).filter(v => v && Date.now() - (v.seen || 0) < 90000)
+                              .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+                            return (
+                              <div style={{ flexBasis: "100%", fontSize: 15, padding: "4px 2px" }}>
+                                {watching.length === 0 ? <span style={{ color: TM.inkMuted }}>Nobody watching right now.</span>
+                                  : watching.map((v, k) => <div key={k} style={{ fontWeight: 700 }}>👀 {v.name || "Spectator"}</div>)}
+                              </div>
+                            );
+                          })()}
                           {directoryBlocked && raceListed && (
                             <div style={{ flexBasis: "100%", fontSize: 14, fontWeight: 700, color: TM.warn }}>
                               Not showing in Today's races yet — Firebase is blocking the list. Share the code instead (or publish the database rules).
