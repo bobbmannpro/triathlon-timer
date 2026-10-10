@@ -12535,7 +12535,8 @@ Start a new race anyway?`)) return;
                                           </select>
                                           <select value={editingAthleteData.ageGroup} onChange={e => setEditingAthleteData(d => ({ ...d, ageGroup: e.target.value }))}
                                             style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "7px 10px", color: "#0B0D10", fontSize: 14, outline: "none", cursor: "pointer", flex: 1 }}>
-                                            {ageGroups.map(ag => <option key={ag} value={ag}>{ag}</option>)}
+                                            {[...new Set([ath.ageGroup, ...((savedRaces.find(r => (r.athletes || []).some(a => a.name.trim().toLowerCase() === ath.key)) || {}).ageGroups || []), ...ageGroups].filter(Boolean))]
+                                              .map(ag => <option key={ag} value={ag}>{ag}</option>)}
                                           </select>
                                           <input type="date" value={editingAthleteData.dob} onChange={e => setEditingAthleteData(d => ({ ...d, dob: e.target.value }))}
                                             style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "7px 8px", color: "#0B0D10", fontSize: 14, outline: "none", colorScheme: "light" }} />
