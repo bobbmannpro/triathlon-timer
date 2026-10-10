@@ -15104,6 +15104,9 @@ Start a new race anyway?`)) return;
                               <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>
                                 {ath.dob && calcAge(ath.dob) !== null ? `Age ${calcAge(ath.dob)}` : ath.ageGroup}
                               </span>
+                              {ath.uid && !(athletePhones[i] && Date.now() - (athletePhones[i].seen || 0) < 90000) && (
+                                <span title="This athlete claimed their name in the app" style={{ fontSize: 14, fontWeight: 800, color: TM.run }}>✓ Claimed</span>
+                              )}
                               {athletePhones[i] && (Date.now() - (athletePhones[i].seen || 0) < 90000
                                 ? <span title="This athlete's phone is linked to the race" style={{ fontSize: 14, fontWeight: 800, color: TM.run }}>📱 Connected</span>
                                 : <span title="Linked earlier; not heard from in the last minute or so" style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>📱 Offline</span>)}
