@@ -8463,6 +8463,8 @@ ${html}</body></html>`);
                 r.cadence = k.cadence; r.power = k.power;
                 if (k.hr > 0) r.heartRate = k.hr;
                 r.keiserBike = k.bikeId; r.gear = k.gear; r.keiserElapsedS = k.elapsedS;
+                // Bikes connected here show up under 🚲 Pair on the Race screen too.
+                setKeiserBikes(b => ({ ...b, [k.bikeId]: { distMi: k.distMi, cadence: k.cadence, power: k.power, hr: k.hr, seen: Date.now() } }));
                 bikeSensorRef.current.cadence = k.cadence; bikeSensorRef.current.power = k.power;
                 if (k.hr > 0) bikeSensorRef.current.hr = k.hr;
                 const code = joinRaceCodeRef.current ?? hostRaceCodeRef.current, idx = joinAthIdxRef.current ?? hostAthIdxRef.current;
@@ -15321,8 +15323,8 @@ Start a new race anyway?`)) return;
                         </div>
                         {keiserPairFor === i && (
                           <div style={{ padding: "8px 14px 12px", borderTop: "2px solid #C9C5BC", background: "#FFFFFF" }}>
-                            {keiserScan && keiserScan !== "on" ? (
-                              <div style={{ fontSize: 14, color: TM.warn }}>{keiserScan}</div>
+                            {keiserScan && keiserScan !== "on" && !Object.keys(keiserBikes).some(b => Date.now() - keiserBikes[b].seen < 10000) ? (
+                              <div style={{ fontSize: 14, color: TM.warn }}>{keiserScan} Or connect each bike on the Devices tab (🚲 Connect Keiser bike) — connected bikes show up here.</div>
                             ) : (() => {
                               const ids = Object.keys(keiserBikes).filter(b => Date.now() - keiserBikes[b].seen < 10000)
                                 .sort((a, b) => (keiserBikes[b].cadence || 0) - (keiserBikes[a].cadence || 0) || +a - +b);
