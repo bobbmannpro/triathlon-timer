@@ -6158,6 +6158,7 @@ ${html}</body></html>`);
                           setLiveRaceCode(code);
                           setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
                           if (ld.legOrder) setLegOrder(legOrderOf(ld.legOrder));
+                          if (ld.raceMode) setRaceMode(ld.raceMode);
                           setRaceInitialized(true);
                           setView("race");
                         } else {
@@ -6494,7 +6495,7 @@ ${html}</body></html>`);
                     logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
             segments: SEGMENTS, updatedAt: Date.now(),
-            courses, units, autoSplits, ageGroups, courseMap: courseMapOn, legOrder,
+            courses, units, autoSplits, ageGroups, courseMap: courseMapOn, legOrder, raceMode,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes
           };
@@ -6520,7 +6521,7 @@ ${html}</body></html>`);
             updatedAt: Date.now(),
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes,
-            units, courses, autoSplits, legOrder,
+            units, courses, autoSplits, legOrder, raceMode,
           };
           athletes.forEach((ath, i) => {
             updates[`athletes/${i}/id`]          = ath.id;
@@ -6821,6 +6822,7 @@ ${html}</body></html>`);
           setOldRaceCodes(race.oldCodes || []);
           if (race.units) setUnits(race.units);
           setLegOrder(legOrderOf(race.legOrder));
+          setRaceMode(race.raceMode === "simultaneous" ? "simultaneous" : "separate");
           if (race.certConfig) setCertConfig(race.certConfig);
           if (race.ageGroups) setAgeGroups(race.ageGroups);
           if (race.waypoints) setWaypoints(race.waypoints.map(wp => ({ ...wp, lat: wp.lat ?? null, lng: wp.lng ?? null })));
@@ -6860,7 +6862,7 @@ ${html}</body></html>`);
         // Everything on the setup screens, as a saved race stores it.
         function raceSnapshot() {
           return {
-            ageGroups, courses, units, certConfig, waypoints, raceRoutes, legOrder,
+            ageGroups, courses, units, certConfig, waypoints, raceRoutes, legOrder, raceMode,
             listed: raceListed, oldCodes: oldRaceCodes, autoSplits, courseMap: courseMapOn,
             plannedCode: customRaceCode || null,
             athletes: athletes.map(a => ({
@@ -6912,7 +6914,7 @@ ${html}</body></html>`);
           if (autoSaveRef.current.snap === snap) return;
           const t = setTimeout(() => { autoSaveRef.current = { id: loadedRaceId, snap }; updateSavedRace(true); }, 1500);
           return () => clearTimeout(t);
-        }, [loadedRaceId, raceInitialized, athletes, ageGroups, courses, units, certConfig, waypoints, raceRoutes, raceListed, autoSplits, courseMapOn, saveRaceName, customRaceCode, legOrder]);
+        }, [loadedRaceId, raceInitialized, athletes, ageGroups, courses, units, certConfig, waypoints, raceRoutes, raceListed, autoSplits, courseMapOn, saveRaceName, customRaceCode, legOrder, raceMode]);
 
         async function loadRace(race) {
           // Opening a different race lets go of whichever race was live, so its
@@ -6930,6 +6932,7 @@ ${html}</body></html>`);
           stopRegListener();
           if (race.units) setUnits(race.units);
           setLegOrder(legOrderOf(race.legOrder));
+          setRaceMode(race.raceMode === "simultaneous" ? "simultaneous" : "separate");
           if (race.certConfig) setCertConfig(race.certConfig);
           const loadedWaypoints = (race.waypoints || DEFAULT_WAYPOINTS).map(wp => ({
             ...wp, lat: wp.lat ?? null, lng: wp.lng ?? null
@@ -6983,6 +6986,7 @@ ${html}</body></html>`);
                   setLiveRaceCode(race.code);
                   setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
                           if (ld.legOrder) setLegOrder(legOrderOf(ld.legOrder));
+                          if (ld.raceMode) setRaceMode(ld.raceMode);
                   // Prefer live athlete state (has splits/started/finished) over saved race state
                   const segs = ld.segments || SEGMENTS;
                   const byName = new Map(asList(race.athletes).map(a => [String(a.name || "").trim().toLowerCase(), a]));
@@ -7499,6 +7503,7 @@ ${html}</body></html>`);
           setAgeGroups(DEFAULT_AGE_GROUPS);
           setCourseMapOn(true);
           setLegOrder(LEG_ORDERS.standard);
+          setRaceMode("separate");
           setCertConfig({ eventName: "Timeathon Race Event", accentColor: "#0B3FCC", orgName: "", customLogoB64: null });
           setRegistrationCode(null);
           setRegistrationOpen(false);
