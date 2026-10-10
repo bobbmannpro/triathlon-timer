@@ -6665,7 +6665,7 @@ ${html}</body></html>`);
           beat();
           const id = setInterval(beat, 30000);
           return () => { clearInterval(id); ref.remove().catch(() => {}); };
-        }, [view, liveRace?.code, liveRace?.status, currentUser?.uid]);
+        }, [view, liveRace?.code, liveRace?.status, currentUser?.uid, userProfile?.firstName, userProfile?.lastName]);
 
         function watchRace(code) {
           if (!code.trim()) { setLiveRaceError("Enter a race code."); return; }
@@ -6954,8 +6954,17 @@ ${html}</body></html>`);
           if (athletes.some(a => !a.uid && lib.has(key(a))))
             setAthletes(prev => prev.map(a => !a.uid && lib.has(key(a)) ? { ...a, uid: lib.get(key(a)) } : a));
           const linked = new Map(athletes.filter(a => a.uid).map(a => [key(a), a.uid]));
-          if (savedAthletes.some(la => !la.uid && linked.has(key(la))))
-            persistSavedAthletes(savedAthletes.map(la => !la.uid && linked.has(key(la)) ? { ...la, uid: linked.get(key(la)) } : la));
+          const mail = new Map(athletes.filter(a => a.email).map(a => [key(a), a.email]));
+          // Claimed names carry their account and email into the athlete library,
+          // so every later race already has them.
+          if (savedAthletes.some(la => (!la.uid && linked.has(key(la))) || (!la.email && mail.has(key(la)))))
+            persistSavedAthletes(savedAthletes.map(la => ({ ...la,
+              uid: la.uid || linked.get(key(la)) || null,
+              email: la.email || mail.get(key(la)) || la.email || "" })));
+          // ...and the library's email fills a roster entry that has none.
+          const libMail = new Map(savedAthletes.filter(a => a.email).map(a => [key(a), a.email]));
+          if (athletes.some(a => !a.email && libMail.has(key(a))))
+            setAthletes(prev => prev.map(a => !a.email && libMail.has(key(a)) ? { ...a, email: libMail.get(key(a)) } : a));
         }, [athletes, savedAthletes]);
 
         // A saved race's settings onto the screens, without touching the live
@@ -10809,7 +10818,12 @@ ${html}</body></html>`);
               .filter(r => r.kind && (r.status === "live" ? now - (r.updatedAt || 0) < 36 * H
                                     : r.status === "registration" ? now - (r.updatedAt || 0) < 21 * 24 * H : false))
               .sort((a, b) => ((a.status === "live" ? 0 : 1) - (b.status === "live" ? 0 : 1)) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
-            setTodayRaces(list);
+            // A bike ride is only "live" while a rider is actually sending: a saved
+            // ride gets re-listed whenever its owner opens the app, so the listing
+            // alone isn't proof. Keep rides heard from in the last 15 minutes.
+            return Promise.all(list.map(r => r.kind !== "bike" ? Promise.resolve(true)
+              : rtdb.ref(`bikeFeeds/${r.code}/live/t`).once("value").then(x => now - (x.val() || 0) < 15 * 60e3).catch(() => false)))
+              .then(keep => { if (live) setTodayRaces(list.filter((_, i) => keep[i])); });
           }).catch(() => { if (live) setTodayRaces([]); });
           load();
           const t = setInterval(load, 60000);
@@ -10912,6 +10926,58 @@ ${html}</body></html>`);
           return out;
         }
         // The race a lap counter is looking at: the host's own, or the one watched.
+        // ── Lap counting only at the race ──
+        // The host's phone marks where the race is; a spectator can count laps only
+        // within ~500 ft of it (watching works from anywhere). No mark, no limit, so
+        // a host without location never locks parents out.
+        const COUNT_RADIUS_M = 152;   // 500 ft
+        const venueSentRef = useRef(null);
+        useEffect(() => {
+          if (!isHost || !liveRaceCode || hostLost || venueSentRef.current === liveRaceCode || !navigator.geolocation) return;
+          venueSentRef.current = liveRaceCode;
+          navigator.geolocation.getCurrentPosition(pos => {
+            const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+            rtdb.ref(`liveRaces/${liveRaceCode}/venue`).set({ lat, lng, acc: Math.round(accuracy || 0), at: Date.now() }).catch(() => {});
+          }, () => {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+        }, [isHost, liveRaceCode, hostLost]);
+        const [lapGeo, setLapGeo] = useState({ busy: false, msg: "" });
+        function distM(a, b) {
+          const R = 6371000, t = x => x * Math.PI / 180;
+          const dLat = t(b.lat - a.lat), dLng = t(b.lng - a.lng);
+          const h = Math.sin(dLat / 2) ** 2 + Math.cos(t(a.lat)) * Math.cos(t(b.lat)) * Math.sin(dLng / 2) ** 2;
+          return 2 * R * Math.asin(Math.sqrt(h));
+        }
+        function atRace(race) {
+          const v = race && race.venue;
+          if (!v || v.lat == null) return Promise.resolve({ ok: true });
+          if (!navigator.geolocation) return Promise.resolve({ ok: false, msg: "This phone can't share its location, so it can't count laps. You can still watch." });
+          return new Promise(res => navigator.geolocation.getCurrentPosition(pos => {
+            const here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            const slack = Math.min(150, pos.coords.accuracy || 0);   // indoor GPS is fuzzy
+            const d = distM(here, v) - slack - Math.min(150, v.acc || 0);
+            res(d <= COUNT_RADIUS_M ? { ok: true }
+              : { ok: false, msg: `Counting laps is only for people at the race — you're about ${Math.round(distM(here, v) * 3.281 / 5280 * 10) / 10 || "<0.1"} miles away. You can still watch from anywhere.` });
+          }, err => res(err && err.code === 1
+              ? { ok: false, msg: "To count laps, allow location for this site — counting is only for people at the race. You can still watch." }
+              : { ok: true }),   // no fix (indoors, timeout): don't lock out a parent at the pool
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }));
+        }
+        async function startSpectatorCount(race) {
+          setLapGeo({ busy: true, msg: "" });
+          const r = await atRace(race);
+          setLapGeo({ busy: false, msg: r.ok ? "" : r.msg });
+          if (r.ok) { setLapCountCode(race.code); setView("lapcount"); }
+        }
+        // While counting, check again every few minutes (spectators only).
+        useEffect(() => {
+          if (view !== "lapcount" || !liveRace || liveRace.code !== lapCountCode || isHost || isAthlete) return;
+          const id = setInterval(async () => {
+            const r = await atRace(liveRace);
+            if (!r.ok) { setLapGeo({ busy: false, msg: r.msg }); setView("watch"); }
+          }, 4 * 60000);
+          return () => clearInterval(id);
+        }, [view, lapCountCode, liveRace?.code, liveRace?.venue?.lat]);
+
         function lapRaceData() {
           if (isHost && liveRaceCode) {
             return { code: liveRaceCode, athletes, courses, units, ageGroups, clock: () => raceNow(), name: raceTitle };
@@ -13690,8 +13756,12 @@ Start a new race anyway?`)) return;
                 return (
                   <div style={{ paddingTop: 8 }}>
                     {liveRace && liveRace.status === "live" && (
-                      <button onClick={() => { setLapCountCode(liveRace.code); setView("lapcount"); }}
-                        style={{ ...btnStyle(TM.ink), width: "100%", marginBottom: 14 }}>Count laps for an athlete →</button>
+                      <>
+                        <button onClick={() => startSpectatorCount(liveRace)} disabled={lapGeo.busy}
+                          style={{ ...btnStyle(TM.ink), width: "100%", marginBottom: lapGeo.msg ? 8 : 14, opacity: lapGeo.busy ? 0.6 : 1 }}>
+                          {lapGeo.busy ? "Checking you're at the race…" : "Count laps for an athlete →"}</button>
+                        {lapGeo.msg && <div role="alert" style={{ fontSize: 15, fontWeight: 700, color: TM.ink, background: TM.bgAlt, borderLeft: `8px solid ${TM.warn}`, padding: "10px 12px", marginBottom: 14 }}>{lapGeo.msg}</div>}
+                      </>
                     )}
                     {!liveRace ? (
                       <div style={{ maxWidth: 400, margin: "0 auto" }}>
