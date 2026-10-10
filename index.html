@@ -8325,6 +8325,59 @@ ${html}</body></html>`);
             setKeiserMsg("Couldn't listen to the bike: " + (err && err.message || err) + ". In chrome://flags turn on “Experimental Web Platform features”.");
           }
         }
+        // ── Host: every Keiser bike in the room, by bike ID ──
+        // One phone at the host table hears all bikes (Web Bluetooth scanning).
+        // Each athlete is given a bike number; their distance counts from the
+        // moment their bike leg starts, and goes to the race like a trainer's.
+        const [keiserBikes, setKeiserBikes] = useState({});      // bikeId → { distMi, cadence, power, hr, seen }
+        const [keiserAssign, setKeiserAssignRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-assign") || "{}"); } catch (_) { return {}; } });
+        const setKeiserAssign = fn => setKeiserAssignRaw(prev => { const n = typeof fn === "function" ? fn(prev) : fn; try { localStorage.setItem("keiser-assign", JSON.stringify(n)); } catch (_) {} return n; });
+        const [keiserScan, setKeiserScan] = useState(null);       // "on" | error text | null
+        const keiserScanRef = useRef(null);
+        const keiserBaseRef = useRef({});                         // athleteId → { base, last, acc } trip distance at bike start
+        async function startKeiserScan() {
+          if (!btSupported) { setKeiserScan("Bluetooth needs Chrome on Android."); return; }
+          if (!navigator.bluetooth.requestLEScan) {
+            setKeiserScan("This Chrome can't scan for bikes yet. Open chrome://flags, turn on “Experimental Web Platform features”, restart Chrome and try again.");
+            return;
+          }
+          try {
+            const scan = await navigator.bluetooth.requestLEScan({ filters: [{ manufacturerData: [{ companyIdentifier: 0x0102 }] }], keepRepeatedDevices: true });
+            keiserScanRef.current = scan;
+            setKeiserScan("on");
+            const onAdv = ev => {
+              const k = parseKeiser(ev.manufacturerData && ev.manufacturerData.get(0x0102));
+              if (!k || k.type !== 0) return;
+              setKeiserBikes(b => ({ ...b, [k.bikeId]: { distMi: k.distMi, cadence: k.cadence, power: k.power, hr: k.hr, seen: Date.now() } }));
+            };
+            navigator.bluetooth.addEventListener("advertisementreceived", onAdv);
+            keiserScanRef.current.onAdv = onAdv;
+          } catch (err) { setKeiserScan("Couldn't scan for bikes: " + (err && err.message || err)); }
+        }
+        function stopKeiserScan() {
+          const sc = keiserScanRef.current;
+          if (sc) { try { sc.stop(); } catch (_) {} if (sc.onAdv) navigator.bluetooth.removeEventListener("advertisementreceived", sc.onAdv); }
+          keiserScanRef.current = null; setKeiserScan(null);
+        }
+        // Assigned bikes → each athlete's trainer distance on the live race.
+        useEffect(() => {
+          if (!liveRaceCode) return;
+          athletes.forEach((ath, i) => {
+            const id = keiserAssign[ath.id]; if (id == null || id === "") return;
+            const bk = keiserBikes[id]; if (!bk) return;
+            const start = bikeStartOf(ath);
+            if (start == null || bikeEndOf(ath) != null) { delete keiserBaseRef.current[ath.id]; return; }
+            let b = keiserBaseRef.current[ath.id];
+            if (!b) b = keiserBaseRef.current[ath.id] = { base: bk.distMi, last: bk.distMi, acc: 0 };
+            if (bk.distMi < b.last - 0.05) { b.acc += b.last - b.base; b.base = 0; }   // the bike's trip reset
+            b.last = bk.distMi;
+            const distMi = +Math.max(0, b.acc + bk.distMi - b.base).toFixed(3);
+            rtdb.ref(`liveRaces/${liveRaceCode}/athletes/${i}/trainer`)
+              .set({ distMi, speed: null, cadence: bk.cadence, power: bk.power, src: "keiser", bike: +id, t: Date.now() }).catch(() => {});
+          });
+        }, [keiserBikes, keiserAssign, athletes, liveRaceCode]);
+        useTicker(keiserScan === "on", 1000);
+
         // A Keiser bike is "connected" while its broadcasts keep arriving.
         const keiserLive = d => d.keiser && d.lastSeen && Date.now() - d.lastSeen < 5000;
         useTicker(btDevices.some(d => d.keiser), 1000);
@@ -14758,6 +14811,45 @@ Start a new race anyway?`)) return;
                       )}
                     </div>
                   </div>
+
+                  {(courses || []).some(c => c.bikeType === "trainer") && (() => {
+                    const ids = Object.keys(keiserBikes).sort((a, b) => (keiserBikes[b].cadence || 0) - (keiserBikes[a].cadence || 0) || +a - +b);
+                    const live = id => keiserBikes[id] && Date.now() - keiserBikes[id].seen < 5000;
+                    return (
+                      <div style={{ ...rowStyle(TM.bike), marginBottom: 12, padding: "10px 12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                          <div style={{ fontSize: 15, fontWeight: 800 }}>🚲 Keiser bikes {keiserScan === "on" ? `· hearing ${ids.filter(live).length}` : ""}</div>
+                          {keiserScan === "on"
+                            ? <button onClick={stopKeiserScan} style={{ ...btnStyle(TM.ink, true), minHeight: 36, padding: "0 12px", fontSize: 14 }}>Stop listening</button>
+                            : <button onClick={startKeiserScan} style={{ ...btnStyle(TM.bike), minHeight: 36, padding: "0 12px", fontSize: 14 }}>Listen for bikes</button>}
+                        </div>
+                        {keiserScan && keiserScan !== "on" && <div style={{ fontSize: 14, color: TM.warn, marginTop: 6 }}>{keiserScan}</div>}
+                        {keiserScan === "on" && (
+                          <>
+                            <div style={{ fontSize: 14, color: TM.inkMuted, margin: "6px 0" }}>Have the rider pedal — their bike jumps to the top with a cadence. Pick it next to their name.</div>
+                            {athletes.map((ath, i) => {
+                              const id = keiserAssign[ath.id] ?? "";
+                              const ok = id !== "" && live(id);
+                              return (
+                                <div key={ath.id ?? i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderTop: "1px solid #E2DFD8" }}>
+                                  <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: ok ? "#1FA971" : id !== "" ? "#B3001B" : "#C9C5BC" }} />
+                                  <span style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ath.name || `#${i + 1}`}</span>
+                                  {id !== "" && keiserBikes[id] && <span style={{ fontSize: 14, color: TM.inkMuted, fontVariantNumeric: "tabular-nums" }}>{keiserBikes[id].cadence} rpm</span>}
+                                  <select value={id} onChange={e => setKeiserAssign(a => ({ ...a, [ath.id]: e.target.value }))}
+                                    style={{ minHeight: 36, fontSize: 15, fontWeight: 700, borderRadius: 6, border: "2px solid #C9C5BC", padding: "0 6px", maxWidth: 170 }}>
+                                    <option value="">Bike…</option>
+                                    {[...new Set([...(id !== "" ? [String(id)] : []), ...ids])].map(b => (
+                                      <option key={b} value={b}>#{b}{keiserBikes[b] ? ` · ${keiserBikes[b].cadence} rpm` : ""}{Object.entries(keiserAssign).some(([aid, v]) => String(v) === String(b) && aid !== String(ath.id)) ? " (taken)" : ""}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* One glance answers "is everyone's phone still sending?" — the
                       question you can't check by reading eight rows mid-race. */}
