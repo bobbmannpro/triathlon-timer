@@ -756,7 +756,7 @@
                   <span style={{ fontWeight: 900, fontSize: 17, letterSpacing: 0.5 }}>{f.label}</span>
                   <span style={{ fontSize: 14, fontWeight: 700 }}>Live standings</span>
                 </div>
-                {f.rows.length === 0 && !f.waiting.length && (
+                {f.rows.length === 0 && !f.waiting.length && !(f.dnf || []).length && (
                   <div style={{ padding: "10px 12px", fontSize: 15, fontWeight: 600, color: TM.inkMuted }}>Nobody's been sent off yet.</div>
                 )}
                 {f.rows.slice(0, top).map(({ a, i, s }, k) => {
