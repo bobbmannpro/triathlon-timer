@@ -302,7 +302,7 @@
           const g = courseRef.current = L.layerGroup().addTo(map);
           [["swim", 0], ["bike", 2], ["run", 4]].forEach(([leg, si]) => {
             const pts = routes[leg];
-            if (pts && pts.length > 1) L.polyline(pts, { color: segColors[si], weight: 5, opacity: 0.85 }).addTo(g);
+            if (pts && pts.length > 1) L.polyline(pts, { color: TM[leg], weight: 5, opacity: 0.85 }).addTo(g);
           });
           wpts.filter(w => w.lat != null && w.lng != null).forEach(w => {
             L.circleMarker([w.lat, w.lng], { radius: 7, color: "#FFFFFF", fillColor: TM.ink, fillOpacity: 0.9, weight: 2 })
@@ -4255,7 +4255,7 @@ ${html}</body></html>`);
             .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           const legs = RACE_LEGS
             .map(([key, label, segIdx]) => ({ key, label, segIdx,
-              pts: (raceRoutes[key] || []), colour: segColors[segIdx] }))
+              pts: (raceRoutes[key] || []), colour: TM[key] }))
             .filter(l => l.pts.length > 1);
           const wps = waypoints.filter(w => w.lat != null && w.lng != null && w.enabled !== false);
           if (!legs.length && !wps.length) {
@@ -4846,7 +4846,7 @@ ${html}</body></html>`);
             if (pts.length > 1) {
               if (existing) existing.setLatLngs(pts);
               else raceRouteLinesRef.current[leg] = L.polyline(pts, {
-                color: segColors[segIdx], weight: 5, opacity: 0.9, lineCap: "round",
+                color: TM[leg], weight: 5, opacity: 0.9, lineCap: "round",
               }).addTo(map);
             } else if (existing) {
               try { map.removeLayer(existing); } catch(_) {}
@@ -14061,7 +14061,7 @@ Start a new race anyway?`)) return;
                             ))}
                             {seg !== "bike" && courses.map(course => {
                               const on = !!course[seg + "ByLaps"];
-                              const plan = legLapPlan(course, seg === "swim" ? 0 : 4);
+                              const plan = legLapPlan(course, slotOf(seg));
                               const lapKey = seg + "Lap", gapKey = seg + "MinLapSec";
                               return (
                                 <div key={"laps" + course.id} style={{ marginTop: 16 }}>
@@ -14090,7 +14090,7 @@ Start a new race anyway?`)) return;
                                         {plan && plan.need ? `= ${plan.need} lap${plan.need === 1 ? "" : "s"} of ${fmtLegDist(plan.lap, short)}` : "→ pick a lap length"}
                                       </div>
                                       <div style={{ flexBasis: "100%", fontSize: 15, fontWeight: 600 }}>
-                                        The {seg} ends by itself on the last lap{seg === "run" ? ", which finishes the race" : ""}.
+                                        The {seg} ends by itself on the last lap{slotOf(seg) === 4 ? ", which finishes the race" : ""}.
                                       </div>
                                     </div>
                                   )}
@@ -14337,9 +14337,9 @@ Start a new race anyway?`)) return;
                           return (
                             <button key={leg} onClick={() => setRaceDrawLeg(on ? null : leg)}
                               style={{ padding:"5px 10px", fontSize:14, fontWeight:700, borderRadius:6, cursor:"pointer",
-                                background: on ? segColors[segIdx] + "26" : "transparent",
-                                border: on ? `2px solid ${segColors[segIdx]}` : "2px solid #C9C5BC",
-                                color: on ? segColors[segIdx] : "#3D434B" }}>
+                                background: on ? TM[leg] + "26" : "transparent",
+                                border: on ? `2px solid ${TM[leg]}` : "2px solid #C9C5BC",
+                                color: on ? TM[leg] : "#3D434B" }}>
                               {label}{n > 1 ? ` · ${fmtRaceDist(raceRouteDist(raceRoutes[leg]), leg)}` : ""}
                             </button>
                           );
