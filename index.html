@@ -8493,6 +8493,7 @@ ${html}</body></html>`);
         const [keiserScan, setKeiserScan] = useState(null);       // "on" | error text | null
         const keiserScanRef = useRef(null);
         const [keiserPairFor, setKeiserPairFor] = useState(null);   // race screen: athlete index choosing a bike
+        useTicker(keiserPairFor !== null, 1000);                     // pedaling / stopped / asleep labels age on their own
         const keiserBaseRef = useRef({});                         // athleteId → { base, last, acc } trip distance at bike start
         async function startKeiserScan() {
           if (!btSupported) { setKeiserScan("Bluetooth needs Chrome on Android."); return; }
@@ -15307,7 +15308,7 @@ Start a new race anyway?`)) return;
                             const bid = keiserAssign[ath.id];
                             const ok = bid != null && bid !== "" && keiserBikes[bid] && Date.now() - keiserBikes[bid].seen < 5000;
                             return (
-                              <button onClick={() => { setKeiserPairFor(p => p === i ? null : i); if (keiserScan !== "on") startKeiserScan(); }}
+                              <button onClick={() => { setKeiserPairFor(p => p === i ? null : i); if (!btDevices.some(d => d.keiser) && keiserScan !== "on") startKeiserScan(); }}
                                 title={bid ? `Keiser bike #${bid}` : "Pair a Keiser bike"}
                                 style={{ ...btnStyle(TM.bike, keiserPairFor !== i), minHeight: 40, padding: "0 10px", fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}>
                                 🚲{bid ? ` #${bid}` : " Pair"}
@@ -15323,23 +15324,38 @@ Start a new race anyway?`)) return;
                         </div>
                         {keiserPairFor === i && (
                           <div style={{ padding: "8px 14px 12px", borderTop: "2px solid #C9C5BC", background: "#FFFFFF" }}>
-                            {keiserScan && keiserScan !== "on" && !Object.keys(keiserBikes).some(b => Date.now() - keiserBikes[b].seen < 10000) ? (
-                              <div style={{ fontSize: 14, color: TM.warn }}>{keiserScan} Or connect each bike on the Devices tab (🚲 Connect Keiser bike) — connected bikes show up here.</div>
-                            ) : (() => {
-                              const ids = Object.keys(keiserBikes).filter(b => Date.now() - keiserBikes[b].seen < 10000)
-                                .sort((a, b) => (keiserBikes[b].cadence || 0) - (keiserBikes[a].cadence || 0) || +a - +b);
+                            {(() => {
+                              // The bikes connected on the Devices tab, by bike number — awake or not.
+                              // Only with none connected does it fall back to the room scan.
+                              const devBikes = btDevices.filter(d => d.keiser);
+                              const unheard = devBikes.filter(d => d.readings?.keiserBike == null).length;
+                              const now = Date.now();
+                              const fresh = b => keiserBikes[b] && now - keiserBikes[b].seen < 8000;
+                              const ids = devBikes.length
+                                ? [...new Set(devBikes.map(d => d.readings?.keiserBike).filter(v => v != null).map(String))]
+                                : Object.keys(keiserBikes).filter(b => now - keiserBikes[b].seen < 10000);
+                              const rank = b => fresh(b) ? (keiserBikes[b].cadence > 0 ? 2000 + keiserBikes[b].cadence : 1000) : 0;
+                              ids.sort((a, b) => rank(b) - rank(a) || +a - +b);
+                              if (!ids.length && keiserScan && keiserScan !== "on" && !devBikes.length)
+                                return <div style={{ fontSize: 14, color: TM.warn }}>Connect each bike on the Devices tab (🚲 Connect Keiser bike) — connected bikes show up here.</div>;
                               const taken = b => Object.entries(keiserAssign).some(([aid, v]) => String(v) === String(b) && aid !== String(ath.id));
                               return (
                                 <>
-                                  <div style={{ fontSize: 14, color: TM.inkMuted, marginBottom: 6 }}>{ids.length ? `Have ${ath.firstName || ath.name || "them"} pedal — their bike jumps to the front. Tap it.` : "Listening for bikes… pedal a bike to wake its screen."}</div>
+                                  <div style={{ fontSize: 14, color: TM.inkMuted, marginBottom: 6 }}>
+                                    {ids.length ? `Have ${ath.firstName || ath.name || "them"} pedal — their bike turns green and jumps to the front. Tap it.` : devBikes.length ? "Pedal a connected bike to wake its screen." : "Listening for bikes… pedal a bike to wake its screen."}
+                                    {unheard > 0 && ` (${unheard} connected bike${unheard > 1 ? "s" : ""} not heard yet — pedal to wake.)`}
+                                  </div>
                                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                    {ids.map(b => (
-                                      <button key={b} onClick={() => { setKeiserAssign(a => ({ ...a, [ath.id]: b })); setKeiserPairFor(null); }}
-                                        style={{ ...btnStyle(TM.bike, String(keiserAssign[ath.id]) !== String(b)), minHeight: 40, padding: "0 12px", fontSize: 15, opacity: taken(b) ? 0.5 : 1 }}>
-                                        <span aria-hidden="true" style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", marginRight: 6, background: keiserBikes[b].cadence > 0 ? "#1FA971" : "#C9C5BC" }} />
-                                        #{b} · {keiserBikes[b].cadence > 0 ? `${keiserBikes[b].cadence} rpm pedaling` : "stopped"}{taken(b) ? " (taken)" : ""}
-                                      </button>
-                                    ))}
+                                    {ids.map(b => {
+                                      const kb = keiserBikes[b] || {}, f = fresh(b), ped = f && kb.cadence > 0;
+                                      return (
+                                        <button key={b} onClick={() => { setKeiserAssign(a => ({ ...a, [ath.id]: b })); setKeiserPairFor(null); }}
+                                          style={{ ...btnStyle(TM.bike, String(keiserAssign[ath.id]) !== String(b)), minHeight: 40, padding: "0 12px", fontSize: 15, opacity: taken(b) ? 0.5 : 1 }}>
+                                          <span aria-hidden="true" style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", marginRight: 6, background: ped ? "#1FA971" : f ? "#C9C5BC" : "#7A7F87" }} />
+                                          #{b} · {ped ? `${kb.cadence} rpm pedaling` : f ? "stopped" : "💤 asleep"}{taken(b) ? " (taken)" : ""}
+                                        </button>
+                                      );
+                                    })}
                                     {keiserAssign[ath.id] && <button onClick={() => { setKeiserAssign(a => { const n = { ...a }; delete n[ath.id]; return n; }); setKeiserPairFor(null); }}
                                       style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Unpair</button>}
                                   </div>
