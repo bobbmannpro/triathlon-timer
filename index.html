@@ -4570,7 +4570,11 @@ ${html}</body></html>`);
         const [joinLiveData, setJoinLiveData] = useState(null);
         // The race this screen is showing sets the leg order everything is labelled by.
         const [, setOrderTick] = useState(0);
-        if (applyLegOrder(view === "join" && joinLiveData ? joinLiveData.legOrder : view === "watch" && liveRace ? liveRace.legOrder : legOrder)) setTimeout(() => setOrderTick(t => t + 1), 0);
+        const [lapCountCode, setLapCountCode] = useState(null);  // race a watcher's phone is counting
+        // The lap counter shows the race it's counting, in that race's order.
+        const lapSrc = liveRace && liveRace.code === lapCountCode ? liveRace : joinLiveData && joinLiveData.code === lapCountCode ? joinLiveData : null;
+        if (applyLegOrder(view === "join" && joinLiveData ? joinLiveData.legOrder : view === "watch" && liveRace ? liveRace.legOrder
+          : view === "lapcount" && lapSrc && lapSrc.legOrder ? lapSrc.legOrder : legOrder)) setTimeout(() => setOrderTick(t => t + 1), 0);
         const [joinLiveClockMs, setJoinLiveClockMs] = useState(0);
         const joinLiveListenerRef = useRef(null);
         // True once the race this phone joined has ended or been deleted: stop
@@ -6357,7 +6361,7 @@ ${html}</body></html>`);
             courses: courses.map(c => ({ id: c.id, name: c.name, swimYards: c.swimYards, bikeMiles: c.bikeMiles, runMiles: c.runMiles, bikeType: c.bikeType || "gps", lapMi: c.lapMi ?? null, minLapSec: c.minLapSec ?? null,
               swimByLaps: !!c.swimByLaps, swimLap: c.swimLap ?? null, swimMinLapSec: c.swimMinLapSec ?? null,
               runByLaps: !!c.runByLaps, runLap: c.runLap ?? null, runMinLapSec: c.runMinLapSec ?? null })),
-            ageGroups,
+            ageGroups, legOrder, raceMode, courseMap: courseMapOn,
             segments: SEGMENTS,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes,
@@ -10749,7 +10753,6 @@ ${html}</body></html>`);
         }
 
         // ── Lap counting: taps from the host and from parents' phones ───────────
-        const [lapCountCode, setLapCountCode] = useState(null);  // race a watcher's phone is counting
         const [lapMine, setLapMine] = useState({});              // athleteIdx → true: this phone's riders
         const [lapPicking, setLapPicking] = useState(false);
         const [lapFlash, setLapFlash] = useState(null);          // last tap on this phone, for Undo
