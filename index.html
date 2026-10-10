@@ -924,6 +924,10 @@
       const LEG_KIND_NAME = { swim: "Swim", bike: "Bike", run: "Run" };
       const kindAt = slot => slot === 0 ? LEG_ORDER[0] : slot === 2 ? LEG_ORDER[1] : slot === 4 ? LEG_ORDER[2] : null;
       const slotOf = kind => { const i = LEG_ORDER.indexOf(kind); return i < 0 ? null : i * 2; };
+      // A course's three distances in the order raced: "2mi / 12mi / 400y", or with names.
+      const legDistOf = (c, k) => k === "swim" ? c.swimYards : k === "bike" ? c.bikeMiles : c.runMiles;
+      const courseDists = (c, sep = " / ", u = { swim: "y", bike: "mi", run: "mi" }, named = false) =>
+        LEG_ORDER.map(k => `${named ? LEG_KIND_NAME[k] + " " : ""}${legDistOf(c, k)}${u[k]}`).join(sep);
       // When an athlete's bike leg began (race clock), or null if not yet — the
       // split before it, or the send-off when the bike comes first.
       const bikeStartOf = a => { if (!a) return null; const B = slotOf("bike"); return B === 0 ? (a.started ? (a.startOffset ?? 0) : null) : (a.splits ? a.splits[B - 1] ?? null : null); };
@@ -3784,13 +3788,15 @@ ${html}</body></html>`);
         const crs = asList(race.courses);
         const c = crs.find(x => x.id === ath.courseId) || crs[0] || null;
         const u = race.units || {};
-        const paces = c ? [calcSwimPace(legs[slotOf("swim")] && legs[slotOf("swim")].ms, c.swimYards, u.swim), calcBikeMph(legs[2] && legs[2].ms, c.bikeMiles, u.bike), calcRunPace(legs[slotOf("run")] && legs[slotOf("run")].ms, c.runMiles, u.run)] : [];
+        const legMs = k => legs[slotOf(k)] && legs[slotOf(k)].ms;
+        const paceOf = { swim: () => "🏊 " + (calcSwimPace(legMs("swim"), c.swimYards, u.swim) || ""), bike: () => "🚴 " + (calcBikeMph(legMs("bike"), c.bikeMiles, u.bike) || ""), run: () => "🏃 " + (calcRunPace(legMs("run"), c.runMiles, u.run) || "") };
+        const paces = c ? LEG_ORDER.map(k => paceOf[k]()).filter(p => p.length > 3) : [];   // in the order raced
         const cert = race.cert || {};
         return {
           eventName: race.raceName || "Race", orgName: cert.orgName || "", accent: cert.accentColor || "#0B3FCC", logo: cert.logo || LOGO_B64,
           name: ath.name || "", bib: ath.raceNumber, overall, gender: ath.gender || "", ageGroup: ath.ageGroup || "", agPlace,
-          chipMs: finishOf(ath), legs, paces: paces.map((p, i) => p ? ["🏊", "🚴", "🏃"][i] + " " + p : null).filter(Boolean),
-          course: c ? `${c.name || "Course"} — Swim ${c.swimYards}y · Bike ${c.bikeMiles}mi · Run ${c.runMiles}mi` : "",
+          chipMs: finishOf(ath), legs, paces,
+          course: c ? `${c.name || "Course"} — ${courseDists(c, " · ", undefined, true)}` : "",
         };
       }
       function loadImg(src) {
@@ -6673,7 +6679,7 @@ ${html}</body></html>`);
             return `<div class="ag-section"><div class="ag-label">${label}</div><table><thead><tr><th>#</th><th>Athlete</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${rows}</tbody></table></div>`;
           }).join("");
           const win = window.open("", "_blank");
-          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${cfg.eventName}</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'Archivo',Arial,sans-serif;color:#0B0D10;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Archivo',Arial,sans-serif;font-size:32px;letter-spacing:4px;color:#0B0D10;}.subtitle{font-size:14px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;}.dist{font-size:14px;color:#3D434B;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#3D434B;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#0B0D10;color:#EFEDE8;font-size:14px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(3){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:2px solid #eef2f6;}td:nth-child(3){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;margin-bottom:4px;border-left:3px solid #0B3FCC;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${cfg.eventName || "Timeathon Results"}</div><div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div></div></div><div class="dist">${raceCourses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${cfg.eventName}</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'Archivo',Arial,sans-serif;color:#0B0D10;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Archivo',Arial,sans-serif;font-size:32px;letter-spacing:4px;color:#0B0D10;}.subtitle{font-size:14px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;}.dist{font-size:14px;color:#3D434B;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#3D434B;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#0B0D10;color:#EFEDE8;font-size:14px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(3){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:2px solid #eef2f6;}td:nth-child(3){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;margin-bottom:4px;border-left:3px solid #0B3FCC;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${cfg.eventName || "Timeathon Results"}</div><div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div></div></div><div class="dist">${raceCourses.map(c => `${c.name}: ${courseDists(c)}`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
           win.document.close();
         }
 
@@ -8644,7 +8650,7 @@ ${html}</body></html>`);
                   ${rp ? `<span>🏃 ${rp}</span>` : ""}
                 </div>
                 <div class="bottom-rule"></div>
-                <div class="dist-note">${ac.name} &mdash; Swim ${ac.swimYards}y &middot; Bike ${ac.bikeMiles}mi &middot; Run ${ac.runMiles}mi</div>
+                <div class="dist-note">${ac.name} &mdash; ${courseDists(ac, " &middot; ", undefined, true)}</div>
               </div>`;
           }).join("");
 
@@ -8767,7 +8773,7 @@ ${html}</body></html>`);
                 <div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div>
               </div>
             </div>
-            <div class="dist">${courses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" &nbsp;&middot;&nbsp; ")}</div>
+            <div class="dist">${courses.map(c => `${c.name}: ${courseDists(c)}`).join(" &nbsp;&middot;&nbsp; ")}</div>
             <h2>Overall Standings</h2>
             <table>
               <thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${SEGMENTS.map(s=>`<th>${s}</th>`).join("")}<th>Chip</th><th>Gun</th></tr></thead>
@@ -13889,7 +13895,7 @@ Start a new race anyway?`)) return;
                   { title: TRI_STEPS[0], done: !!(saveRaceName || certConfig.eventName), summary: `Triathlon · ${saveRaceName || certConfig.eventName || "no name yet"} · code ${liveRaceCode || (registrationOpen ? registrationCode : customRaceCode) || "—"}` },
                   { title: TRI_STEPS[1], done: ageGroups.length > 0, summary: `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}` },
                   { title: TRI_STEPS[2], done: athletes.length > 0, summary: `${athletes.length} athlete${athletes.length !== 1 ? "s" : ""}${registrationOpen ? ` · sign-up open (${registrationCode})` : ""}` },
-                  { title: TRI_STEPS[3], done: courses.length > 0, summary: `${courses.map(c => `${c.name}: ${c.swimYards}${u[units.swim]} · ${c.bikeMiles}${u[units.bike]} · ${c.runMiles}${u[units.run]}`).join(" | ") || "No distances yet"}${courses.some(courseHasLaps) ? " · laps" : ""}${courseMapOn ? "" : " · no map"}` },
+                  { title: TRI_STEPS[3], done: courses.length > 0, summary: `${courses.map(c => `${c.name}: ${courseDists(c, " · ", { swim: u[units.swim], bike: u[units.bike], run: u[units.run] })}`).join(" | ") || "No distances yet"}${courses.some(courseHasLaps) ? " · laps" : ""}${courseMapOn ? "" : " · no map"}` },
                   { title: TRI_STEPS[4], done: !!certConfig.eventName, summary: `${certConfig.eventName || "no event name"}${courseMapOn ? ` · ${placedPins ? `${placedPins} pin${placedPins !== 1 ? "s" : ""} placed` : "map optional"}` : ""}` },
                 ];
                 const loadedRace = savedRaces.find(r => r.id === loadedRaceId);
@@ -15395,7 +15401,7 @@ Start a new race anyway?`)) return;
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Final Results</div>
                       <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>
-                        {courses.map(c => `${c.name}: ${c.swimYards}y / ${c.bikeMiles}mi / ${c.runMiles}mi`).join(" · ")}
+                        {courses.map(c => `${c.name}: ${courseDists(c)}`).join(" · ")}
                       </div>
                     </div>
                     {anyStarted && (
