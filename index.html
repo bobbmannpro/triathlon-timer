@@ -545,17 +545,17 @@
           return { need: t > 0 && l > 0 ? Math.max(1, Math.round(t / l)) : 0, gap: gapMs, lap: l, total: t };
         };
         if (kindAt(seg) === "swim" && course.swimByLaps) return plan(course.swimYards, course.swimLap, gapFor(course.swimMinLapSec, 15));
-        if (seg === 2 && course.bikeType === "laps") return plan(course.bikeMiles, course.lapMi, gapFor(course.minLapSec, 20));
+        if (kindAt(seg) === "bike" && course.bikeType === "laps") return plan(course.bikeMiles, course.lapMi, gapFor(course.minLapSec, 20));
         // Spin bike: riders call out their miles and each tap is one mile, so a
         // 27-mile ride is 27 taps — and the taps give the average speed.
-        if (seg === 2 && course.bikeType === "spin") return plan(course.bikeMiles, 1, 0);
+        if (kindAt(seg) === "bike" && course.bikeType === "spin") return plan(course.bikeMiles, 1, 0);
         if (kindAt(seg) === "run" && course.runByLaps) return plan(course.runMiles, course.runLap, gapFor(course.runMinLapSec, 30));
         return null;
       }
       function courseHasLaps(c) { return !!(c && (c.swimByLaps || c.bikeType === "laps" || c.bikeType === "spin" || c.runByLaps)); }
       // What one tap is on this leg: a mile on a spin bike, a lap everywhere else.
       function tapWord(course, seg, plural = true) {
-        const mi = seg === 2 && course && course.bikeType === "spin";
+        const mi = kindAt(seg) === "bike" && course && course.bikeType === "spin";
         return mi ? (plural ? "miles" : "mile") : (plural ? "laps" : "lap");
       }
       function legWindow(a, seg, gap) {
@@ -602,7 +602,7 @@
       function countLegNow(a, course) {
         if (!a || !a.started || a.finished) return null;
         const nx = a.splits.findIndex(x => x == null);
-        if (nx === 2 && course && ["trainer", "distance"].includes(course.bikeType)) return null;
+        if (nx === slotOf("bike") && course && ["trainer", "distance"].includes(course.bikeType)) return null;
         return [0, 2, 4].includes(nx) ? nx : null;
       }
       // ── Lap splits ───────────────────────────────────────────────────────────
@@ -630,7 +630,7 @@
         const full = legSplitsFull(taps, a, seg, course, unitShort);
         const p = legCountPlan(course, seg);
         if (!full || !(p.lap > 0) || kindAt(seg) === "run") return full;
-        if (seg === 2) return { items: [], avg: full.avg };
+        if (kindAt(seg) === "bike") return { items: [], avg: full.avg };
         const w = legWindow(a, seg, p.gap);
         const marks = lapMarks(taps, w[0], w[1], p.gap);
         const dist = marks.length * p.lap, el = marks[marks.length - 1] - a.startOffset;
@@ -644,7 +644,7 @@
         if (!w || start == null) return null;
         const marks = lapMarks(taps, w[0], w[1], p.gap);
         if (!marks.length) return null;
-        if (seg === 2 && p.lap > 0) {
+        if (kindAt(seg) === "bike" && p.lap > 0) {
           const per = unitShort === "km" ? "Km" : "Mile", speed = unitShort === "km" ? "km/h" : "mph";
           const items = [];
           let prevT = start, prevD = 0, mileT = start, mile = 1;
@@ -923,6 +923,10 @@
       const LEG_KIND_NAME = { swim: "Swim", bike: "Bike", run: "Run" };
       const kindAt = slot => slot === 0 ? LEG_ORDER[0] : slot === 2 ? LEG_ORDER[1] : slot === 4 ? LEG_ORDER[2] : null;
       const slotOf = kind => { const i = LEG_ORDER.indexOf(kind); return i < 0 ? null : i * 2; };
+      // When an athlete's bike leg began (race clock), or null if not yet — the
+      // split before it, or the send-off when the bike comes first.
+      const bikeStartOf = a => { if (!a) return null; const B = slotOf("bike"); return B === 0 ? (a.started ? (a.startOffset ?? 0) : null) : (a.splits ? a.splits[B - 1] ?? null : null); };
+      const bikeEndOf = a => a && a.splits ? a.splits[slotOf("bike")] ?? null : null;
       function legOrderOf(x) { return Array.isArray(x) && x.length === 3 && ["swim", "bike", "run"].every(k => x.includes(k)) ? x : LEG_ORDERS.standard; }
       // Point every leg name, colour and the shared SEGMENTS labels at an order.
       function applyLegOrder(order) {
@@ -4165,6 +4169,14 @@ ${html}</body></html>`);
         // own tap ends a leg. Switchable mid-race from the Race screen.
         const [autoSplits, setAutoSplits] = useState(true);
         const [legOrder, setLegOrder] = useState(LEG_ORDERS.standard);   // this host's race: order of the three legs
+        const [openLegs, setOpenLegs] = useState({});                       // setup step 4: which leg blocks are open
+        const [legDrag, setLegDrag] = useState(null);                       // { kind, y0, dy } while dragging a leg block
+        function changeLegOrder(next) {
+          const cur = legOrderOf(legOrder);
+          if (next.every((k, i) => cur[i] === k)) return;
+          if (athletes.some(a => a.started) && !confirm("Athletes have already started. Change the leg order anyway?")) return;
+          setLegOrder(next);
+        }
         const [emailKind, setEmailKind] = useState("watch");     // watch | results | custom
         const [emailSkip, setEmailSkip] = useState({});           // athlete id → left off this email
         const [emailSubject, setEmailSubject] = useState("");
@@ -4537,7 +4549,7 @@ ${html}</body></html>`);
         const phonesKnownRef = useRef(null);
         const [phoneToast, setPhoneToast] = useState(null);
         const [gpsNow, setGpsNow] = useState(Date.now());
-        const RACE_BIKE_SEG   = 2;      // SEGMENTS = Swim, T1, Bike, T2, Run
+        // the bike leg's slot in this race's order (see LEG_ORDER)
         const GPS_LIVE_MS     = 15000;  // a fix this recent means the device is talking
         const GPS_LOST_MS     = 120000; // beyond this, treat the device as gone
         const RACE_TRACK_MAX  = 60;     // breadcrumb points kept per athlete
@@ -4549,7 +4561,8 @@ ${html}</body></html>`);
         const joinGpsTrailRef = useRef([]);
         const [joinLiveData, setJoinLiveData] = useState(null);
         // The race this screen is showing sets the leg order everything is labelled by.
-        applyLegOrder(view === "join" && joinLiveData ? joinLiveData.legOrder : view === "watch" && liveRace ? liveRace.legOrder : legOrder);
+        const [, setOrderTick] = useState(0);
+        if (applyLegOrder(view === "join" && joinLiveData ? joinLiveData.legOrder : view === "watch" && liveRace ? liveRace.legOrder : legOrder)) setTimeout(() => setOrderTick(t => t + 1), 0);
         const [joinLiveClockMs, setJoinLiveClockMs] = useState(0);
         const joinLiveListenerRef = useRef(null);
         // True once the race this phone joined has ended or been deleted: stop
@@ -5643,7 +5656,7 @@ ${html}</body></html>`);
           if (!liveRaceCode || !autoSplits) return;
           athletes.forEach((ath, i) => {
             if (!ath.started || ath.finished) return;
-            if (ath.splits[1] === null || ath.splits[2] !== null) return; // bike not started, or already done
+            if (bikeStartOf(ath) == null || bikeEndOf(ath) != null) return; // bike not started, or already done
             const athCourse = courses.find(c => c.id === ath.courseId) || courses[0];
             const type = athCourse?.bikeType || "gps";
             if (type === "gps") return;
@@ -5655,7 +5668,7 @@ ${html}</body></html>`);
               ? (g && g.onBike ? g.distanceMi : null)
               : (athleteTrainerData[i] ? athleteTrainerData[i].distMi : (spinMiles[i] ?? null));
             if (distMi == null || distMi < targetMi) return;
-            logSplit(i, 2);
+            logSplit(i, slotOf("bike"));
           });
         }, [athleteTrainerData, athleteGps, athletes, courses, liveRaceCode, lapTaps, autoSplits, spinMiles]);
 
@@ -5964,8 +5977,9 @@ ${html}</body></html>`);
           if (coursebikeType === "gps" || coursebikeType === "laps") return;
           if (joinLiveData && joinLiveData.autoSplits === false) return;   // host switched to Manual
           const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
-          const bikeStarted = splits[1] != null;
-          const bikeEnded = splits[2] != null;
+          const meLive = joinLiveData?.athletes?.[joinAthIdx];
+          const bikeStarted = bikeStartOf(meLive) != null;
+          const bikeEnded = bikeEndOf(meLive) != null;
           // Re-arm after a reset, so a second test ride can finish too.
           if (!bikeStarted) { bikeSegTriggeredRef.current = false; return; }
           if (bikeSegTriggeredRef.current) return;
@@ -5975,13 +5989,13 @@ ${html}</body></html>`);
           if (coursebikeType === "distance") {
             if (!joinBikeStats || !joinBikeStats.onBike || joinBikeStats.distMi < targetMi) return;
             bikeSegTriggeredRef.current = true;
-            triggerSplit(2, () => setJoinNextSeg(n => n + 1));
+            triggerSplit(slotOf("bike"), () => setJoinNextSeg(n => n + 1));
             return;
           }
           const trainer = btDevices.find(d => d.readings.trainerDistMi != null && d.readings.trainerDistMi >= targetMi);
           if (!trainer) return;
           bikeSegTriggeredRef.current = true;
-          triggerSplit(2, () => setJoinNextSeg(n => n + 1));
+          triggerSplit(slotOf("bike"), () => setJoinNextSeg(n => n + 1));
         }, [btDevices, joinLiveData?.athletes?.[joinAthIdx]?.splits?.join(","), joinRace?.code, joinBikeStats?.distMi, joinBikeStats?.onBike]);
 
         // Re-acquire Wake Lock whenever the page becomes visible (lock is auto-released on hide)
@@ -7816,7 +7830,7 @@ ${html}</body></html>`);
           // Distance is only meaningful on the bike. The swim is in a pool and the run
           // is on the honour system, so counting either would corrupt the one figure
           // that has to be right.
-          let wasOnBike = joinCurSegRef.current === RACE_BIKE_SEG;
+          let wasOnBike = joinCurSegRef.current === slotOf("bike");
           // Zero the total once, when the bike leg first starts. Without this latch a
           // corrected split that moves the athlete off and back onto the bike would
           // wipe a ride that was already half measured.
@@ -7829,7 +7843,7 @@ ${html}</body></html>`);
             const nowT = Date.now();
             // Doppler speed where the device gives it, smoothed displacement where
             // it doesn't, and nothing at all while stopped.
-            const onBike = joinCurSegRef.current === RACE_BIKE_SEG;
+            const onBike = joinCurSegRef.current === slotOf("bike");
             // Rolling onto the bike leg starts the measurement from zero, so anything
             // picked up walking round transition doesn't land on the bike total.
             if (onBike && !wasOnBike && !bikeZeroed) {
@@ -7916,7 +7930,7 @@ ${html}</body></html>`);
               if (triggered.has(wi)) return;
               if (haversineM(lat, lng, wp.lat, wp.lng) >= wp.radiusM) return;
               // Skip T2 (bike→run transition) GPS trigger when using a trainer — handled by distance
-              if (wp.action === "split" && wp.segIdx === 2) {
+              if (wp.action === "split" && wp.segIdx === slotOf("bike")) {
                 const myAth = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx];
                 const myCourse = (joinRace.courses || []).find(c => c.id === myAth?.courseId) || (joinRace.courses || [])[0];
                 if ((myCourse?.bikeType || "gps") !== "gps") return;
@@ -8446,7 +8460,7 @@ ${html}</body></html>`);
             const chip = totalChipTime(ath);
             const gt   = gunTime(ath);
             const swimMs = segmentDuration(ath, slotOf("swim"));
-            const bikeMs = segmentDuration(ath, 2);
+            const bikeMs = segmentDuration(ath, slotOf("bike"));
             const runMs  = segmentDuration(ath, slotOf("run"));
             const agp = ageGroupPlace(ath);
             const ac = athleteCourse(ath);
@@ -8475,7 +8489,7 @@ ${html}</body></html>`);
             const chip   = totalChipTime(ath);
             const gt     = gunTime(ath);
             const swimMs = segmentDuration(ath, slotOf("swim"));
-            const bikeMs = segmentDuration(ath, 2);
+            const bikeMs = segmentDuration(ath, slotOf("bike"));
             const runMs  = segmentDuration(ath, slotOf("run"));
             const ac = athleteCourse(ath);
             const sp = calcSwimPace(swimMs, ac.swimYards, units.swim);
@@ -10690,8 +10704,8 @@ ${html}</body></html>`);
         }
         function courseFor(race, a) { return race.courses.find(c => c.id === a.courseId) || race.courses[0]; }
         function lapsFor(race, i) {
-          const a = race.athletes[i]; if (!a || a.splits[1] == null) return 0;
-          return countLaps(lapTaps[i], a.splits[1], a.splits[2], lapGapMs(courseFor(race, a)));
+          const a = race.athletes[i]; if (!a || bikeStartOf(a) == null) return 0;
+          return countLaps(lapTaps[i], bikeStartOf(a), bikeEndOf(a), lapGapMs(courseFor(race, a)));
         }
         async function tapLap(code, idx, cNow, name) {
           if (!auth.currentUser) await ensureViewerAuth();
@@ -12778,8 +12792,8 @@ Start a new race anyway?`)) return;
                             const myCourse = cList.find(c => c.id === liveAth?.courseId) || cList[0];
                             if ((myCourse?.bikeType || "gps") !== "distance") return null;
                             const splits = liveAth?.splits || [];
-                            const t1Done = splits[1] != null, bikeDone = splits[2] != null;
-                            if (splits[3] != null) return null;                  // on the run — nothing to show
+                            const bStart = bikeStartOf(liveAth), t1Done = bStart != null, bikeDone = bikeEndOf(liveAth) != null;
+                            if (splits[slotOf("bike") + 1] != null) return null;  // past the bike — nothing to show
                             const target = parseFloat(myCourse.bikeMiles) || 0;
                             // This phone's own count once GPS is running; until then (just reopened
                             // the app, say) whatever it last published to the race.
@@ -12787,7 +12801,7 @@ Start a new race anyway?`)) return;
                             const dist = bikeDone ? Math.max(target, joinBikeStats?.distMi || 0, published)
                                                   : (joinBikeStats && joinBikeStats.onBike ? Math.max(joinBikeStats.distMi, published) : published);
                             const pct = target > 0 ? Math.min(100, (dist / target) * 100) : 0;
-                            const bikeMs = t1Done ? Math.max(0, (bikeDone ? splits[2] : joinLiveClockMs) - splits[1]) : 0;
+                            const bikeMs = t1Done ? Math.max(0, (bikeDone ? bikeEndOf(liveAth) : joinLiveClockMs) - bStart) : 0;
                             const avgMph = bikeMs > 60000 ? dist / (bikeMs / 3600000) : null;
                             const fresh = joinBikeStats && Date.now() - joinBikeStats.t < 10000;
                             const nowMph = fresh && joinBikeStats.speedMps != null ? joinBikeStats.speedMps * 2.236936 : null;
@@ -12842,7 +12856,8 @@ Start a new race anyway?`)) return;
                             const myCourse = (joinRace.courses || []).find(c => c.id === myAth?.courseId) || (joinRace.courses || [])[0];
                             const coursebikeType = myCourse?.bikeType || "gps";
                             const splits = joinLiveData?.athletes?.[joinAthIdx]?.splits || [];
-                            const inBikeSeg = splits[1] != null && splits[2] == null;
+                            const meA = joinLiveData?.athletes?.[joinAthIdx];
+                            const inBikeSeg = bikeStartOf(meA) != null && bikeEndOf(meA) == null;
                             const targetMi = parseFloat(myCourse?.bikeMiles) || 0;
                             const distMi = trainer.readings.trainerDistMi ?? 0;
                             const showProgress = inBikeSeg && ["trainer", "spin"].includes(coursebikeType) && targetMi > 0;
@@ -13971,19 +13986,6 @@ Start a new race anyway?`)) return;
                       return (
                         <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 16 }}>
                           <div>
-                            <div style={TM_LABEL}>Leg order</div>
-                            <div role="radiogroup" aria-label="Leg order" style={{ display: "flex", gap: 8 }}>
-                              {[["standard", "Swim → Bike → Run"], ["reverse", "Run → Bike → Swim"]].map(([k, l]) => {
-                                const on = LEG_ORDERS[k].every((x, i) => legOrderOf(legOrder)[i] === x);
-                                return <button key={k} role="radio" aria-checked={on} onClick={() => {
-                                  if (on) return;
-                                  if (athletes.some(a => a.started) && !confirm("Athletes have already started. Change the leg order anyway?")) return;
-                                  setLegOrder(LEG_ORDERS[k]);
-                                }} style={segStyle(on)}>{l}</button>;
-                              })}
-                            </div>
-                          </div>
-                          <div>
                             <div style={TM_LABEL}>Lap counting</div>
                             <div role="radiogroup" aria-label="Lap counting" style={{ display: "flex", gap: 8 }}>
                               {[[true, "On"], [false, "Off"]].map(([v, l]) => (
@@ -13994,18 +13996,6 @@ Start a new race anyway?`)) return;
                               {allLaps ? "Swim, bike and run are counted by laps — you and parents tap each lap. Set lap lengths below."
                                 : someLaps ? "Some legs count laps — each leg below has its own switch."
                                 : "Legs are timed with splits only. Turn on to count laps on every leg."}
-                            </div>
-                          </div>
-                          <div>
-                            <div style={TM_LABEL}>Course map</div>
-                            <div role="radiogroup" aria-label="Course map" style={{ display: "flex", gap: 8 }}>
-                              {[[true, "On"], [false, "Off"]].map(([v, l]) => (
-                                <button key={l} role="radio" aria-checked={courseMapOn === v} onClick={() => setCourseMapOn(v)} style={segStyle(courseMapOn === v)}>{l}</button>
-                              ))}
-                            </div>
-                            <div style={{ ...TM_CAPTION, marginTop: 6 }}>
-                              {courseMapOn ? "Draw the course and drop pins in the last step; athletes' phones share their GPS so you can see them on the Map tab."
-                                : "No map step, no Map tab, and athletes' phones don't track GPS."}
                             </div>
                           </div>
                         </div>
@@ -14032,14 +14022,54 @@ Start a new race anyway?`)) return;
                     {/* One full-bleed block per leg, in its discipline colour — named too,
                         so nobody has to tell cobalt from green in the sun. */}
                     <div style={{ marginLeft: -16, marginRight: -16, marginTop: 22 }}>
-                      {[["swim", TM.swim, "Swim", ["yards","meters"], "swimYards", "1"],
-                        ["bike", TM.bike, "Bike", ["miles","km"], "bikeMiles", "0.1"],
-                        ["run",  TM.run,  "Run",  ["miles","km"], "runMiles",  "0.1"]].map(([seg, col, label, opts, field, step]) => {
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 16px 12px", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>
+                        <input type="checkbox" checked={courseMapOn} onChange={e => setCourseMapOn(e.target.checked)} />
+                        Course map &amp; GPS
+                        <span style={{ fontWeight: 600, color: TM.inkMuted, fontSize: 14 }}>{courseMapOn ? "— draw the course and pins in the next step" : "— off: the next step skips the map"}</span>
+                      </label>
+                      <div style={{ ...TM_CAPTION, padding: "0 16px 8px" }}>In the order raced. Hold ⠿ and drag to change the order; tap a leg to open it.</div>
+                      {(() => {
+                        const LEG_DEFS = { swim: [TM.swim, "Swim", ["yards","meters"], "swimYards", "1"], bike: [TM.bike, "Bike", ["miles","km"], "bikeMiles", "0.1"], run: [TM.run, "Run", ["miles","km"], "runMiles", "0.1"] };
+                        const order = legOrderOf(legOrder);
+                        const BLOCK = 78;   // a closed block's height, for working out the drop slot
+                        const onDragMove = e => { if (legDrag) setLegDrag(d => d && { ...d, dy: e.clientY - d.y0 }); };
+                        const onDragEnd = () => {
+                          if (!legDrag) return;
+                          const from = order.indexOf(legDrag.kind);
+                          const to = Math.max(0, Math.min(2, from + Math.round(legDrag.dy / BLOCK)));
+                          const next = order.filter(k => k !== legDrag.kind); next.splice(to, 0, legDrag.kind);
+                          setLegDrag(null);
+                          changeLegOrder(next);
+                        };
+                        return order.map(seg => [seg, ...LEG_DEFS[seg]]).map(([seg, col, label, opts, field, step]) => {
                         const short = { yards: "yd", meters: "m", miles: "mi", km: "km" }[units[seg]];
+                        const open = !!openLegs[seg];
+                        const dragging = legDrag && legDrag.kind === seg;
+                        const c0 = courses[0] || {};
+                        const sum = `${c0[field] ?? "—"} ${short}${seg === "bike" ? " · " + ({ laps: "count laps", distance: "GPS miles", gps: "map course", trainer: "trainer", spin: "spin bike" }[c0.bikeType || "gps"]) : (c0[seg + "ByLaps"] ? " · laps" : "")}`;
                         return (
-                          <section key={seg} aria-label={`${label} distance`} style={{ background: col, color: "#FFFFFF", padding: "20px 20px 22px" }}>
+                          <section key={seg} aria-label={`${label} distance`} style={{ background: col, color: "#FFFFFF", padding: open ? "20px 20px 22px" : "14px 20px",
+                                   position: "relative", zIndex: dragging ? 5 : 1, transform: dragging ? `translateY(${legDrag.dy}px)` : "none",
+                                   boxShadow: dragging ? "0 8px 24px rgba(0,0,0,0.35)" : "none", transition: dragging ? "none" : "transform 0.15s" }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                              <h3 style={{ margin: 0, fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>{label}</h3>
+                              <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                                {!open && (
+                                  <span role="button" aria-label={`Drag to move ${label}`} title="Hold and drag to change the order"
+                                    onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); setLegDrag({ kind: seg, y0: e.clientY, dy: 0 }); }}
+                                    onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={() => setLegDrag(null)}
+                                    style={{ fontSize: 26, lineHeight: 1, cursor: "grab", touchAction: "none", userSelect: "none", padding: "6px 4px" }}>⠿</span>
+                                )}
+                                <button onClick={() => setOpenLegs(o => ({ ...o, [seg]: !o[seg] }))} aria-expanded={open}
+                                  style={{ background: "none", border: "none", color: "#FFFFFF", padding: 0, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", minWidth: 0 }}>
+                                  <h3 style={{ margin: 0, fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>{label}</h3>
+                                  {!open && <span style={{ fontWeight: 700, fontSize: 16, opacity: 0.9 }}>{sum}</span>}
+                                </button>
+                              </div>
+                              <button onClick={() => setOpenLegs(o => ({ ...o, [seg]: !o[seg] }))} aria-label={open ? `Close ${label}` : `Open ${label}`}
+                                style={{ background: "none", border: "2px solid #FFFFFF", borderRadius: 6, color: "#FFFFFF", minHeight: 40, minWidth: 44, fontSize: 18, fontWeight: 900, cursor: "pointer" }}>{open ? "▲" : "▼"}</button>
+                            </div>
+                            {open && (<>
+                            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
                               <div role="radiogroup" aria-label={`${label} units`} style={{ display: "flex", gap: 6 }}>
                                 {opts.map(un => (
                                   <button key={un} role="radio" aria-checked={units[seg] === un} onClick={() => setUnits(x => ({ ...x, [seg]: un }))}
@@ -14109,6 +14139,7 @@ Start a new race anyway?`)) return;
                                       <button key={val} role="radio" aria-checked={on} onClick={() => {
                                           updateCourse(course.id, "bikeType", val);
                                           if (val === "laps" && course.lapMi == null) updateCourse(course.id, "lapMi", 0.25);
+                                          setCourseMapOn(val === "gps" || val === "distance");   // spin, trainer and laps don't need a map
                                         }}
                                         style={{ flex: "1 1 40%", minHeight: 46, borderRadius: 6, fontWeight: 800, fontSize: 16, cursor: "pointer",
                                                  background: on ? "#FFFFFF" : "transparent", color: on ? col : "#FFFFFF", border: "2px solid #FFFFFF" }}>{lbl}</button>
@@ -14140,9 +14171,11 @@ Start a new race anyway?`)) return;
                                 </div>
                               </div>
                             ))}
+                            </>)}
                           </section>
                         );
-                      })}
+                      });
+                      })()}
                     </div>
                   </SetupSection>
 
@@ -14721,35 +14754,13 @@ Start a new race anyway?`)) return;
                     </div>
                   </div>
 
-                  {/* Who's counting whom: every athlete on a lap race should have someone. */}
-                  {liveRaceCode && (courses || []).some(courseHasLaps) && (() => {
-                    const open = athletes.map((a, i) => ({ a, i })).filter(({ a }) => !a.finished);
-                    const none = open.filter(({ i }) => countersFor(i).length === 0);
-                    return (
-                      <div style={{ ...rowStyle(none.length ? TM.warn : TM.run), marginBottom: 12, padding: "8px 12px" }}>
-                        <div style={{ fontSize: 15, fontWeight: 800 }}>
-                          👀 Counting: {open.length - none.length} of {open.length} athlete{open.length === 1 ? "" : "s"} have someone counting
-                        </div>
-                        {none.length > 0 && (
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
-                            <span style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted }}>No one yet:</span>
-                            {none.map(({ a, i }) => (
-                              <button key={a.id ?? i} onClick={() => setLapOpen(i)} title="Count this athlete yourself"
-                                style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 10px", fontSize: 14 }}>{a.name || `#${i + 1}`}</button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
                   {/* One glance answers "is everyone's phone still sending?" — the
                       question you can't check by reading eight rows mid-race. */}
                   {liveRaceCode && athletes.some(athleteUsesGps) && (() => {
                     const h = athletes.map((_, i) => athleteUsesGps(athletes[i]) ? gpsHealth(i) : { state: "skip" });
                     const n = (st) => h.filter(x => x.state === st).length;
                     const onBike = athletes.filter(a => a.started && !a.finished &&
-                      nextUnloggedSeg(a) === RACE_BIKE_SEG).length;
+                      nextUnloggedSeg(a) === slotOf("bike")).length;
                     const trouble = h.filter((x, i) => x.state !== "live" && x.state !== "skip" &&
                       athletes[i].started && !athletes[i].finished);
                     return (
@@ -14817,7 +14828,11 @@ Start a new race anyway?`)) return;
                                 : <span title="Paired earlier; not heard from in the last 12 seconds" style={{ fontSize: 14, fontWeight: 700, color: TM.inkMuted, display: "inline-flex", alignItems: "center", gap: 5 }}>
                                     <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: "#B8B3A9" }} />⌚ Watch offline</span>)}
                               {countersFor(i).length > 0 && (
-                                <span title="Parents counting this athlete's laps" style={{ fontSize: 14, fontWeight: 800, color: TM.swim }}>👀 {countersFor(i).map(c => (c.name || "Parent").split(" ")[0]).join(", ")}</span>
+                                <span title={`Counting laps: ${countersFor(i).map(c => c.name || "Parent").join(", ")}`} aria-label="Someone is counting this athlete's laps"
+                                  style={{ position: "relative", display: "inline-flex", alignItems: "center", width: 22, height: 20 }}>
+                                  <svg width="14" height="20" viewBox="0 0 14 20" aria-hidden="true"><rect x="1" y="1" width="12" height="18" rx="3" fill="none" stroke={TM.ink} strokeWidth="2"/><circle cx="7" cy="6" r="2" fill={TM.ink}/><rect x="4" y="11" width="6" height="2" rx="1" fill={TM.ink}/><rect x="4" y="14.5" width="6" height="2" rx="1" fill={TM.ink}/></svg>
+                                  <span style={{ position: "absolute", right: 0, top: 0, width: 9, height: 9, borderRadius: "50%", background: "#1FA971", border: "1.5px solid #FFFFFF", animation: "gpsping 1.4s ease-out infinite" }} />
+                                </span>
                               )}
                               {athleteHrData[i] && <span style={{ fontSize: 14, fontWeight: 800, color: TM.live }}>♥ {athleteHrData[i].bpm}</span>}
                             </div>
@@ -14973,7 +14988,7 @@ Start a new race anyway?`)) return;
                         {/* GPS-miles bike leg: each rider's miles from their phone. */}
                         {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
-                          if ((athCourse?.bikeType || "gps") !== "distance" || next !== 2) return null;
+                          if ((athCourse?.bikeType || "gps") !== "distance" || next !== slotOf("bike")) return null;
                           const g = athleteGps[i];
                           const hh = gpsHealth(i);
                           const target = parseFloat(athCourse.bikeMiles) || 0;
@@ -15022,11 +15037,11 @@ Start a new race anyway?`)) return;
                           } : null);
                           // Show panel if: trainer/spin course (always, to show no-signal prompt) OR any live trainer data arrived
                           if (!isTrainerCourse && !tData) return null;
-                          if (next !== 2 && ath.splits[2] !== null) return null; // T2 already done — hide
+                          if (next !== slotOf("bike") && bikeEndOf(ath) != null) return null; // bike already done — hide
                           const targetMi = isTrainerCourse ? (parseFloat(athCourse?.bikeMiles) || 0) : 0;
                           const distMi = tData?.distMi ?? null;
                           const pct = targetMi > 0 && distMi != null ? Math.min(100, (distMi / targetMi) * 100) : 0;
-                          const inBike = next === 2;
+                          const inBike = next === slotOf("bike");
                           return (
                             <div style={{ padding: "0 14px 10px" }}>
                               <div style={{ background: "#FFFFFF", borderRadius: 6, padding: "8px 12px", border: `2px solid ${inBike ? "#8A5A00" : "#C9C5BC"}` }}>
@@ -15170,7 +15185,7 @@ Start a new race anyway?`)) return;
                             const chip = totalChipTime(ath);
                             const gt   = gunTime(ath);
                             const swimMs = segmentDuration(ath, slotOf("swim"));
-                            const bikeMs = segmentDuration(ath, 2);
+                            const bikeMs = segmentDuration(ath, slotOf("bike"));
                             const runMs  = segmentDuration(ath, slotOf("run"));
                             const ac = athleteCourse(ath);
                             const sp = calcSwimPace(swimMs, ac.swimYards, units.swim);
