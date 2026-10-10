@@ -1904,6 +1904,12 @@
         if (Array.isArray(raw)) raw.forEach(a => { if (a) base.push(a); });
         else if (raw && typeof raw === "object") Object.keys(raw).sort((x, y) => +x - +y).forEach(k => raw[k] && base.push(raw[k]));
         const have = new Set(base.map(a => a.uid).filter(Boolean));
+        // "This is me": a sign-up that claimed a name the host typed in.
+        Object.values((race && race.registrations) || {}).forEach(r => {
+          if (!r || !r.uid || r.claimId == null || have.has(r.uid)) return;
+          const k = base.findIndex(a => !a.uid && String(a.id) === String(r.claimId));
+          if (k >= 0) { base[k] = { ...base[k], uid: r.uid }; have.add(r.uid); }
+        });
         const regs = Object.values((race && race.registrations) || {})
           .filter(r => r && r.uid && !have.has(r.uid))
           .sort((x, y) => (x.joinedAt || 0) - (y.joinedAt || 0))
@@ -4648,8 +4654,10 @@ ${html}</body></html>`);
         const [joinedRaces, setJoinedRaces] = useState({});
         const [registrationStep, setRegistrationStep] = useState("code");
         const [regProfile, setRegProfile] = useState({ firstName: "", lastName: "", gender: "Male", ageGroup: "", dob: "" });
+        const [claimPick, setClaimPick] = useState(null);   // roster index tapped before "This is me"
         const [regCourseId, setRegCourseId] = useState(null);
         const [regRaceData, setRegRaceData] = useState(null);
+        const regRaceDataState = regRaceData;
         const [registrationCode, setRegistrationCode] = useState(null);
         const [registrationOpen, setRegistrationOpen] = useState(false);
         const regListenerRef = useRef(null);
@@ -6313,8 +6321,10 @@ ${html}</body></html>`);
                 .sort((x, y) => (x.joinedAt || 0) - (y.joinedAt || 0))
                 .forEach(r => {
                   const full = `${r.firstName || ""} ${r.lastName || ""}`.trim();
-                  // Already on the roster by name (the host typed them in)? Claim that entry.
-                  const at = next.findIndex(a => !a.uid && norm(athleteName(a) || a.name) === norm(full));
+                  // Claimed a name the host typed in ("This is me"), or signed up under
+                  // the same name — either way it's that roster entry.
+                  let at = r.claimId != null ? next.findIndex(a => !a.uid && String(a.id) === String(r.claimId)) : -1;
+                  if (at < 0) at = next.findIndex(a => !a.uid && norm(athleteName(a) || a.name) === norm(full));
                   if (at >= 0) {
                     next = next.map((a, k) => k === at ? { ...a, uid: r.uid, dob: a.dob || r.dob || "", courseId: r.courseId || a.courseId } : a);
                   } else {
@@ -6329,6 +6339,11 @@ ${html}</body></html>`);
           ref.on("value", fn, err => console.error("reg listener:", err));
           regListenerRef.current = { ref, fn };
         }
+
+        // Live races still take "This is me" claims (and late sign-ups).
+        useEffect(() => {
+          if (liveRaceCode && currentUser) attachRegListener(liveRaceCode);
+        }, [liveRaceCode, currentUser?.uid]);
 
         async function _doOpenRegistration(code) {
           const payload = {
@@ -6407,7 +6422,8 @@ ${html}</body></html>`);
         // Kept out of liveRaces on purpose: any signed-in user can read a live race,
         // so emails live under raceContacts, which only the race's host can read.
         const [regEmailOptIn, setRegEmailOptIn] = useState(true);
-        async function registerForRace(code, profileData, selectedCourseId) {
+        async function registerForRace(code, profileData, selectedCourseId, claimId = null, raceIn = null) {
+          const regRaceData = raceIn || regRaceDataState;
           if (!currentUser) { setRegError("You must be logged in to register."); return; }
           setRegWorking(true); setRegError("");
           const uid = currentUser.uid;
@@ -6423,7 +6439,8 @@ ${html}</body></html>`);
             ageGroup,
             dob: profileData.dob || "",
             courseId: selectedCourseId || regRaceData?.courses?.[0]?.id || null,
-            joinedAt: Date.now()
+            joinedAt: Date.now(),
+            ...(claimId != null ? { claimId: String(claimId) } : {})
           };
           try {
             await rtdb.ref("liveRaces/" + code + "/registrations/" + uid).set(registration);
@@ -6454,16 +6471,25 @@ ${html}</body></html>`);
               }
               bikeSegTriggeredRef.current = false;
               setJoinRace({ ...raceData, code });
-              const athIdx = rosterWithSignups(raceData).findIndex(a => a.uid === uid);
+              const athIdx = rosterWithSignups(raceData).findIndex(a => a.uid === uid || (claimId != null && String(a.id) === String(claimId)));
               setJoinAthIdx(athIdx >= 0 ? athIdx : null);
               setJoinGpsActive(false);
               setJoinNextSeg(0);
             }
+            setClaimPick(null);
           } catch(e) {
-            setRegError("Registration failed. Please try again.");
+            setRegError(claimId != null ? "Couldn't claim that name — the race may be closed. Ask the host." : "Registration failed. Please try again.");
             console.error("registerForRace:", e);
           }
           setRegWorking(false);
+        }
+
+        // "This is me": link this account to a name the host typed in.
+        function claimRosterName(race, ath) {
+          const parts = (athleteName(ath) || ath.name || "").trim().split(/\s+/);
+          const prof = { firstName: ath.firstName || parts[0] || "", lastName: ath.lastName || parts.slice(1).join(" "),
+                         gender: ath.gender || "Male", ageGroup: ath.ageGroup || "", dob: ath.dob || "" };
+          return registerForRace(race.code, prof, ath.courseId ?? null, ath.id, race);
         }
 
         async function rejoinRace(code) {
@@ -6799,19 +6825,34 @@ ${html}</body></html>`);
             const key = fullName.trim().toLowerCase();
             if (!key) return;
             if (!existingKeys.has(key)) {
-              toAdd.push({ id: Date.now() + Math.random(), email: a.email || "", name: fullName, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0] || "9-10", dob: a.dob || "" });
+              toAdd.push({ id: Date.now() + Math.random(), uid: a.uid || null, email: a.email || "", name: fullName, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender || "Male", ageGroup: a.ageGroup || ageGroups[0] || "9-10", dob: a.dob || "" });
               existingKeys.add(key);
             }
           });
           const byName = new Map(raceAthletes.filter(a => a.email).map(a => [(athleteName(a) || a.name || "").trim().toLowerCase(), a.email]));
+          const uidByName = new Map(raceAthletes.filter(a => a.uid).map(a => [(athleteName(a) || a.name || "").trim().toLowerCase(), a.uid]));
           let changed = false;
           const withEmails = savedAthletes.map(la => {
-            const e = byName.get((athleteName(la) || la.name || "").trim().toLowerCase());
-            if (e && la.email !== e) { changed = true; return { ...la, email: e }; }
-            return la;
+            const key = (athleteName(la) || la.name || "").trim().toLowerCase();
+            const e = byName.get(key), u = uidByName.get(key);
+            let out = la;
+            if (e && la.email !== e) { changed = true; out = { ...out, email: e }; }
+            if (u && !la.uid) { changed = true; out = { ...out, uid: u }; }
+            return out;
           });
           if (toAdd.length > 0 || changed) persistSavedAthletes([...withEmails, ...toAdd]);
         }
+
+        useEffect(() => {
+          if (!currentUser) return;
+          const key = a => (athleteName(a) || a.name || "").trim().toLowerCase();
+          const lib = new Map(savedAthletes.filter(a => a.uid).map(a => [key(a), a.uid]));
+          if (athletes.some(a => !a.uid && lib.has(key(a))))
+            setAthletes(prev => prev.map(a => !a.uid && lib.has(key(a)) ? { ...a, uid: lib.get(key(a)) } : a));
+          const linked = new Map(athletes.filter(a => a.uid).map(a => [key(a), a.uid]));
+          if (savedAthletes.some(la => !la.uid && linked.has(key(la))))
+            persistSavedAthletes(savedAthletes.map(la => !la.uid && linked.has(key(la)) ? { ...la, uid: linked.get(key(la)) } : la));
+        }, [athletes, savedAthletes]);
 
         // A saved race's settings onto the screens, without touching the live
         // roster or clock — used when a live race reopens after a refresh.
@@ -12641,6 +12682,38 @@ Start a new race anyway?`)) return;
                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, letterSpacing: 0.5, color: "#04613F" }}>{regRaceData.raceName || "Race"}</div>
                         <div style={{ fontSize: 14, color: "#3D434B", letterSpacing: 1 }}>Host: {regRaceData.publisherName} &nbsp;·&nbsp; Code: {regRaceData.code}</div>
                       </div>
+                      {(() => {
+                        const named = rosterWithSignups(regRaceData).filter(a => String(a.id) !== String(a.uid));
+                        if (!named.length) return null;
+                        return (
+                          <div style={{ marginBottom: 16 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 4 }}>ARE YOU ON THE LIST?</div>
+                            <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Tap your name, then “This is me”. It stays linked to your profile for every race after this.</div>
+                            {named.map((ath, k) => {
+                              const mine = ath.uid && ath.uid === currentUser?.uid;
+                              const taken = ath.uid && !mine;
+                              const open = claimPick === k;
+                              return (
+                                <div key={ath.id ?? k} style={{ background: open ? "#FFFFFF" : "#EFEDE8", border: `2px solid ${open ? "#04613F" : "#C9C5BC"}`, borderRadius: 6, marginBottom: 6 }}>
+                                  <button disabled={taken} onClick={() => setClaimPick(open ? null : k)}
+                                    style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", padding: "12px 14px", fontSize: 16, fontWeight: 700, color: "#0B0D10", cursor: taken ? "default" : "pointer", textAlign: "left", opacity: taken ? 0.5 : 1 }}>
+                                    <span style={{ flex: 1 }}>{athleteName(ath) || ath.name}</span>
+                                    <span style={{ fontSize: 14, fontWeight: 500, color: "#3D434B" }}>{mine ? "✓ You" : taken ? "Claimed" : [ath.gender, ath.ageGroup].filter(Boolean).join(" · ")}</span>
+                                  </button>
+                                  {open && (
+                                    <div style={{ display: "flex", gap: 8, padding: "0 14px 12px" }}>
+                                      <button onClick={() => setClaimPick(null)} style={{ ...btnStyle("#3D434B", true), padding: "10px 14px", fontSize: 15 }}>Cancel</button>
+                                      <button disabled={regWorking} onClick={() => claimRosterName(regRaceData, ath)}
+                                        style={{ ...btnStyle("#04613F"), flex: 1, padding: "10px 14px", fontSize: 16, opacity: regWorking ? 0.5 : 1 }}>{regWorking ? "Linking…" : "✓ This is me"}</button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", margin: "16px 0 0" }}>NOT ON THE LIST? SIGN UP BELOW</div>
+                          </div>
+                        );
+                      })()}
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 10 }}>CONFIRM YOUR INFO</div>
                       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                         <input value={regProfile.firstName} onChange={e => setRegProfile(p => ({ ...p, firstName: e.target.value }))}
@@ -12754,12 +12827,35 @@ Start a new race anyway?`)) return;
                             </div>
                           )}
                           <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 10 }}>SELECT YOUR NAME</div>
-                          {rosterWithSignups(joinLiveData || joinRace).map((ath, idx) => (
-                            <button key={idx} onClick={() => setJoinAthIdx(idx)}
-                              style={{ display: "block", width: "100%", background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, padding: "12px 14px", color: "#0B0D10", fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 6, textAlign: "left" }}>
-                              {ath.name} <span style={{ fontSize: 14, color: "#3D434B", fontWeight: 400 }}>{ath.gender} · {ath.ageGroup}</span>
-                            </button>
-                          ))}
+                          {rosterWithSignups(joinLiveData || joinRace).map((ath, idx) => {
+                            const mine = ath.uid && ath.uid === currentUser?.uid;
+                            const taken = ath.uid && !mine;
+                            const open = claimPick === idx;
+                            return (
+                              <div key={idx} style={{ background: open ? "#FFFFFF" : "#EFEDE8", border: `2px solid ${open ? "#04613F" : "#C9C5BC"}`, borderRadius: 6, marginBottom: 6 }}>
+                                <button onClick={() => { if (mine) { setClaimPick(null); setJoinAthIdx(idx); } else setClaimPick(open ? null : idx); }}
+                                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", padding: "12px 14px", color: "#0B0D10", fontSize: 15, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>
+                                  <span style={{ flex: 1 }}>{ath.name} <span style={{ fontSize: 14, color: "#3D434B", fontWeight: 400 }}>{ath.gender} · {ath.ageGroup}</span></span>
+                                  {(mine || taken) && <span style={{ fontSize: 14, color: mine ? "#04613F" : "#3D434B", fontWeight: 700 }}>{mine ? "✓ You" : "Claimed"}</span>}
+                                </button>
+                                {open && (
+                                  <div style={{ padding: "0 14px 12px" }}>
+                                    {taken
+                                      ? <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Another account has claimed this name. You can still follow along.</div>
+                                      : <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Linking keeps this name on your profile for every race after this.</div>}
+                                    {regError && <div style={{ fontSize: 14, color: "#B3001B", marginBottom: 8 }}>{regError}</div>}
+                                    <div style={{ display: "flex", gap: 8 }}>
+                                      <button onClick={() => { setClaimPick(null); setJoinAthIdx(idx); }} style={{ ...btnStyle("#3D434B", true), padding: "10px 14px", fontSize: 15 }}>{taken ? "Follow" : "Just view"}</button>
+                                      {!taken && currentUser && (
+                                        <button disabled={regWorking} onClick={() => claimRosterName({ ...(joinLiveData || joinRace), code: joinRace.code }, ath)}
+                                          style={{ ...btnStyle("#04613F"), flex: 1, padding: "10px 14px", fontSize: 16, opacity: regWorking ? 0.5 : 1 }}>{regWorking ? "Linking…" : "✓ This is me"}</button>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <div>
