@@ -11217,6 +11217,12 @@ Start a new race anyway?`)) return;
                     style={{ ...btnStyle(TM.ink), width: "100%", opacity: authWorking ? 0.7 : 1 }}>
                     {authWorking ? "Please wait…" : authMode === "login" ? "Sign in →" : "Create account →"}
                   </button>
+                  {authMode === "signup" && (
+                    <p style={{ margin: 0, fontSize: 15, color: TM.inkMuted, textAlign: "center" }}>
+                      By creating an account you agree to the{" "}
+                      <a href="privacy.html" target="_blank" rel="noopener" style={{ color: TM.ink, fontWeight: 700 }}>Privacy Policy</a>.
+                    </p>
+                  )}
                   {authMode === "login" && (
                     <button type="button" onClick={authResetPassword}
                       style={{ background: "none", border: "none", color: TM.ink, fontSize: 16, fontWeight: 700,
