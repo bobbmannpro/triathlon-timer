@@ -15412,7 +15412,8 @@ Start a new race anyway?`)) return;
                                 ? devBikes.map(d => d.device.id).filter(k => keiserBikes[k])
                                 : Object.keys(keiserBikes).filter(b => now - keiserBikes[b].seen < 10000);
                               const rank = b => fresh(b) ? (keiserBikes[b].cadence > 0 ? 2000 + keiserBikes[b].cadence : 1000) : 0;
-                              ids.sort((a, b) => rank(b) - rank(a) || bikeName(a).localeCompare(bikeName(b), undefined, { numeric: true }));
+                              // While naming, rows stay put (re-sorting moved the box you were typing in).
+                              if (!namingBikes) ids.sort((a, b) => rank(b) - rank(a));
                               if (!ids.length && keiserScan && keiserScan !== "on" && !devBikes.length)
                                 return <div style={{ fontSize: 14, color: TM.warn }}>Connect each bike on the Devices tab (🚲 Connect Keiser bike) — connected bikes show up here.</div>;
                               const taken = b => Object.entries(keiserAssign).some(([aid, v]) => String(v) === String(b) && aid !== String(ath.id));
@@ -19503,7 +19504,11 @@ Start a new race anyway?`)) return;
         constructor(p) { super(p); this.state = { err: null }; }
         static getDerivedStateFromError(err) { return { err }; }
         componentDidCatch(err, info) {
-          try { localStorage.setItem("tm-last-crash", JSON.stringify({ at: Date.now(), msg: String(err && err.message || err), stack: String(err && err.stack || "").slice(0, 1500) })); } catch (_) {}
+          const rep = { at: Date.now(), msg: String(err && err.message || err), stack: String(err && err.stack || "").slice(0, 1500),
+                        comp: String(info && info.componentStack || "").slice(0, 800), ua: navigator.userAgent.slice(0, 200) };
+          try { localStorage.setItem("tm-last-crash", JSON.stringify(rep)); } catch (_) {}
+          // So the developer can see what broke on a real phone.
+          try { if (window.firebase && firebase.auth().currentUser) firebase.database().ref("watchTokens/crash_" + rep.at).set(rep).catch(() => {}); } catch (_) {}
         }
         render() {
           if (!this.state.err) return this.props.children;
