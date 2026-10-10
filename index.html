@@ -691,7 +691,7 @@
       // far they've got — legs done, then laps on the current leg — and, when
       // level, by the lower time when they reached that point.
       function standingOf(a, clock, course, taps) {
-        if (!a || !a.started || a.startOffset == null) return null;
+        if (!a || a.dnf || !a.started || a.startOffset == null) return null;
         const splits = a.splits || [];
         let done = 0;
         while (done < SEGMENTS.length && splits[done] != null) done++;
@@ -731,12 +731,14 @@
         const out = labels.map(g => ({
           label: g,
           rows: rows.filter(r => r.a.ageGroup === g),
-          waiting: (athletes || []).filter(a => a && a.ageGroup === g && !a.started),
+          waiting: (athletes || []).filter(a => a && a.ageGroup === g && !a.started && !a.dnf),
+          dnf: (athletes || []).filter(a => a && a.ageGroup === g && a.dnf),
         }));
         const other = rows.filter(r => !r.a.ageGroup);
-        const otherWaiting = (athletes || []).filter(a => a && !a.ageGroup && !a.started);
-        if (other.length || otherWaiting.length) out.push({ label: "Other", rows: other, waiting: otherWaiting });
-        return out.filter(g => g.rows.length || g.waiting.length);
+        const otherWaiting = (athletes || []).filter(a => a && !a.ageGroup && !a.started && !a.dnf);
+        const otherDnf = (athletes || []).filter(a => a && !a.ageGroup && a.dnf);
+        if (other.length || otherWaiting.length || otherDnf.length) out.push({ label: "Other", rows: other, waiting: otherWaiting, dnf: otherDnf });
+        return out.filter(g => g.rows.length || g.waiting.length || g.dnf.length);
       }
       // Every athlete in each age group, in place order, live — medals for the
       // top three. Each group is its own feed on the same page; kids not sent
@@ -771,11 +773,24 @@
                         <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: col }}>
                           {s.finished ? "Finished" : leg}{!s.finished && s.laps ? ` · lap ${s.laps}${s.need ? `/${s.need}` : ""}` : ""}
                         </span>
+                        <LegLine a={a} clock={clock} />
                       </span>
                       <span className="tm-metric" style={{ fontSize: 22, letterSpacing: 0, color: col }}>{fmtSplit(s.time)}</span>
                     </div>
                   );
                 })}
+                {(f.dnf || []).map((a, k) => (
+                  <div key={"d" + (a.id ?? k)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: `1px solid ${TM.line}` }}>
+                    <span style={{ width: 30, textAlign: "center", color: TM.inkMuted, fontWeight: 800 }}>–</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 16, fontWeight: 700, color: TM.inkMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {a.name || `${a.firstName || ""} ${a.lastName || ""}`.trim() || "Athlete"}{a.raceNumber != null ? ` #${a.raceNumber}` : ""}
+                      </span>
+                      <LegLine a={a} clock={clock} />
+                    </span>
+                    <span style={{ fontSize: 15, fontWeight: 900, color: TM.live, letterSpacing: 1 }}>DNF</span>
+                  </div>
+                ))}
                 {f.waiting.map((a, k) => (
                   <div key={"w" + (a.id ?? k)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: `1px solid ${TM.line}` }}>
                     <span style={{ width: 30, textAlign: "center", color: TM.inkMuted, fontWeight: 800 }}>–</span>
@@ -788,6 +803,28 @@
               </section>
             ))}
           </div>
+        );
+      }
+      // One line of an athlete's own leg times — "Run 15:47 · T1 0:21 · Bike 46:00" —
+      // each leg's time, not the running total; the leg they're on counts up live.
+      function LegLine({ a, clock }) {
+        if (!a || !a.started || a.startOffset == null) return null;
+        const sp = a.splits || [];
+        const cur = sp.findIndex(x => x == null);
+        const parts = [];
+        SEGMENTS.forEach((name, si) => {
+          const prev = si === 0 ? a.startOffset : sp[si - 1];
+          if (prev == null) return;
+          if (sp[si] != null) parts.push({ name, ms: sp[si] - prev, si });
+          else if (!a.finished && !a.dnf && si === cur && clock != null) parts.push({ name, ms: Math.max(0, clock - prev), si, live: true });
+        });
+        if (!parts.length) return null;
+        return (
+          <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: TM.inkMuted, marginTop: 1, fontVariantNumeric: "tabular-nums" }}>
+            {parts.map((p, k) => (
+              <span key={p.si}>{k ? " · " : ""}<span style={{ color: segColors[p.si] || TM.ink, fontWeight: 800 }}>{p.name}</span> {fmtSplit(p.ms)}{p.live ? "…" : ""}</span>
+            ))}
+          </span>
         );
       }
       // One athlete's time on each leg: done legs, and the one they're on, live.
@@ -1798,28 +1835,35 @@
       function formatTime(ms) {
         if (ms === null || ms === undefined) return "--:--.-";
         const totalSecs = Math.floor(ms / 1000);
-        const mins = Math.floor(totalSecs / 60);
+        const hrs = Math.floor(totalSecs / 3600);
+        const mins = Math.floor((totalSecs % 3600) / 60);
         const secs = totalSecs % 60;
         const tenths = Math.floor((ms % 1000) / 100);
-        return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${tenths}`;
+        // Past an hour it reads 1:19:59.2, not 79:59.2.
+        return hrs ? `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${tenths}`
+                   : `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${tenths}`;
       }
 
       function formatElapsed(ms) {
         if (ms === null || ms === undefined) return "--:--";
         const totalSecs = Math.floor(ms / 1000);
-        const mins = Math.floor(totalSecs / 60);
+        const hrs = Math.floor(totalSecs / 3600);
+        const mins = Math.floor((totalSecs % 3600) / 60);
         const secs = totalSecs % 60;
-        return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        return hrs ? `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+                   : `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
       }
 
       function parseTimeInput(str) {
         if (!str) return null;
-        const match = str.trim().match(/^(\d+):(\d{2})(?:\.(\d))?$/);
+        // MM:SS.T or H:MM:SS.T
+        const match = str.trim().match(/^(?:(\d+):)?(\d+):(\d{2})(?:\.(\d))?$/);
         if (!match) return null;
-        const mins = parseInt(match[1]);
-        const secs = parseInt(match[2]);
-        const tenths = match[3] ? parseInt(match[3]) : 0;
-        return (mins * 60 + secs) * 1000 + tenths * 100;
+        const hrs = match[1] ? parseInt(match[1]) : 0;
+        const mins = parseInt(match[2]);
+        const secs = parseInt(match[3]);
+        const tenths = match[4] ? parseInt(match[4]) : 0;
+        return ((hrs * 60 + mins) * 60 + secs) * 1000 + tenths * 100;
       }
 
       // ── Pace calculators ─────────────────────────────────────────────────────
@@ -1870,6 +1914,7 @@
       }
 
       function totalChipTime(athlete) {
+        if (athlete.dnf) return null;   // did not finish: no time, no place
         const last = athlete.splits[SEGMENTS.length - 1];
         if (last === null || athlete.startOffset === null) return null;
         return last - athlete.startOffset;
@@ -1926,7 +1971,7 @@
         return list.map(a => ({
           id: a.id, uid: a.uid || null, name: a.name || "", firstName: a.firstName || "", lastName: a.lastName || "",
           gender: a.gender || "", ageGroup: a.ageGroup || "", courseId: a.courseId ?? null, dob: a.dob || null,
-          raceNumber: a.raceNumber ?? null,
+          raceNumber: a.raceNumber ?? null, dnf: !!a.dnf,
         }));
       }
       // Everyone in a race as an athlete's phone should show it: the host's
@@ -3804,7 +3849,7 @@ ${html}</body></html>`);
       // it, and in those apps people can add their own race photos to the post.
       function certDataFromLive(race, ath) {
         const all = asList(race.athletes);
-        const finishOf = a => (a && a.finished && a.startOffset != null && a.splits) ? a.splits[a.splits.length - 1] - a.startOffset : null;
+        const finishOf = a => (a && a.finished && !a.dnf && a.startOffset != null && a.splits) ? a.splits[a.splits.length - 1] - a.startOffset : null;
         const finishers = all.filter(a => finishOf(a) != null).sort((x, y) => finishOf(x) - finishOf(y));
         const overall = finishers.findIndex(a => a.id === ath.id) + 1 || null;
         const agList = finishers.filter(a => a.ageGroup && a.ageGroup === ath.ageGroup);
@@ -3824,7 +3869,7 @@ ${html}</body></html>`);
         const cert = race.cert || {};
         return {
           eventName: race.raceName || "Race", orgName: cert.orgName || "", accent: cert.accentColor || "#0B3FCC", logo: cert.logo || LOGO_B64,
-          name: ath.name || "", bib: ath.raceNumber, overall, gender: ath.gender || "", ageGroup: ath.ageGroup || "", agPlace,
+          name: ath.name || "", bib: ath.raceNumber, overall: ath.dnf ? null : overall, gender: ath.gender || "", ageGroup: ath.ageGroup || "", agPlace: ath.dnf ? null : agPlace, dnf: !!ath.dnf,
           chipMs: finishOf(ath), legs, paces,
           course: c ? `${c.name || "Course"} — ${courseDists(c, " · ", undefined, true)}` : "",
         };
@@ -3861,12 +3906,12 @@ ${html}</body></html>`);
         const medals = ["🥇", "🥈", "🥉"], mcol = ["#8A5A00", "#3D434B", "#B44A00"];
         const top3 = d.overall && d.overall <= 3;
         g.font = "88px serif"; g.textAlign = "center"; g.fillText(top3 ? medals[d.overall - 1] : "🏅", W / 2, y + 110); y += 110;
-        center(d.overall ? `${placeSuffix(d.overall)} Place Overall` : "Finisher", y + 58, 800, 40, top3 ? mcol[d.overall - 1] : "#3D434B"); y += 58;
+        center(d.dnf ? "Did Not Finish" : d.overall ? `${placeSuffix(d.overall)} Place Overall` : "Finisher", y + 58, 800, 40, d.dnf ? "#B3001B" : top3 ? mcol[d.overall - 1] : "#3D434B"); y += 58;
         center(d.name, y + 104, 900, 98, "#0B0D10"); y += 104;
         if (d.bib != null) { center(`Bib #${d.bib}`, y + 40, 700, 26, "#3D434B"); y += 40; }
         if (d.agPlace) { center(`${[d.gender, d.ageGroup].filter(Boolean).join(" ")} — ${placeSuffix(d.agPlace)} in Age Group`, y + 48, 700, 30, d.accent); y += 48; }
-        center("CHIP TIME", y + 54, 800, 22, "#3D434B"); y += 54;
-        center(d.chipMs != null ? formatElapsed(d.chipMs) : "--", y + 96, 900, 100, "#0B0D10"); y += 96;
+        center(d.dnf ? "RESULT" : "CHIP TIME", y + 54, 800, 22, "#3D434B"); y += 54;
+        center(d.dnf ? "DNF" : d.chipMs != null ? formatElapsed(d.chipMs) : "--", y + 96, 900, 100, d.dnf ? "#B3001B" : "#0B0D10"); y += 96;
         // leg pills
         const legs = d.legs.filter(l => l.ms != null);
         if (legs.length) {
@@ -3962,7 +4007,7 @@ ${html}</body></html>`);
           const file = new File([blob], safeFileName(`${d.name} - ${d.eventName}`) + ".png", { type: "image/png" });
           const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
           setCertShare(cur => cur && { ...cur, url: dataUrl, file,
-            text: `${d.name} finished ${d.eventName}${d.chipMs != null ? " in " + formatElapsed(d.chipMs) : ""}! 🏊🚴🏃` });
+            text: d.dnf ? `${d.name} raced ${d.eventName}! 🏊🚴🏃` : `${d.name} finished ${d.eventName}${d.chipMs != null ? " in " + formatElapsed(d.chipMs) : ""}! 🏊🚴🏃` });
         }
         function closeCertShare() { setCertShare(null); }
         // The host's own race, shaped like a live race, for certificates from the Results tab.
@@ -4703,7 +4748,7 @@ ${html}</body></html>`);
         }, [watchConnected, joinGpsActive]);
 
         // Finished: stop tracking, so the phone isn't burning battery on GPS.
-        const joinMeFinished = !!(joinLiveData && joinAthIdx !== null && asList(joinLiveData.athletes)[joinAthIdx] && asList(joinLiveData.athletes)[joinAthIdx].finished);
+        const joinMeFinished = !!(joinLiveData && joinAthIdx !== null && asList(joinLiveData.athletes)[joinAthIdx] && (asList(joinLiveData.athletes)[joinAthIdx].finished || asList(joinLiveData.athletes)[joinAthIdx].dnf));
         useEffect(() => {
           if (joinMeFinished && joinGpsActive) stopGpsTracking();
         }, [joinMeFinished, joinGpsActive]);
@@ -6249,7 +6294,8 @@ ${html}</body></html>`);
                               startOffset: a.startOffset ?? null,
                               splits: Array.from({ length: segs.length }, (_, i) => a.splits?.[i] ?? null),
                               started: a.started || false,
-                              finished: a.finished || false
+                              finished: a.finished || false,
+                              dnf: !!a.dnf
                             };
                           });
                           setAthletes(restoredAthletes);
@@ -6624,7 +6670,7 @@ ${html}</body></html>`);
             raceName: certConfig.eventName || "Race",
             cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
                     logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
-            athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits })),
+            athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits, dnf: !!a.dnf })),
             segments: SEGMENTS, updatedAt: Date.now(),
             courses, units, autoSplits, ageGroups, courseMap: courseMapOn, legOrder, raceMode,
             waypoints: waypoints.filter(wp => wp.lat !== null),
@@ -6669,6 +6715,7 @@ ${html}</body></html>`);
             updates[`athletes/${i}/finished`]    = ath.finished;
             updates[`athletes/${i}/startOffset`] = ath.startOffset;
             updates[`athletes/${i}/splits`]      = ath.splits;
+            updates[`athletes/${i}/dnf`]         = !!ath.dnf;
           });
           rtdb.ref("liveRaces/" + code).update(updates).catch(console.error);
         }
@@ -6734,7 +6781,7 @@ ${html}</body></html>`);
           const entry = {
             id: sessionId, name: certConfig.eventName || "Race", date: new Date().toLocaleDateString(),
             savedAt: Date.now(), segments: SEGMENTS, courses, units, certConfig,
-            athletes: athletes.map(a => ({ id: a.id, name: athleteName(a) || a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, raceNumber: a.raceNumber ?? null, splits: [...a.splits], startOffset: a.startOffset, finished: a.finished, finishMs: totalChipTime(a) })),
+            athletes: athletes.map(a => ({ id: a.id, name: athleteName(a) || a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, raceNumber: a.raceNumber ?? null, splits: [...a.splits], startOffset: a.startOffset, finished: a.finished, finishMs: totalChipTime(a), dnf: !!a.dnf })),
             finishedCount: athletes.filter(a => a.finished).length, totalCount: athletes.length,
           };
           const idx = savedArchive.findIndex(r => r.id === sessionId);
@@ -6753,7 +6800,7 @@ ${html}</body></html>`);
         }
 
         function archiveAgPlace(allAthletes, ath) {
-          const finishers = (allAthletes || []).filter(a => a.finished && a.gender === ath.gender && a.ageGroup === ath.ageGroup).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
+          const finishers = (allAthletes || []).filter(a => a.finished && !a.dnf && a.gender === ath.gender && a.ageGroup === ath.ageGroup).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
           const idx = finishers.findIndex(a => a.id === ath.id);
           return idx >= 0 ? idx + 1 : null;
         }
@@ -6763,18 +6810,18 @@ ${html}</body></html>`);
           const segs = race.segments || SEGMENTS;
           const raceUnits = race.units || { swim: "yards", bike: "miles", run: "miles" };
           const raceCourses = race.courses || [];
-          const finishers = (race.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
+          const finishers = (race.athletes || []).filter(a => a.finished && !a.dnf).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
           const overallRows = finishers.map((ath, place) => {
             const agp = archiveAgPlace(race.athletes, ath);
             const ac = raceCourses.find(c => c.id === ath.courseId) || raceCourses[0] || { name: "Race" };
             const segTimes = segs.map((_, si) => { const d = archiveSegDur(ath, si); return d !== null ? formatElapsed(d) : "--"; });
-            return `<tr><td>${place + 1}</td><td>${ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td><td>${ath.name}</td><td>${ath.gender}</td><td>${ath.ageGroup}</td><td>${agp !== null ? agp : "--"}</td><td>${ac.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`;
+            return `<tr><td>${place + 1}</td><td>${ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td><td>${ath.name}</td><td>${ath.gender}</td><td>${ath.ageGroup}</td><td>${agp !== null ? agp : "--"}</td><td>${ac.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`;
           }).join("");
           const agGroups = {};
           (race.athletes || []).filter(a => a.finished).forEach(a => { const key = `${a.gender} ${a.ageGroup}`; if (!agGroups[key]) agGroups[key] = []; agGroups[key].push(a); });
           Object.values(agGroups).forEach(g => g.sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity)));
           const agSections = Object.entries(agGroups).map(([label, group]) => {
-            const rows = group.map((ath, i) => { const segTimes = segs.map((_, si) => { const d = archiveSegDur(ath, si); return d !== null ? formatElapsed(d) : "--"; }); return `<tr><td>${i + 1}</td><td>${ath.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`; }).join("");
+            const rows = group.map((ath, i) => { const segTimes = segs.map((_, si) => { const d = archiveSegDur(ath, si); return d !== null ? formatElapsed(d) : "--"; }); return `<tr><td>${i + 1}</td><td>${ath.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`; }).join("");
             return `<div class="ag-section"><div class="ag-label">${label}</div><table><thead><tr><th>#</th><th>Athlete</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${rows}</tbody></table></div>`;
           }).join("");
           const win = window.open("", "_blank");
@@ -6788,7 +6835,7 @@ ${html}</body></html>`);
           const raceUnits = race.units || units;
           const segs = race.segments || SEGMENTS;
           const raceCourses = race.courses || courses;
-          const finishers = (race.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
+          const finishers = (race.athletes || []).filter(a => a.finished && !a.dnf).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
           const toprint = targetAth ? [targetAth] : finishers;
           const certHTML = toprint.map(ath => {
             const place = finishers.findIndex(a => a.id === ath.id);
@@ -6799,7 +6846,7 @@ ${html}</body></html>`);
             const medal = place >= 0 && place < 3 ? medalEmoji[place] : "🏅";
             const agp = archiveAgPlace(race.athletes, ath);
             const segPills = segs.map((seg, si) => { const dur = archiveSegDur(ath, si); return dur !== null ? `<div class="seg"><div class="seg-name">${seg}</div><div class="seg-time">${formatElapsed(dur)}</div></div>` : ""; }).join("");
-            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">Chip Time</div><div class="time-val">${ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div></div>`;
+            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${ath.dnf ? "Did Not Finish" : place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">${ath.dnf ? "Result" : "Chip Time"}</div><div class="time-val">${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div></div>`;
           }).join("");
           const win = window.open("", "_blank");
           win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:11in 8.5in;margin:0;}@media screen{html{background:#8f949b;}body{background:#8f949b;padding:16px 0;}.cert{margin:0 auto 16px;box-shadow:0 6px 24px rgba(0,0,0,.35);}}@media print{html,body{zoom:1!important;padding:0!important;background:#fff!important;}.cert{margin:0!important;box-shadow:none!important;}}body{background:#fff;font-family:'Archivo',Arial,sans-serif;}.cert{width:11in;height:8.5in;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;border:5px solid #0B3FCC;background:linear-gradient(150deg,#EFEDE8 0%,#ffffff 55%,#EFEDE8 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:84px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#0B3FCC,transparent);}.event{font-size:18px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;text-align:center;}.org{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;text-align:center;margin-top:-4px;}.medal-emoji{font-size:64px;line-height:1;}.place{font-family:'Archivo',Arial,sans-serif;font-size:40px;letter-spacing:4px;}.ag-place{font-size:18px;letter-spacing:2px;color:#0B0D10;font-weight:700;text-align:center;}.name{font-family:'Archivo',Arial,sans-serif;font-size:92px;letter-spacing:5px;color:#0B0D10;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.time-val{font-family:'Archivo',Arial,sans-serif;font-size:48px;letter-spacing:3px;color:#0B0D10;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.seg-time{font-family:'Archivo',Arial,sans-serif;font-size:26px;letter-spacing:2px;color:#0B0D10;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:14px;color:#3D434B;font-weight:600;background:#EFEDE8;border:2px solid #C9C5BC;border-radius:20px;padding:3px 12px;}.bib-num{font-size:14px;letter-spacing:3px;color:#0B3FCC;font-weight:700;text-transform:uppercase;margin-top:-4px;}</style></head><body>${certHTML}<script>(function(){var w=11*96+32;if(innerWidth<w)document.body.style.zoom=(innerWidth/w).toFixed(3);})();window.onload=()=>{window.print();}<\/script></body></html>`);
@@ -6880,7 +6927,7 @@ ${html}</body></html>`);
         // Everyone across the line: stop the clock, so families don't watch it
         // keep ticking. Resume brings it back if someone's added later.
         useEffect(() => {
-          if (clockRunning && athletes.length > 0 && athletes.every(a => a.started && a.finished)) setClockRunning(false);
+          if (clockRunning && athletes.length > 0 && athletes.every(a => a.dnf || (a.started && a.finished))) setClockRunning(false);
         }, [athletes, clockRunning]);
         function resumeClock() { setClockRunning(true); }
         // The live race keeps its own copy of the clock, and the sync effects only
@@ -7177,7 +7224,8 @@ ${html}</body></html>`);
                     startOffset: a.startOffset ?? null,
                     splits: Array.from({ length: segs.length }, (_, idx) => a.splits?.[idx] ?? null),
                     started: a.started || false,
-                    finished: a.finished || false
+                    finished: a.finished || false,
+                    dnf: !!a.dnf
                   }));
                   if (liveAthletes.length > 0) setAthletes(liveAthletes);
                   if (race.plannedCode && race.plannedCode !== race.code) {
@@ -8523,6 +8571,24 @@ ${html}</body></html>`);
             setKeiserMsg("Couldn't listen to the bike: " + (err && err.message || err) + ". In chrome://flags turn on “Experimental Web Platform features”.");
           }
         }
+        // Chrome stops listening for bike broadcasts when the screen goes off or the
+        // tab is hidden, and doesn't start again on its own. Re-arm when the page is
+        // visible again, and re-arm any bike that's gone quiet; keep the screen awake.
+        const btDevNowRef = useRef(btDevices); btDevNowRef.current = btDevices;
+        useEffect(() => {
+          if (!btDevices.some(d => d.keiser)) return;
+          const rearm = (all) => btDevNowRef.current.filter(d => d.keiser && d.device && d.device.watchAdvertisements).forEach(d => {
+            const quiet = !d.lastSeen || Date.now() - d.lastSeen > 20000;
+            if ((all || quiet) && !(d.device.watchingAdvertisements && !quiet)) {
+              try { d.device.watchAdvertisements().catch(() => {}); } catch (_) {}
+            }
+          });
+          const onVis = () => { if (document.visibilityState === "visible") { rearm(true); acquireWakeLock(); } };
+          document.addEventListener("visibilitychange", onVis);
+          acquireWakeLock();
+          const id = setInterval(() => { if (document.visibilityState === "visible") rearm(false); }, 10000);
+          return () => { document.removeEventListener("visibilitychange", onVis); clearInterval(id); };
+        }, [btDevices.filter(d => d.keiser).map(d => d.id).join(",")]);
         // App reopened: bring back the bikes that were added.
         const [keiserRestoreMsg, setKeiserRestoreMsg] = useState("");
         useEffect(() => {
@@ -8770,8 +8836,8 @@ ${html}</body></html>`);
             const sp = calcSwimPace(swimMs, ac.swimYards, units.swim);
             const bp = calcBikeMph(bikeMs, ac.bikeMiles, units.bike);
             const rp = calcRunPace(runMs, ac.runMiles, units.run);
-            const pColor = place < 3 ? medalColors[place] : "#3D434B";
-            const medal  = place < 3 ? medalEmoji[place] : "🏅";
+            const pColor = ath.dnf ? "#B3001B" : place < 3 ? medalColors[place] : "#3D434B";
+            const medal  = ath.dnf ? "🏅" : place < 3 ? medalEmoji[place] : "🏅";
             const agp = ageGroupPlace(ath);
             const segPills = SEGMENTS.map((seg, si) => {
               const dur = segmentDuration(ath, si);
@@ -8785,13 +8851,13 @@ ${html}</body></html>`);
                 <div class="event">${certConfig.eventName}</div>
                 ${certConfig.orgName ? `<div class="org">${certConfig.orgName}</div>` : ""}
                 <div class="medal-emoji">${medal}</div>
-                <div class="place" style="color:${pColor}">${placeSuffix(place+1)} Place Overall</div>
+                <div class="place" style="color:${pColor}">${ath.dnf ? "Did Not Finish" : `${placeSuffix(place+1)} Place Overall`}</div>
                 <div class="name">${ath.name}</div>
                 ${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}
                 ${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}
                 <div class="time-row">
-                  <div class="time-block"><div class="time-label">Chip Time</div><div class="time-val">${chip !== null ? formatElapsed(chip) : "--"}</div></div>
-                  ${gt !== null ? `<div class="time-block"><div class="time-label">Gun Time</div><div class="time-val gun">${formatElapsed(gt)}</div></div>` : ""}
+                  <div class="time-block"><div class="time-label">${ath.dnf ? "Result" : "Chip Time"}</div><div class="time-val">${ath.dnf ? "DNF" : chip !== null ? formatElapsed(chip) : "--"}</div></div>
+                  ${gt !== null && !ath.dnf ? `<div class="time-block"><div class="time-label">Gun Time</div><div class="time-val gun">${formatElapsed(gt)}</div></div>` : ""}
                 </div>
                 <div class="segs">${segPills}</div>
                 <div class="paces">
@@ -11741,6 +11807,7 @@ Start a new race anyway?`)) return;
                 const finishers = sorted.filter(a => totalChipTime(a) !== null);
                 const resultFor = (a) => {
                   const t = totalChipTime(a);
+                  if (a.dnf) return `${athleteName(a)}: DNF (did not finish)\n` + segTimes(a);
                   if (t === null) return `${athleteName(a)} didn't record a finish time.`;
                   const place = finishers.findIndex(x => x.id === a.id) + 1;
                   const ag = ageGroupPlace(a);
@@ -12196,7 +12263,7 @@ Start a new race anyway?`)) return;
                 }
 
                 const resultsRace = manualResults;
-                const finishers = resultsRace ? (resultsRace.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity)) : [];
+                const finishers = resultsRace ? (resultsRace.athletes || []).filter(a => a.finished && !a.dnf).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity)) : [];
                 const filteredRoster = manualAthletePickerSearch.trim()
                   ? allRaceAthletes().filter(a => a.name.toLowerCase().includes(manualAthletePickerSearch.toLowerCase()))
                   : allRaceAthletes();
@@ -12475,7 +12542,7 @@ Start a new race anyway?`)) return;
                                       <td style={{ padding: "7px 8px", color: "#3D434B", textAlign: "center" }}>{ath.gender}</td>
                                       <td style={{ padding: "7px 8px", color: "#3D434B", textAlign: "center" }}>{ath.ageGroup}</td>
                                       {SEGMENTS.map((_, si) => { const dur = archiveSegDur(ath, si); return <td key={si} style={{ padding: "7px 8px", color: "#3D434B", textAlign: "center", fontFamily: "monospace" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>; })}
-                                      <td style={{ padding: "7px 8px", color: "#B3001B", fontWeight: 700, textAlign: "center", fontFamily: "monospace" }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</td>
+                                      <td style={{ padding: "7px 8px", color: "#B3001B", fontWeight: 700, textAlign: "center", fontFamily: "monospace" }}>{ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -12496,7 +12563,7 @@ Start a new race anyway?`)) return;
                                         <div key={ath.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", background: i % 2 === 0 ? "#EFEDE8" : "transparent", borderRadius: 4 }}>
                                           <div style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: i === 0 ? "#8A5A00" : i === 1 ? "#3D434B" : i === 2 ? "#B44A00" : "#3D434B", minWidth: 22 }}>{i + 1}</div>
                                           <div style={{ flex: 1, color: "#0B0D10", fontWeight: 600, fontSize: 14 }}>{ath.name}</div>
-                                          <div style={{ fontFamily: "monospace", color: "#B3001B", fontSize: 14, fontWeight: 700 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                                          <div style={{ fontFamily: "monospace", color: "#B3001B", fontSize: 14, fontWeight: 700 }}>{ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
                                         </div>
                                       ))}
                                     </div>
@@ -12536,7 +12603,7 @@ Start a new race anyway?`)) return;
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       {[...savedArchive].sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)).map(race => {
                         const isOpen = archiveOpenId === race.id;
-                        const finishers = (race.athletes || []).filter(a => a.finished).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
+                        const finishers = (race.athletes || []).filter(a => a.finished && !a.dnf).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
                         const dnf = (race.athletes || []).filter(a => !a.finished);
                         const segs = race.segments || SEGMENTS;
                         return (
@@ -12578,7 +12645,7 @@ Start a new race anyway?`)) return;
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "2px solid #C9C5BC", cursor: "pointer" }} onClick={() => setArchiveOpenAthId(athOpen ? null : `${race.id}-${ath.id}`)}>
                                         <div style={{ fontSize: 14 }}>{rank < 3 ? medals[rank] : `${rank + 1}.`}</div>
                                         <div style={{ flex: 1, fontSize: 14, color: "#0B0D10", fontWeight: 600 }}>{ath.name}</div>
-                                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: "#04613F", letterSpacing: 0.5 }}>{ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: "#04613F", letterSpacing: 0.5 }}>{ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
                                         <button onClick={e => { e.stopPropagation(); printArchivedCert(race, ath); }} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, padding: "3px 8px", fontSize: 14, color: "#0B3FCC", cursor: "pointer" }}>🏆</button>
                                       </div>
                                       {athOpen && (
@@ -13127,8 +13194,8 @@ Start a new race anyway?`)) return;
                             const ord = (n) => n + (["th","st","nd","rd"][(n % 100 - 20) % 10] || ["th","st","nd","rd"][n % 100] || "th");
                             return (
                               <div style={{ ...rowStyle(TM.run), marginBottom: 12, textAlign: "center" }}>
-                                <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2, color: TM.run }}>🏁 FINISHED</div>
-                                <div className="tm-metric" style={{ fontSize: 48, letterSpacing: 0, color: TM.ink, lineHeight: 1.1 }}>{chip != null ? fmtSplit(chip) : "—"}</div>
+                                <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2, color: me.dnf ? TM.live : TM.run }}>{me.dnf ? "DID NOT FINISH" : "🏁 FINISHED"}</div>
+                                <div className="tm-metric" style={{ fontSize: 48, letterSpacing: 0, color: me.dnf ? TM.live : TM.ink, lineHeight: 1.1 }}>{me.dnf ? "DNF" : chip != null ? fmtSplit(chip) : "—"}</div>
                                 {place && <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{place <= 3 ? ["🥇","🥈","🥉"][place - 1] + " " : ""}{ord(place)} in {feed.label}</div>}
                                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                                   <button onClick={() => openCertShare(joinLiveData, me, "share")} style={{ ...btnStyle(TM.ink), flex: 1, fontSize: 16 }}>📤 Share certificate</button>
@@ -13440,9 +13507,12 @@ Start a new race anyway?`)) return;
                                       {isMe && <span style={{ fontSize: 14, color: "#04613F", marginLeft: 7, letterSpacing: 1, fontWeight: 700 }}>YOU</span>}
                                     </div>
                                     <div style={{ fontSize: 14, color: "#3D434B" }}>{ath.ageGroup}{ath.ageGroup && ath.gender ? " · " : ""}{ath.gender}</div>
+                                    <LegLine a={ath} clock={clock} />
                                   </div>
                                   <div style={{ textAlign: "right" }}>
-                                    {ath.finished ? (
+                                    {ath.dnf ? (
+                                      <div style={{ fontSize: 16, fontWeight: 900, color: TM.live, letterSpacing: 1 }}>DNF</div>
+                                    ) : ath.finished ? (
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#04613F", letterSpacing: 1 }}>{formatElapsed(finishMs)} 🏁</div>
                                     ) : ath.started ? (
                                       <div style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: "#0B3FCC", letterSpacing: 1 }}>{formatElapsed(chipMs)}</div>
@@ -13992,7 +14062,9 @@ Start a new race anyway?`)) return;
                                     <div style={{ fontSize: 14, color: "#3D434B", marginTop: 1 }}>{ath.ageGroup}{ath.ageGroup && ath.gender ? " · " : ""}{ath.gender}</div>
                                   </div>
                                   <div style={{ textAlign: "right", flexShrink: 0 }}>
-                                    {ath.finished ? (
+                                    {ath.dnf ? (
+                                      <div style={{ fontSize: 18, fontWeight: 900, color: TM.live, letterSpacing: 1 }}>DNF</div>
+                                    ) : ath.finished ? (
                                       <div>
                                         <div style={{ fontSize: 14, fontWeight: 700, color: "#04613F", letterSpacing: 1 }}>FINISHED</div>
                                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 24, color: "#04613F", letterSpacing: 0.5, lineHeight: 1.2 }}>{formatElapsed(ath.finishMs)}</div>
@@ -15375,7 +15447,8 @@ Start a new race anyway?`)) return;
                               </button>
                             );
                           })()}
-                          {done && <span style={{ fontSize: 14, fontWeight: 900, color: TM.run, letterSpacing: 1 }}>DONE</span>}
+                          {ath.dnf ? <span style={{ fontSize: 14, fontWeight: 900, color: TM.live, letterSpacing: 1 }}>DNF</span>
+                            : done && <span style={{ fontSize: 14, fontWeight: 900, color: TM.run, letterSpacing: 1 }}>DONE</span>}
                           {!ath.started && clockStarted && (
                             <button onClick={() => sendOff(i)} style={{ ...btnStyle(TM.ink), minHeight: 40, padding: "0 12px", fontSize: 15 }}>Send off</button>
                           )}
@@ -15692,6 +15765,9 @@ Start a new race anyway?`)) return;
                                   ? <button onClick={() => undoLastSplit(i)} style={{ ...btnStyle("#B3001B"), padding: "7px 14px", fontSize: 14 }}>Yes, remove {SEGMENTS[last]} split</button>
                                   : <button onClick={() => setUndoArm(i)} style={{ ...btnStyle("#B3001B", true), padding: "7px 14px", fontSize: 14 }}>↶ Undo last split ({SEGMENTS[last]})</button>;
                               })()}
+                              {/* Did not finish: no time, no place, "DNF" on results and certificate. */}
+                              <button onClick={() => setAthletes(prev => prev.map((a, k) => k === i ? { ...a, dnf: !a.dnf } : a))}
+                                style={{ ...btnStyle(TM.live, !ath.dnf), padding: "7px 14px", fontSize: 14 }}>{ath.dnf ? "✓ DNF — tap to undo" : "Mark DNF"}</button>
                             </div>
                             {undoArm === i && (
                               <div style={{ marginTop: 6, fontSize: 14, color: "#B3001B" }}>Puts them back on that leg — its time keeps running from the last real split.</div>
@@ -15786,11 +15862,11 @@ Start a new race anyway?`)) return;
                             const placeColor = place === 0 ? "#04613F" : place === 1 ? "#8A5A00" : place === 2 ? "#04613F" : "#3D434B";
                             return (
                               <tr key={ath.id} style={{ borderBottom: "2px solid #C9C5BC", background: place === 0 && chip !== null ? "#EFEDE8" : "transparent" }}>
-                                <td style={{ padding: "10px 8px", fontFamily: "var(--tm-font)", fontSize: 20, color: placeColor }}>{place + 1}</td>
+                                <td style={{ padding: "10px 8px", fontFamily: "var(--tm-font)", fontSize: 20, color: ath.dnf ? TM.live : placeColor }}>{chip !== null ? place + 1 : ath.dnf ? "DNF" : "–"}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#0B3FCC", fontFamily: "var(--tm-font)", fontSize: 14, whiteSpace: "nowrap" }}>{ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
                                 <td style={{ padding: "10px 8px", fontWeight: 700, color: "#0B0D10", whiteSpace: "nowrap" }}>
                                   {ath.name}
-                                  {chip !== null && (
+                                  {(chip !== null || ath.dnf) && (
                                     <span style={{ display: "inline-flex", gap: 4, marginLeft: 8, verticalAlign: "middle" }}>
                                       <button onClick={() => openCertShare(hostCertRace(), ath, "share")} aria-label={`Share ${ath.name}’s certificate`} title="Share certificate"
                                         style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 8px", fontSize: 13 }}>📤 Share</button>
@@ -15807,7 +15883,7 @@ Start a new race anyway?`)) return;
                                   const dur = segmentDuration(ath, si);
                                   return <td key={si} style={{ padding: "10px 6px", textAlign: "center", color: segColors[si], fontWeight: 600, whiteSpace: "nowrap" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>;
                                 })}
-                                <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 800, color: "#04613F", whiteSpace: "nowrap" }}>{chip !== null ? formatElapsed(chip) : "--"}</td>
+                                <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 800, color: ath.dnf ? TM.live : "#04613F", whiteSpace: "nowrap" }}>{ath.dnf ? "DNF" : chip !== null ? formatElapsed(chip) : "--"}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 700, color: "#8A5A00", whiteSpace: "nowrap" }}>{gt !== null ? formatElapsed(gt) : "--"}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "center", color: "#0B3FCC", whiteSpace: "nowrap", borderLeft: "2px solid #C9C5BC" }}>{sp ?? "--"}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "center", color: "#8A5A00", whiteSpace: "nowrap" }}>{bp ?? "--"}</td>
