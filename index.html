@@ -1891,6 +1891,23 @@
           meetEntries: asList(m.meetEntries) }));
       }
 
+      // The race clock as phones should show it. Hosts write it as `clock`
+      // ({ ms, running, started, at, session }); the loose clockMs/clockRunning
+      // fields are what older versions write, so a forgotten tab still running
+      // yesterday's clock can't push a 10-hour clock onto today's race. During
+      // sign-ups there is no clock at all.
+      function withLiveClock(d) {
+        if (!d || typeof d !== "object") return d;
+        if (d.status === "registration" || d.status === "closed")
+          return { ...d, clockMs: 0, clockRunning: false, clockStarted: false };
+        const c = d.clock;
+        if (c && typeof c === "object")
+          return { ...d, clockMs: c.ms || 0, clockRunning: !!c.running, clockStarted: !!c.started, updatedAt: c.at || d.updatedAt };
+        return d;
+      }
+      // Race-clock reading right now from a (normalised) live race.
+      const liveClockNow = d => (d.clockMs || 0) + (d.clockRunning ? Math.max(0, Date.now() - (d.updatedAt || Date.now())) : 0);
+
       // The roster as the race publishes it: who's racing, no times, no emails.
       function rosterPayload(list) {
         return list.map(a => ({
@@ -4551,6 +4568,33 @@ ${html}</body></html>`);
         const [athleteHrData, setAthleteHrData] = useState({});
         const athleteGpsListenerRef = useRef(null);
         const lastPushedRef = useRef([]);
+        // Which screen is running a live race. Each publish or reopen stamps the
+        // race with this screen's session; a screen that sees the race reset to
+        // sign-ups, or stamped by another screen, stops writing to it.
+        const hostSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
+        const [hostLost, setHostLost] = useState(false);
+        const hostLostRef = useRef(false);
+        hostLostRef.current = hostLost;
+        const clockStamp = (ms, running, started) => ({ ms: ms || 0, running: !!running, started: !!started, at: Date.now(), session: hostSessionRef.current });
+        // Another screen took the race over (or it was reset to sign-ups): stop writing.
+        useEffect(() => {
+          if (!liveRaceCode) { setHostLost(false); return; }
+          const ref = rtdb.ref("liveRaces/" + liveRaceCode);
+          const hsRef = ref.child("hostSession"), stRef = ref.child("status");
+          let hs, st;
+          const check = () => {
+            if (hs === undefined || st === undefined) return;
+            setHostLost((st != null && st !== "live" && st !== "moved") || (hs != null && hs !== hostSessionRef.current));
+          };
+          const f1 = sn => { hs = sn.val(); check(); };
+          const f2 = sn => { st = sn.val(); check(); };
+          hsRef.on("value", f1); stRef.on("value", f2);
+          return () => { hsRef.off("value", f1); stRef.off("value", f2); };
+        }, [liveRaceCode]);
+        async function claimHostSession(code) {
+          setHostLost(false); hostLostRef.current = false;
+          try { await rtdb.ref("liveRaces/" + code + "/hostSession").set(hostSessionRef.current); } catch (_) {}
+        }
         // Short breadcrumb per athlete, accumulated host-side from successive fixes,
         // so the thumbnail beside each name shows movement rather than a lone dot.
         const athleteTrackRef = useRef({});
@@ -5507,14 +5551,16 @@ ${html}</body></html>`);
 
         // Keep spectator/athlete clocks in sync independently of athlete state changes
         useEffect(() => {
-          if (!liveRaceCode || !clockRunning) return;
+          if (!liveRaceCode || !clockRunning || hostLost) return;
           const iv = setInterval(() => {
+            if (hostLostRef.current) return;
+            const ms = raceNow();
             rtdb.ref("liveRaces/" + liveRaceCode)
-              .update({ clockMs: raceNow(), clockRunning: true, updatedAt: Date.now() })
+              .update({ clockMs: ms, clockRunning: true, updatedAt: Date.now(), clock: clockStamp(ms, true, true) })
               .catch(console.error);
           }, 2000);
           return () => clearInterval(iv);
-        }, [liveRaceCode, clockRunning]);
+        }, [liveRaceCode, clockRunning, hostLost]);
 
         useEffect(() => {
           if (athletes.some(a => a.finished)) autoArchiveRace();
@@ -5529,12 +5575,13 @@ ${html}</body></html>`);
 
         // Immediately persist clock running state — no throttle, no athlete gate
         useEffect(() => {
-          if (!liveRaceCode || !clockStarted) return;
+          if (!liveRaceCode || !clockStarted || hostLostRef.current) return;
           rtdb.ref("liveRaces/" + liveRaceCode).update({
             clockMs,
             clockRunning,
             clockStarted: true,   // athletes' phones show the clock once this is set
             updatedAt: Date.now(),
+            clock: clockStamp(clockMs, clockRunning, true),
           }).catch(console.error);
         }, [clockRunning, clockStarted, liveRaceCode]);
 
@@ -5824,7 +5871,7 @@ ${html}</body></html>`);
             const ended = !v || !v.status || v.status === "closed";
             joinRaceEndedRef.current = ended;
             if (ended) stopGpsTracking();
-            setJoinLiveData(snap.exists() ? { ...v, code: snap.key } : null);
+            setJoinLiveData(snap.exists() ? withLiveClock({ ...v, code: snap.key }) : null);
           };
           ref.on("value", fn);
           joinLiveListenerRef.current = { ref, fn };
@@ -6146,7 +6193,7 @@ ${html}</body></html>`);
                     if (code) {
                       const liveSnap = await rtdb.ref("liveRaces/" + code).once("value");
                       if (liveSnap.exists()) {
-                        const ld = liveSnap.val();
+                        const ld = withLiveClock(liveSnap.val());
                         if (ld.status === "live" && ld.publishedBy === user.uid) {
                           const segs = ld.segments || SEGMENTS;
                           // The race this live session came from, for its saved settings and emails.
@@ -6182,6 +6229,7 @@ ${html}</body></html>`);
                           // A race that never started comes back ready to start, not paused at zero.
                           setClockStarted(!!(ld.clockStarted || ld.clockRunning || restoredClockMs > 0 || asList(ld.athletes).some(a => a && a.started)));
                           setClockRunning(ld.clockRunning || false);
+                          await claimHostSession(code);   // this screen runs the race now
                           setLiveRaceCode(code);
                           setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
                           if (ld.legOrder) setLegOrder(legOrderOf(ld.legOrder));
@@ -6535,6 +6583,7 @@ ${html}</body></html>`);
             code, publishedBy: currentUser.uid,
             publisherName: userProfile?.displayName || userProfile?.firstName || currentUser.email,
             startedAt: Date.now(), clockMs, clockRunning: false, clockStarted: false, status: "live",
+            clock: clockStamp(clockMs, false, false), hostSession: hostSessionRef.current,
             raceName: certConfig.eventName || "Race",
             cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
                     logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
@@ -6556,7 +6605,7 @@ ${html}</body></html>`);
         }
 
         function updateLiveRace(code) {
-          if (!code || !currentUser) return;
+          if (!code || !currentUser || hostLostRef.current) return;
           // Remember what this screen last sent, so a split an athlete's phone
           // writes later can be told apart from one the host cleared on purpose.
           lastPushedRef.current = athletes.map(a => ({ splits: a.splits.slice(), started: a.started, finished: a.finished }));
@@ -6612,7 +6661,7 @@ ${html}</body></html>`);
                   )
                 }));
               }
-              setLiveRace({ ...data, code: snap.key });
+              setLiveRace(withLiveClock({ ...data, code: snap.key }));
               setLiveRaceError("");
             }
           };
@@ -6795,7 +6844,7 @@ ${html}</body></html>`);
           setClockRunning(false); setClockStarted(false); offsetRef.current = 0; setClockMs(0);
           if (liveRaceCode) {
             rtdb.ref("liveRaces/" + liveRaceCode)
-              .update({ clockMs: 0, clockRunning: false, clockStarted: false, updatedAt: Date.now() })
+              .update({ clockMs: 0, clockRunning: false, clockStarted: false, updatedAt: Date.now(), clock: clockStamp(0, false, false) })
               .catch(console.error);
           }
         }
@@ -7043,7 +7092,7 @@ ${html}</body></html>`);
             try {
               const liveSnap = await rtdb.ref("liveRaces/" + race.code).once("value");
               if (liveSnap.exists()) {
-                const ld = liveSnap.val();
+                const ld = withLiveClock(liveSnap.val());
                 if (ld.status === "live" && ld.publishedBy === currentUser.uid) {
                   const elapsed = ld.clockRunning ? Math.max(0, Date.now() - (ld.updatedAt || Date.now())) : 0;
                   const restoredClockMs = (ld.clockMs || 0) + elapsed;
@@ -7051,6 +7100,7 @@ ${html}</body></html>`);
                   setClockMs(restoredClockMs);
                   setClockStarted(!!(ld.clockStarted || ld.clockRunning || restoredClockMs > 0 || asList(ld.athletes).some(a => a && a.started)));
                   setClockRunning(ld.clockRunning || false);
+                  await claimHostSession(race.code);
                   setLiveRaceCode(race.code);
                   setAutoSplits(ld.autoSplits !== false);   // reopening a live race keeps its Auto/Manual choice
                           if (ld.legOrder) setLegOrder(legOrderOf(ld.legOrder));
@@ -8016,7 +8066,7 @@ ${html}</body></html>`);
               }
               rtdb.ref(`liveRaces/${joinRace.code}`).once("value").then(snap => {
                 if (!snap.exists()) return;
-                const clockMs = snap.val().clockMs || 0;
+                const clockMs = liveClockNow(withLiveClock(snap.val()));
                 const athRef = rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}`);
                 if (wp.action === "start") {
                   athRef.update({ startOffset: raceNow(), started: true }).catch(console.error);
@@ -8085,8 +8135,8 @@ ${html}</body></html>`);
           try {
             const snap = await rtdb.ref(`liveRaces/${code}`).once("value");
             if (!snap.exists()) return;
-            const d = snap.val();
-            const clockMs = (d.clockMs || 0) + (d.clockRunning ? Math.max(0, Date.now() - (d.updatedAt || Date.now())) : 0);
+            const d = withLiveClock(snap.val());
+            const clockMs = liveClockNow(d);
             if (d.athletes && d.athletes[idx] && d.athletes[idx].splits && d.athletes[idx].splits[segIdx] != null) { if (onDone) onDone(); return; }
             await rtdb.ref(`liveRaces/${code}/athletes/${idx}/splits/${segIdx}`).set(clockMs);
             if (segIdx === 4) await rtdb.ref(`liveRaces/${code}/athletes/${idx}`).update({ finished: true });
@@ -14868,6 +14918,17 @@ Start a new race anyway?`)) return;
               {/* ── RACE ── */}
               {view === "race" && (
                 <div>
+                  {hostLost && (
+                    <div role="alert" style={{ ...rowStyle(TM.live), marginBottom: 12 }}>
+                      <div style={{ fontSize: 17, fontWeight: 800 }}>This race is being run from another screen</div>
+                      <div style={{ fontSize: 15, color: TM.inkMuted, margin: "4px 0 10px" }}>This screen has stopped sending times so the two don't overwrite each other.</div>
+                      <button onClick={async () => {
+                        const st = (await rtdb.ref("liveRaces/" + liveRaceCode + "/status").once("value")).val();
+                        if (st !== "live") { alert("This race was reset on another screen. Open it from My Races to run it here."); return; }
+                        await claimHostSession(liveRaceCode); updateLiveRace(liveRaceCode);
+                      }} style={{ ...btnStyle(TM.live), minHeight: 44, fontSize: 16 }}>Run it from this screen</button>
+                    </div>
+                  )}
                   {/* Moved off Setup: these are the taps you make on *this* screen,
                       so they belong where you're about to make them. */}
                   <div style={{ marginBottom: 10, fontSize: 14, fontWeight: 600, color: TM.inkMuted }}>
