@@ -15509,7 +15509,9 @@ Start a new race anyway?`)) return;
                         {/* Trainer bike progress — shows for trainer/spin courses or whenever live trainer data arrives */}
                         {!done && (() => {
                           const athCourse = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0];
-                          const isTrainerCourse = athCourse?.bikeType === "trainer";
+                          // A spin bike with a Keiser paired counts distance like a trainer.
+                          const pairedBike = keiserAssign[ath.id] != null && keiserAssign[ath.id] !== "" ? keiserAssign[ath.id] : null;
+                          const isTrainerCourse = athCourse?.bikeType === "trainer" || (athCourse?.bikeType === "spin" && pairedBike != null);
                           // Resolve tData BEFORE the gate so we can show the panel for any course when data is present
                           const tDataFb = athleteTrainerData[i];
                           // Fallback: host's own local BLE device — exact match, or solo-athlete case when no UID/name match resolved
@@ -15535,22 +15537,25 @@ Start a new race anyway?`)) return;
                             <div style={{ padding: "0 14px 10px" }}>
                               <div style={{ background: "#FFFFFF", borderRadius: 6, padding: "8px 12px", border: `2px solid ${inBike ? "#8A5A00" : "#C9C5BC"}` }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: (isTrainerCourse && distMi != null) ? 4 : 0 }}>
-                                  <span style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>🚲 {athCourse?.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}</span>
+                                  <span style={{ fontSize: 14, color: "#8A5A00", letterSpacing: 1 }}>🚲 {athCourse?.bikeType === "spin" ? "SPIN BIKE" : "TRAINER"}{pairedBike != null ? ` #${pairedBike}` : ""}</span>
                                   <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#8A5A00", letterSpacing: 1 }}>
                                     {isTrainerCourse
-                                      ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData ? '0.00 mi' : 'No signal'))
+                                      ? (distMi != null ? `${distMi.toFixed(2)} / ${targetMi} mi` : (tData || pairedBike != null ? `0.00 / ${targetMi} mi` : 'No signal'))
                                       : (tData ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph` : 'No signal')}
                                   </span>
                                 </div>
-                                {isTrainerCourse && targetMi > 0 && distMi != null && (
-                                  <div style={{ background: "#EFEDE8", borderRadius: 3, height: 5, marginBottom: 4 }}>
-                                    <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#04613F" : "#8A5A00", borderRadius: 3, transition: "width 0.4s" }} />
+                                {isTrainerCourse && targetMi > 0 && (
+                                  <div style={{ background: "#EFEDE8", borderRadius: 6, height: 14, margin: "4px 0 6px", overflow: "hidden", border: "1px solid #C9C5BC" }}>
+                                    <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#04613F" : "#B44A00", borderRadius: 6, transition: "width 0.6s" }} />
                                   </div>
                                 )}
                                 <div style={{ fontSize: 14, color: tData ? "#3D434B" : "#B3001B" }}>
                                   {tData
-                                    ? `${((tData.speed || 0) * 0.621).toFixed(1)} mph${tData.cadence != null ? ` · ${tData.cadence} rpm` : ''}${tData.power != null ? ` · ${tData.power}w` : ''}${isTrainerCourse && pct >= 100 ? ' · ✓ target reached' : ''}`
-                                    : (inBike ? 'No trainer signal — use Bike button above to advance manually' : 'Waiting for trainer signal…')}
+                                    ? [tData.speed != null ? `${(tData.speed * 0.621).toFixed(1)} mph` : null, tData.cadence != null ? `${tData.cadence} rpm` : null,
+                                       tData.power != null ? `${tData.power}w` : null, isTrainerCourse && pct >= 100 ? '✓ target reached' : null].filter(Boolean).join(' · ')
+                                    : pairedBike != null
+                                      ? (inBike ? `Bike #${pairedBike} asleep — pedal to wake it. (Bike button above advances by hand.)` : `Bike #${pairedBike} ready — miles start counting when the bike leg starts.`)
+                                      : (inBike ? 'No trainer signal — use Bike button above to advance manually' : 'Waiting for trainer signal…')}
                                 </div>
                               </div>
                             </div>
