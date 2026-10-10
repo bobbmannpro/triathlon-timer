@@ -13457,7 +13457,26 @@ Start a new race anyway?`)) return;
 
                         {btDevices.length > 0 && (
                           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-                            {btDevices.map(dev => (
+                            {btDevices.map(dev => dev.keiser ? (() => {
+                              // Keiser bikes: just which one is moving, and its name.
+                              const id = dev.readings.keiserBike;
+                              const live = keiserLive(dev), ped = live && dev.readings.cadence > 0;
+                              return (
+                                <div key={dev.id} style={{ background: "#FFFFFF", border: `2px solid ${ped ? "#04613F" : "#C9C5BC"}`, borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                  <span aria-hidden="true" style={{ width: 12, height: 12, borderRadius: "50%", flexShrink: 0, background: ped ? "#1FA971" : live ? "#C9C5BC" : "#7A7F87", animation: ped ? "gpsping 1.2s ease-in-out infinite" : "none" }} />
+                                  <span style={{ fontWeight: 800, fontSize: 16, minWidth: 70 }}>{id != null ? bikeName(id) : "Keiser bike"}</span>
+                                  <span style={{ fontSize: 15, fontWeight: 700, color: ped ? "#04613F" : TM.inkMuted, flex: "1 1 120px" }}>
+                                    {ped ? `${dev.readings.cadence} rpm pedaling` : live ? "stopped" : dev.lastSeen ? "💤 asleep — pedal to wake" : "Waiting… pedal to wake"}
+                                  </span>
+                                  {id != null && (
+                                    <input key={"nm" + id} defaultValue={bikeNames[id] || ""} placeholder="Bike number" aria-label="Bike number"
+                                      onChange={e => setBikeName(id, e.target.value)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                      style={{ width: 110, minHeight: 40, fontSize: 16, padding: "0 10px", border: "2px solid #C9C5BC", borderRadius: 6 }} />
+                                  )}
+                                  <button onClick={() => disconnectBleDevice(dev.id)} style={{ ...btnStyle("#04613F", true), padding: "4px 10px", fontSize: 14 }}>Disconnect</button>
+                                </div>
+                              );
+                            })() : (
                               <div key={dev.id} style={{ background: "#FFFFFF", border: `2px solid ${dev.connected ? "#04613F" : "#3D434B"}`, borderRadius: 8, padding: "14px 14px 10px" }}>
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
