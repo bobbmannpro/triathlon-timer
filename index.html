@@ -4579,11 +4579,17 @@ ${html}</body></html>`);
         // Your own names for the bikes ("7", "Front row 3") in place of the console's bike ID.
         const [bikeNames, setBikeNamesRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("keiser-names") || "{}"); } catch (_) { return {}; } });
         const [namingBikes, setNamingBikes] = useState(false);
+        // Bluetooth ids look like "UP+Mdq/hEj2==" — "/" and friends aren't allowed in
+        // database keys (it threw and blanked the app), so the account copy is one JSON string.
+        const bikeNamesSaveRef = useRef(null);
         const setBikeName = (id, name) => setBikeNamesRaw(prev => {
           const n = { ...prev }; const v = String(name || "").trim().slice(0, 20);
           if (v) n[id] = v; else delete n[id];
           try { localStorage.setItem("keiser-names", JSON.stringify(n)); } catch (_) {}
-          if (auth.currentUser) rtdb.ref("users/" + auth.currentUser.uid + "/keiserNames").set(n).catch(() => {});
+          clearTimeout(bikeNamesSaveRef.current);
+          bikeNamesSaveRef.current = setTimeout(() => {
+            try { if (auth.currentUser) rtdb.ref("users/" + auth.currentUser.uid + "/keiserNamesJson").set(JSON.stringify(n)).catch(() => {}); } catch (_) {}
+          }, 800);
           return n;
         });
         // Bikes are keyed by their Bluetooth identity, not the console's bike ID —
@@ -8441,8 +8447,9 @@ ${html}</body></html>`);
         const [keiserMsg, setKeiserMsg] = useState("");
         useEffect(() => {
           if (!currentUser) return;
-          rtdb.ref("users/" + currentUser.uid + "/keiserNames").once("value").then(sn => {
-            const v = sn.val(); if (!v) return;
+          rtdb.ref("users/" + currentUser.uid + "/keiserNamesJson").once("value").then(sn => {
+            let v = null; try { v = JSON.parse(sn.val() || "null"); } catch (_) {}
+            if (!v || typeof v !== "object") return;
             setBikeNamesRaw(prev => { const n = { ...v, ...prev }; try { localStorage.setItem("keiser-names", JSON.stringify(n)); } catch (_) {} return n; });
           }).catch(() => {});
         }, [currentUser?.uid]);
@@ -8459,11 +8466,22 @@ ${html}</body></html>`);
             if (err && err.name === "NotFoundError") return;
             setKeiserMsg("Couldn't search for bikes: " + (err && err.message || err)); return;
           }
+          await attachKeiser(device);
+        }
+        // Bikes you've added stay added: their ids are saved, and on restart Chrome
+        // hands the same bikes back (getDevices) and listening starts again.
+        const keiserAttachedRef = useRef(new Set());
+        const savedKeiserIds = () => { try { return JSON.parse(localStorage.getItem("keiser-devices") || "[]"); } catch (_) { return []; } };
+        const saveKeiserIds = ids => { try { localStorage.setItem("keiser-devices", JSON.stringify([...new Set(ids)])); } catch (_) {} };
+        async function attachKeiser(device, quiet = false) {
+          if (keiserAttachedRef.current.has(device.id)) return;
           if (!device.watchAdvertisements) {
             setKeiserMsg("This Chrome can't read Keiser bikes yet. Open chrome://flags, turn on “Experimental Web Platform features”, restart Chrome and try again.");
             return;
           }
           const id = "keiser-" + device.id;
+          keiserAttachedRef.current.add(device.id);
+          saveKeiserIds([...savedKeiserIds(), device.id]);
           setBtDevices(prev => prev.some(d => d.id === id) ? prev : [...prev, { id, name: device.name || "Keiser bike", device, keiser: true,
             gattServer: null, connected: false, lastSeen: 0, readings: {}, hrHistory: [], keiserAcc: 0, keiserBase: null, keiserLast: null }]);
           device.addEventListener("advertisementreceived", ev => {
@@ -8505,6 +8523,19 @@ ${html}</body></html>`);
             setKeiserMsg("Couldn't listen to the bike: " + (err && err.message || err) + ". In chrome://flags turn on “Experimental Web Platform features”.");
           }
         }
+        // App reopened: bring back the bikes that were added.
+        const [keiserRestoreMsg, setKeiserRestoreMsg] = useState("");
+        useEffect(() => {
+          const ids = savedKeiserIds();
+          if (!ids.length || !navigator.bluetooth || !navigator.bluetooth.getDevices) return;
+          navigator.bluetooth.getDevices().then(async devs => {
+            const mine = devs.filter(d => ids.includes(d.id));
+            for (const d of mine) { try { await attachKeiser(d, true); } catch (_) {} }
+            const missing = ids.length - mine.length;
+            if (mine.length) setKeiserMsg(`${mine.length} bike${mine.length > 1 ? "s" : ""} back from last time — pedal to wake them.`);
+            if (missing > 0) setKeiserRestoreMsg(`${missing} bike${missing > 1 ? "s" : ""} from last time need adding again (Connect Keiser bike). Their names are kept.`);
+          }).catch(() => {});
+        }, []);
         // ── Host: every Keiser bike in the room, by bike ID ──
         // One phone at the host table hears all bikes (Web Bluetooth scanning).
         // Each athlete is given a bike number; their distance counts from the
@@ -8585,6 +8616,11 @@ ${html}</body></html>`);
         }
 
         function disconnectBleDevice(deviceId) {
+          if (String(deviceId).startsWith("keiser-")) {
+            const raw = String(deviceId).slice(7);
+            keiserAttachedRef.current.delete(raw);
+            saveKeiserIds(savedKeiserIds().filter(x => x !== raw));
+          }
           const chars = btCharacteristicsRef.current[deviceId] || {};
           for (const char of Object.values(chars)) {
             try { char.stopNotifications(); } catch (_) {}
@@ -13457,6 +13493,7 @@ Start a new race anyway?`)) return;
                         </button>
                         <button onClick={connectKeiser} style={{ ...btnStyle("#8A5A00", true), width: "100%", marginTop: 8 }}>🚲 Connect Keiser bike</button>
                         {keiserMsg && <div style={{ fontSize: 14, color: "#3D434B", marginTop: 6 }}>{keiserMsg}</div>}
+                        {keiserRestoreMsg && <div style={{ fontSize: 14, color: TM.warn, marginTop: 6, fontWeight: 700 }}>{keiserRestoreMsg}</div>}
 
                         {btDevices.length > 0 && (
                           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -19461,7 +19498,26 @@ Start a new race anyway?`)) return;
         );
       }
 
-      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+      // A crash shows what went wrong and a way back, never a blank screen.
+      class Boundary extends React.Component {
+        constructor(p) { super(p); this.state = { err: null }; }
+        static getDerivedStateFromError(err) { return { err }; }
+        componentDidCatch(err, info) {
+          try { localStorage.setItem("tm-last-crash", JSON.stringify({ at: Date.now(), msg: String(err && err.message || err), stack: String(err && err.stack || "").slice(0, 1500) })); } catch (_) {}
+        }
+        render() {
+          if (!this.state.err) return this.props.children;
+          return (
+            <div style={{ fontFamily: "Archivo, Arial, sans-serif", padding: "32px 20px", maxWidth: 560, margin: "0 auto", color: "#0B0D10" }}>
+              <h1 style={{ fontSize: 28, fontWeight: 900, margin: "0 0 10px" }}>Something went wrong</h1>
+              <p style={{ fontSize: 17, lineHeight: 1.4, margin: "0 0 16px" }}>Your race is saved. Tap Reload to carry on — bikes you added and their names come back too.</p>
+              <button onClick={() => location.reload()} style={{ minHeight: 56, padding: "0 28px", fontSize: 18, fontWeight: 800, background: "#0B0D10", color: "#fff", border: "none", borderRadius: 8 }}>Reload</button>
+              <p style={{ fontSize: 13, color: "#3D434B", marginTop: 20, wordBreak: "break-word" }}>Error: {String(this.state.err && this.state.err.message || this.state.err)}</p>
+            </div>
+          );
+        }
+      }
+      ReactDOM.createRoot(document.getElementById("root")).render(<Boundary><App /></Boundary>);
       const splash = document.getElementById("splash");
       if (splash) { splash.classList.add("hide"); setTimeout(() => splash.remove(), 350); }
     </script>
