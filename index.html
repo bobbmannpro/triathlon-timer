@@ -15336,7 +15336,8 @@ Start a new race anyway?`)) return;
                                     {ids.map(b => (
                                       <button key={b} onClick={() => { setKeiserAssign(a => ({ ...a, [ath.id]: b })); setKeiserPairFor(null); }}
                                         style={{ ...btnStyle(TM.bike, String(keiserAssign[ath.id]) !== String(b)), minHeight: 40, padding: "0 12px", fontSize: 15, opacity: taken(b) ? 0.5 : 1 }}>
-                                        #{b} · {keiserBikes[b].cadence} rpm{taken(b) ? " (taken)" : ""}
+                                        <span aria-hidden="true" style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", marginRight: 6, background: keiserBikes[b].cadence > 0 ? "#1FA971" : "#C9C5BC" }} />
+                                        #{b} · {keiserBikes[b].cadence > 0 ? `${keiserBikes[b].cadence} rpm pedaling` : "stopped"}{taken(b) ? " (taken)" : ""}
                                       </button>
                                     ))}
                                     {keiserAssign[ath.id] && <button onClick={() => { setKeiserAssign(a => { const n = { ...a }; delete n[ath.id]; return n; }); setKeiserPairFor(null); }}
