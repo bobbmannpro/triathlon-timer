@@ -12146,10 +12146,10 @@ Start a new race anyway?`)) return;
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         {saved.map(r => (
-                          <div key={r.key} style={{ ...rowStyle(RACE_KINDS[r.kind].colour), display: "flex", alignItems: "center", gap: 10 }}>
+                          <div key={r.key} style={{ ...rowStyle(RACE_KINDS[r.kind].colour), display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: RACE_KINDS[r.kind].colour }}>{RACE_KINDS[r.kind].label}</div>
-                              <div style={{ fontSize: 17, fontWeight: 800, color: TM.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                              <div style={{ fontSize: 18, fontWeight: 800, color: TM.ink, lineHeight: 1.25, overflowWrap: "anywhere" }}>{r.name}</div>
                               <div style={TM_CAPTION}>{r.meta}</div>
                               {r.kind === "triathlon" && (() => {
                                 const res = resultsForRace(r.race).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
@@ -12201,13 +12201,13 @@ Start a new race anyway?`)) return;
                               })()}
                             </div>
                             {deleteConfirm === r.key ? (
-                              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                                <button onClick={() => { r.del(); setDeleteConfirm(null); }} style={{ ...btnStyle(TM.live), minHeight: 46, padding: "0 12px" }}>Delete</button>
-                                <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle(TM.ink, true), padding: "0 12px" }}>Keep</button>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button onClick={() => { r.del(); setDeleteConfirm(null); }} style={{ ...btnStyle(TM.live), minHeight: 46, padding: "0 12px", flex: 1 }}>Delete</button>
+                                <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle(TM.ink, true), padding: "0 12px", flex: 1 }}>Keep</button>
                               </div>
                             ) : (
-                              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                                <button onClick={r.open} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px" }}>Open</button>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button onClick={r.open} style={{ ...btnStyle(TM.ink), minHeight: 46, padding: "0 16px", flex: 1 }}>Open</button>
                                 <button onClick={() => setDeleteConfirm(r.key)} aria-label={`Delete ${r.name}`}
                                   style={{ ...btnStyle(TM.ink, true), width: 46, minWidth: 46, padding: 0, fontSize: 22 }}>×</button>
                               </div>
@@ -13133,32 +13133,38 @@ Start a new race anyway?`)) return;
                         const segs = race.segments || SEGMENTS;
                         return (
                           <div key={race.id} style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", overflow: "hidden" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontWeight: 700, fontSize: 15, color: "#0B0D10" }}>{race.name}</div>
-                                <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>{race.date} · {race.finishedCount}/{race.totalCount} finished</div>
-                                {race.photoCode ? (
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                                    <span style={{ fontSize: 14, color: "#3D434B" }}>Photo code:</span>
-                                    <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#0B3FCC", letterSpacing: 0.5 }}>{race.photoCode}</span>
-                                    <button onClick={() => navigator.clipboard.writeText(race.photoCode)} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 3, color: "#0B3FCC", fontSize: 14, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
-                                  </div>
-                                ) : null}
-                              </div>
-                              <button onClick={() => race.photoCode && hostAlbums[race.photoCode]
-                                  ? openAlbumEditor({ name: hostAlbums[race.photoCode].name, link: hostAlbums[race.photoCode].folderId ? "https://drive.google.com/drive/folders/" + hostAlbums[race.photoCode].folderId : "", code: race.photoCode, raceId: race.id, editing: race.photoCode })
-                                  : openAlbumEditor({ name: race.name, raceId: race.id })} style={{ ...btnStyle("#0B3FCC", true), padding: "4px 10px", fontSize: 14, flexShrink: 0 }}>📷 Photos</button>
-                              <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#8A5A00", true), padding: "4px 10px", fontSize: 14, flexShrink: 0 }}>🏆 Certs</button>
-                              <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 4px" }}>{isOpen ? "▲" : "▼"}</button>
-                              {archiveDeleteConfirm === race.id ? (
+                            <div style={{ padding: "12px 14px" }}>
+                              {/* Name and details get the full width; the buttons sit in their own row. */}
+                              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontWeight: 800, fontSize: 17, color: "#0B0D10", lineHeight: 1.25 }}>{race.name}</div>
+                                  <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>{race.date} · {race.finishedCount}/{race.totalCount} finished</div>
+                                </div>
+                                {archiveDeleteConfirm === race.id ? (
                                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                                   <span style={{ fontSize: 14, color: "#B3001B" }}>Delete?</span>
                                   <button onClick={() => { const updated = savedArchive.filter(r => r.id !== race.id); setSavedArchive(updated); try { localStorage.setItem("tri-archive", JSON.stringify(updated)); } catch(e) { console.warn("Archive persist failed:", e); } if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error); setArchiveDeleteConfirm(null); }} style={{ ...btnStyle("#B3001B"), padding: "3px 8px", fontSize: 14 }}>Yes</button>
                                   <button onClick={() => setArchiveDeleteConfirm(null)} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>No</button>
                                 </div>
                               ) : (
-                                <button onClick={() => setArchiveDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 2px" }}>&times;</button>
+                                <button onClick={() => setArchiveDeleteConfirm(race.id)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 22, cursor: "pointer", padding: "0 4px", minHeight: 36, flexShrink: 0 }} aria-label="Delete these results">&times;</button>
                               )}
+                              </div>
+                              {race.photoCode ? (
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                                  <span style={{ fontSize: 14, color: "#3D434B" }}>Photo code:</span>
+                                  <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#0B3FCC", letterSpacing: 0.5 }}>{race.photoCode}</span>
+                                  <button onClick={() => navigator.clipboard.writeText(race.photoCode)} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 3, color: "#0B3FCC", fontSize: 14, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
+                                </div>
+                              ) : null}
+                              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                                <button onClick={() => race.photoCode && hostAlbums[race.photoCode]
+                                  ? openAlbumEditor({ name: hostAlbums[race.photoCode].name, link: hostAlbums[race.photoCode].folderId ? "https://drive.google.com/drive/folders/" + hostAlbums[race.photoCode].folderId : "", code: race.photoCode, raceId: race.id, editing: race.photoCode })
+                                  : openAlbumEditor({ name: race.name, raceId: race.id })} style={{ ...btnStyle("#0B3FCC", true), minHeight: 44, padding: "0 14px", fontSize: 15, flex: "1 1 0" }}>📷 Photos</button>
+                                <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#8A5A00", true), minHeight: 44, padding: "0 14px", fontSize: 15, flex: "1 1 0" }}>🏆 Certs</button>
+                                <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)} aria-expanded={isOpen}
+                                  style={{ ...btnStyle(TM.ink, !isOpen), minHeight: 44, padding: "0 14px", fontSize: 15, flex: "1 1 0" }}>{isOpen ? "Hide ▲" : "Results ▼"}</button>
+                              </div>
                             </div>
                             {isOpen && (
                               <div style={{ borderTop: "2px solid #C9C5BC", padding: "10px 14px" }}>
