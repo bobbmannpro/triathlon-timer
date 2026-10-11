@@ -18871,13 +18871,13 @@ Start a new race anyway?`)) return;
                   {bikeView === "riders" && (bikeRiderDraft ? (
                     <div>
                       <div style={S.card}>
-                        <div style={S.label}>{bikeRiders.some(r => r.id === bikeRiderDraft.id) ? "Edit rider profile" : "New rider profile"}</div>
+                        <div style={S.label}>{bikeRiders.some(r => r.id === bikeRiderDraft.id) ? "Edit profile" : `New ${RW.rider} profile`}</div>
                         <div style={{ fontSize:14, color:"#3D434B", marginBottom:10 }}>
-                          Entered once, reusable for every ride this person does. Editing here updates any live feed they're in.
+                          Entered once, reusable for every ride or run this person does. Editing here updates any live feed they're in.
                         </div>
                         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                           <input value={bikeRiderDraft.name} onChange={e => setBikeRiderDraft(d => ({ ...d, name: e.target.value }))}
-                            placeholder="Rider name" style={S.input} />
+                            placeholder="Name" style={S.input} />
                           <input value={bikeRiderDraft.team} onChange={e => setBikeRiderDraft(d => ({ ...d, team: e.target.value }))}
                             placeholder="Team / club (optional)" style={S.input} />
                           <input value={bikeRiderDraft.photoUrl} onChange={e => setBikeRiderDraft(d => ({ ...d, photoUrl: e.target.value }))}
@@ -18885,7 +18885,7 @@ Start a new race anyway?`)) return;
                           <input value={bikeRiderDraft.bioLink} onChange={e => setBikeRiderDraft(d => ({ ...d, bioLink: e.target.value }))}
                             placeholder="Bio / fundraiser link (https://…)" style={S.input} />
                           <textarea value={bikeRiderDraft.bioText} onChange={e => setBikeRiderDraft(d => ({ ...d, bioText: e.target.value }))}
-                            placeholder="A short blurb for viewers — why they're riding, the route, anything they want to say."
+                            placeholder="A short blurb for viewers — why they're doing it, the route, anything they want to say."
                             rows={5} style={{ ...S.input, resize:"vertical", lineHeight:1.5 }} />
                         </div>
                       </div>
@@ -18915,9 +18915,9 @@ Start a new race anyway?`)) return;
                   ) : (
                     <div>
                       <div style={{ ...S.row, justifyContent:"space-between", marginBottom:8 }}>
-                        <div style={{ ...S.label, marginBottom:0 }}>Rider profiles</div>
+                        <div style={{ ...S.label, marginBottom:0 }}>Athlete profiles</div>
                         <button onClick={() => setBikeRiderDraft(newBikeRider())}
-                          style={{ ...btnStyle("#8A5A00"), padding:"7px 14px", fontSize:14 }}>+ New Rider</button>
+                          style={{ ...btnStyle("#8A5A00"), padding:"7px 14px", fontSize:14 }}>+ New profile</button>
                       </div>
                       {bikeRiders.length === 0 ? (
                         <div style={{ ...S.card, textAlign:"center", color:"#3D434B", fontSize:14 }}>
@@ -18933,14 +18933,14 @@ Start a new race anyway?`)) return;
                             <div style={{ flex:1, minWidth:0 }}>
                               <div style={{ fontSize:15, fontWeight:700, color:"#0B0D10" }}>{r.name || "Unnamed"}</div>
                               <div style={{ fontSize:14, color:"#3D434B" }}>
-                                {r.team ? r.team + " · " : ""}{rides} ride{rides === 1 ? "" : "s"}
+                                {r.team ? r.team + " · " : ""}{rides} event{rides === 1 ? "" : "s"}
                               </div>
                             </div>
                             <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
                               <button onClick={() => setBikeRiderDraft({ ...r })}
                                 style={{ ...btnStyle("#04613F", true), padding:"5px 10px", fontSize:14 }}>Edit</button>
                               <button onClick={() => {
-                                if (rides > 0) { alert(`${r.name} is used by ${rides} ride${rides===1?"":"s"}. Delete those events first.`); return; }
+                                if (rides > 0) { alert(`${r.name} is used by ${rides} event${rides===1?"":"s"}. Delete those events first.`); return; }
                                 if (!confirm(`Delete the profile for ${r.name || "this rider"}?`)) return;
                                 persistBikeRiders(bikeRiders.filter(x => x.id !== r.id));
                               }} style={{ ...btnStyle("#B3001B", true), padding:"5px 10px", fontSize:14 }}>Delete</button>
