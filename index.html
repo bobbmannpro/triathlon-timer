@@ -6938,6 +6938,7 @@ ${html}</body></html>`);
           } catch(e) {
             console.error("publishLiveRace failed:", e.message);
             if (e.message === "timeout") return "Connection timed out — check your internet.";
+            if (/permission/i.test(e.message || "")) return `The code ${code} is stuck from an earlier session. In Setup step 1, tap New idea for a fresh code, then share again.`;
             return e.message || "Failed to go live.";
           }
         }
@@ -6986,7 +6987,8 @@ ${html}</body></html>`);
           const uid = auth.currentUser.uid;
           const ref = rtdb.ref(`liveRaces/${code}/athletes/0/gps/viewers/${uid}`);
           const name = [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(" ") || userProfile?.displayName || "";
-          const beat = () => ref.set({ name, seen: Date.now() }).catch(() => {});
+          const statusRef = rtdb.ref(`liveRaces/${code}/status`);
+          const beat = () => statusRef.once("value").then(sn => { if (sn.val() === "live") ref.set({ name, seen: Date.now() }).catch(() => {}); }).catch(() => {});
           beat();
           const id = setInterval(beat, 30000);
           return () => { clearInterval(id); ref.remove().catch(() => {}); };
@@ -11455,15 +11457,21 @@ ${html}</body></html>`);
         // A parent counting an athlete says so (30 s heartbeat), so the host can
         // see who's covered and who still needs a counter.
         const countingIdxs = !isHost && !isAthlete && lapCountCode ? Object.keys(lapMine).filter(k => lapMine[k]) : [];
+        // Only while the race is live: a beat after the host stops would leave a stray
+        // record under the code and lock the host out of sharing it again.
+        const counterRaceLive = !!(liveRace && liveRace.code === lapCountCode && liveRace.status === "live");
         useEffect(() => {
-          if (!countingIdxs.length || !lapCountCode || !auth.currentUser) return;
+          if (!countingIdxs.length || !lapCountCode || !auth.currentUser || !counterRaceLive) return;
           const refs = countingIdxs.map(i => rtdb.ref(`liveRaces/${lapCountCode}/athletes/${i}/gps/counters/${auth.currentUser.uid}`));
           const name = (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || "A parent";
-          const beat = () => refs.forEach(ref => ref.set({ name, seen: Date.now() }).catch(() => {}));
+          const statusRef = rtdb.ref(`liveRaces/${lapCountCode}/status`);
+          const beat = () => statusRef.once("value").then(sn => {
+            if (sn.val() === "live") refs.forEach(ref => ref.set({ name, seen: Date.now() }).catch(() => {}));
+          }).catch(() => {});
           beat();
           const id = setInterval(beat, 30000);
           return () => { clearInterval(id); refs.forEach(ref => ref.remove().catch(() => {})); };
-        }, [countingIdxs.join(","), lapCountCode, currentUser && currentUser.uid]);
+        }, [countingIdxs.join(","), lapCountCode, currentUser && currentUser.uid, counterRaceLive]);
         // Firebase may hand back a sparse array or an object; keep athlete indexes.
         function indexedAthletes(raw) {
           const out = [];

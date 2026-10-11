@@ -15,7 +15,7 @@
     "liveRaces": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || auth.uid === 'zaZlSgcfROeSKUwgFz2Qwsu0WVg2' || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))) || data.child('publishedBy').val() === auth.uid)",
+        ".write": "auth != null && (((!data.exists() || !data.child('publishedBy').exists()) && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || auth.uid === 'zaZlSgcfROeSKUwgFz2Qwsu0WVg2' || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))) || data.child('publishedBy').val() === auth.uid)",
         "waypoints": {
           ".read": "root.child('liveRaces').child($code).child('status').val() === 'live'"
         },
