@@ -1201,7 +1201,7 @@
       const RACE_KINDS = {
         triathlon: { label: "Triathlon", colour: TM.ink },
         swim:      { label: "Swim meet", colour: TM.swim },
-        bike:      { label: "Bike ride", colour: TM.bike },
+        bike:      { label: "Bike / Run", colour: TM.bike },
       };
 
       // ── Setup wizard frame ───────────────────────────────────────────────────
@@ -1287,10 +1287,12 @@
         const [draft, setDraft] = React.useState("");
         const [changeErr, setChangeErr] = React.useState("");
         const [changeBusy, setChangeBusy] = React.useState(false);
+        const [kindVideo, setKindVideo] = React.useState(null);
+        const KIND_TUT = { triathlon: "host", swim: "swimHost", bike: "bikeHost" };
         const kinds = [
           ["triathlon", TM.ink,  "Triathlon", "Swim, bike, run — splits, GPS, certificates"],
           ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
-          ["bike",      TM.bike, "Bike ride", "Live map of one or more riders"],
+          ["bike",      TM.bike, "Bike / Run", "Live map of a ride or a run — one or many athletes"],
         ];
         return (
           <div>
@@ -1315,6 +1317,12 @@
               })}
               <div style={{ borderTop: `2px solid ${TM.line}` }} />
             </div>
+            {TUTORIALS[KIND_TUT[kind]] && (
+              <div style={{ marginTop: 12 }}>
+                <TutorialButton which={KIND_TUT[kind]} onOpen={setKindVideo} />
+                <VideoModal video={kindVideo} onClose={() => setKindVideo(null)} />
+              </div>
+            )}
             {lockedHint && <div style={{ ...TM_CAPTION, marginTop: 10 }}>{lockedHint}</div>}
             <div style={{ marginTop: 22 }}>
               <label htmlFor={nameId} style={TM_LABEL}>Race name</label>
@@ -1572,6 +1580,10 @@
         ["fastbike", "Road bike", "Prefers tarmac and faster roads"],
         ["safety",   "Quiet",     "Strongly avoids traffic"],
       ];
+      const RUN_SNAP_PROFILES = [
+        ["hiking-mountain", "Paths & trails", "Footpaths, trails and pavements"],
+        ["shortest",        "Shortest",       "The most direct way on foot"],
+      ];
       const BIKE_ROUTER_URL = "https://brouter.de/brouter";
 
       // Route one leg. Returns its geometry plus the ascent BRouter reports for it,
@@ -1695,9 +1707,15 @@
         [42, "#B3001B"],   // hard
         [52, "#7A0012"],   // flat out
       ];
+      // Running trail colours (km/h): walk → jog → steady → tempo → fast → sprint.
+      const RUN_SPEED_STOPS = [
+        [0,  "#3D434B"], [6, "#0B3FCC"], [9, "#04613F"], [11, "#8A5A00"], [13, "#B44A00"], [15.5, "#B3001B"], [18, "#7A0012"],
+      ];
+      // Which sport the bike screens are showing right now (set as screens open).
+      let BIKE_SPORT_NOW = "bike";
       function bikeSpeedColor(kmh) {
         if (kmh == null || isNaN(kmh)) return "#3D434B";
-        const S = BIKE_SPEED_STOPS;
+        const S = BIKE_SPORT_NOW === "run" ? RUN_SPEED_STOPS : BIKE_SPEED_STOPS;
         if (kmh <= S[0][0]) return S[0][1];
         if (kmh >= S[S.length - 1][0]) return S[S.length - 1][1];
         for (let i = 1; i < S.length; i++) {
@@ -4049,6 +4067,8 @@ ${html}</body></html>`);
       const TUTORIALS = {
         intro:     { src: "media/timeathon-intro.mp4", poster: "media/timeathon-intro.jpg", title: "What is Timeathon?", len: "2 min" },
         host:      { src: "media/tutorial-host.mp4", poster: "media/tutorial-host.jpg", title: "How to host a triathlon", len: "1 min" },
+        swimHost:  null,
+        bikeHost:  null,
         athlete:   { src: "media/tutorial-athlete.mp4", poster: "media/tutorial-athlete.jpg", title: "How to race", len: "50 sec" },
         spectator: { src: "media/tutorial-spectator.mp4", poster: "media/tutorial-spectator.jpg", title: "How to watch", len: "45 sec" },
       };
@@ -5108,7 +5128,7 @@ ${html}</body></html>`);
               if (snap) {
                 const idx = cur.length;   // this point's index in the leg
                 setRaceSnapping(n => n + 1);
-                snapBikeSegment(from, pt, leg === "run" ? "trekking" : "fastbike")
+                snapBikeSegment(from, pt, leg === "run" ? "hiking-mountain" : "fastbike")
                   .then(({ points }) => {
                     setRaceRoutes(r => {
                       const arr = [...(r[leg] || [])];
@@ -5357,6 +5377,8 @@ ${html}</body></html>`);
         });
         const [bikeRiderDraft, setBikeRiderDraft] = useState(null);
         const [bikeDraft, setBikeDraft] = useState(null);     // feed being edited in Setup
+        const [bikeRideSport, setBikeRideSport] = useState(() => { try { return localStorage.getItem("bike-ride-sport") || "bike"; } catch (_) { return "bike"; } });
+        useEffect(() => { try { localStorage.setItem("bike-ride-sport", bikeRideSport); } catch (_) {} }, [bikeRideSport]);
         const [bikeRideCode, setBikeRideCode] = useState(null); // feed the rider is publishing to
         const [bikeRiding, setBikeRiding]     = useState(false);
         useEffect(() => { bikeRidingRef.current = bikeRiding; }, [bikeRiding]);
@@ -9273,6 +9295,7 @@ ${html}</body></html>`);
             riderId: null,        // → bikeRiders profile
             eventName: "",
             units: "mi",
+            sport: "bike",        // "bike" | "run" — words, pace vs speed, route profile
             rideMode: "free",     // "free" = just trace the ride | "route" = follow a planned course
             multiDay: false,      // multi-day tours get stages, overnight stops and resume
             checkpoints: [],      // { name, lat, lng, note, kind: checkpoint|stop|goal, day }
@@ -9317,7 +9340,7 @@ ${html}</body></html>`);
         function publishBikeMeta(feed, ridersOverride) {
           if (!feed?.code) return Promise.resolve();
           const r = bikeRiderFor(feed, ridersOverride);
-          if (feed.listed !== false) listRace(feed.code, "bike", { name: feed.eventName || (r?.name ? `${r.name}'s ride` : "Bike ride"), status: "live" });
+          if (feed.listed !== false) listRace(feed.code, "bike", { name: feed.eventName || (r?.name ? `${r.name}'s ${feed.sport === "run" ? "run" : "ride"}` : (feed.sport === "run" ? "Run" : "Bike ride")), status: "live", sport: feed.sport || "bike" });
           else unlistRace(feed.code);
           return rtdb.ref(`bikeFeeds/${feed.code}/meta`).set({
             // Ownership marker the database rules check: only the creator may edit
@@ -9330,6 +9353,7 @@ ${html}</body></html>`);
             photoUrl: r?.photoUrl || "",
             bioLink: r?.bioLink || "",
             units: feed.units || "mi",
+            sport: feed.sport || "bike",
             rideMode: feed.rideMode || (feed.route && feed.route.length > 1 ? "route" : "free"),
             multiDay: !!feed.multiDay,
             checkpoints: feed.checkpoints || [],
@@ -9544,6 +9568,7 @@ ${html}</body></html>`);
         // after a refresh: totals continue and nothing is cleared server-side.
         async function startBikeRide(feed, resume, restore) {
           if (!feed?.code) { setBikeGpsStatus("No feed selected."); return; }
+          setBikeRideSport(feed.sport || (feed.code && (bikeFeedList.find(f => f.code === feed.code) || {}).sport) || "bike");
           if (!bikeSimulate && !restore?.simulate && !navigator.geolocation) {
             setBikeGpsStatus("Geolocation not supported on this device."); return;
           }
@@ -9704,7 +9729,7 @@ ${html}</body></html>`);
           if (!currentUser) { alert("Sign in first."); return; }
           const token = String(Math.floor(100000 + Math.random() * 900000));
           const rcode = "W" + token;
-          const name = (feed && feed.eventName) || "Bike ride";
+          const name = (feed && feed.eventName) || (feed && feed.sport === "run" ? "Run" : "Bike ride");
           try {
             await rtdb.ref("liveRaces/" + rcode).set({
               code: rcode, kind: "ride", status: "live", publishedBy: currentUser.uid,
@@ -9740,7 +9765,7 @@ ${html}</body></html>`);
           const esc = x => String(x || "").replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
           const t0 = pts.find(p => p[3]) ? pts.find(p => p[3])[3] : null;
           const seg = pts.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}">${p[3] ? `<time>${new Date(p[3] * 1000).toISOString()}</time>` : ""}</trkpt>`).join("\n");
-          return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Timeathon" xmlns="http://www.topografix.com/GPX/1/1">\n<metadata><name>${esc(name)}</name>${t0 ? `<time>${new Date(t0 * 1000).toISOString()}</time>` : ""}</metadata>\n<trk><name>${esc(name)}</name><type>cycling</type><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>\n`;
+          return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Timeathon" xmlns="http://www.topografix.com/GPX/1/1">\n<metadata><name>${esc(name)}</name>${t0 ? `<time>${new Date(t0 * 1000).toISOString()}</time>` : ""}</metadata>\n<trk><name>${esc(name)}</name><type>${feed && feed.sport === "run" ? "running" : "cycling"}</type><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>\n`;
         }
         async function downloadRideGpx(code, name) {
           try {
@@ -9838,7 +9863,10 @@ ${html}</body></html>`);
           ctx.fillText(clock, 20, 24);
           ctx.font = "bold 50px Archivo, Arial, sans-serif"; ctx.fillStyle = "#FF8A3D";
           ctx.fillText(dist.toFixed(2) + (km ? " km" : " mi"), 20, 128);
-          ctx.fillStyle = "#2FC27A"; ctx.fillText(spd != null ? spd.toFixed(1) + (km ? " km/h" : " mph") : "— " + (km ? "km/h" : "mph"), 20, 200);
+          const runPip = bikeRideSport === "run";
+          const pace = live.spd != null && live.spd > 0.4 ? (km ? 1000 : 1609.344) / live.spd : null;
+          ctx.fillStyle = "#2FC27A"; ctx.fillText(runPip ? (pace != null ? `${Math.floor(pace / 60)}:${String(Math.round(pace % 60)).padStart(2, "0")} /${km ? "km" : "mi"}` : "— /" + (km ? "km" : "mi"))
+            : spd != null ? spd.toFixed(1) + (km ? " km/h" : " mph") : "— " + (km ? "km/h" : "mph"), 20, 200);
           ctx.fillStyle = "#FF5A5A"; ctx.fillText("HR " + (hr != null ? hr : "—"), 20, 272);
         }
         function startBikePip() { return startPip(drawBikePip); }
@@ -10216,7 +10244,7 @@ ${html}</body></html>`);
               const segIdx  = prevAnc.length - 1;              // leg from last anchor to pt
               const from    = segIdx >= 0 ? prevAnc[segIdx] : null;
               const snap    = cur.snapToRoads !== false;
-              const profile = cur.snapProfile || "trekking";
+              const profile = cur.sport === "run" ? (RUN_SNAP_PROFILES.some(p => p[0] === cur.snapProfile) ? cur.snapProfile : "hiking-mountain") : (cur.snapProfile || "trekking");
               setBikeDraft(dd => {
                 const anchors = [...(dd.routeAnchors || []), pt];
                 const segs    = [...(dd.routeSegs || [])];
@@ -12005,8 +12033,6 @@ Start a new race anyway?`)) return;
                 return (
                   <div>
                     <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
-                    <TutorialButton which="host" onOpen={setVideoOpen} style={{ marginTop: 14 }} />
-                    <VideoModal video={videoOpen} onClose={() => setVideoOpen(null)} />
 
                     <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setNewRaceCode(friendlyCode()); setView("newrace"); }}
                       style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
@@ -18713,10 +18739,22 @@ Start a new race anyway?`)) return;
               };
               const M_PER_MI = 1609.344;
               const useKm = (bikeView === "feed" ? (bikeWatchMeta?.units || "mi") : (bikeDraft?.units || "mi")) === "km";
+              const sport = (bikeView === "feed" ? bikeWatchMeta?.sport : bikeView === "ride" ? bikeRideSport : bikeDraft?.sport) || "bike";
+              const isRun = sport === "run";
+              BIKE_SPORT_NOW = sport;
+              // Ride words, or run words.
+              const RW = isRun
+                ? { Ride: "Run", ride: "run", Rider: "Runner", rider: "runner", riding: "running", Riding: "Running", rides: "runs", icon: "🏃" }
+                : { Ride: "Ride", ride: "ride", Rider: "Rider", rider: "rider", riding: "riding", Riding: "Riding", rides: "rides", icon: "🚲" };
+              const fmtPace = (mps) => {
+                if (mps == null || mps < 0.4) return "—";
+                const sec = (useKm ? 1000 : M_PER_MI) / mps, m = Math.floor(sec / 60), ss = Math.round(sec % 60);
+                return `${m}:${String(ss === 60 ? 59 : ss).padStart(2, "0")} /${useKm ? "km" : "mi"}`;
+              };
               const fmtDist = (m) => m == null ? "—" : useKm
                 ? (m / 1000).toFixed(2) + " km"
                 : (m / M_PER_MI).toFixed(2) + " mi";
-              const fmtSpeed = (mps) => mps == null ? "—" : useKm
+              const fmtSpeed = (mps) => isRun ? fmtPace(mps) : mps == null ? "—" : useKm
                 ? (mps * 3.6).toFixed(1) + " km/h"
                 : (mps * 2.236936).toFixed(1) + " mph";
               const fmtRideClock = (ms) => {
@@ -18919,7 +18957,7 @@ Start a new race anyway?`)) return;
                       )}
                     </div>
                   ) : (() => {
-                    const BIKE_STEPS = ["What kind of race?", "Who's riding?", "Ride type", "Map & route", "Save & publish"];
+                    const BIKE_STEPS = ["What kind of race?", `Who's ${RW.riding}?`, "Bike or run", "Map & route", "Save & publish"];
                     const st = bikeSetupStep;
                     const publishDraft = () => {
                           const r = bikeRiderFor(bikeDraft);
@@ -18942,15 +18980,15 @@ Start a new race anyway?`)) return;
                     const rider = bikeRiderFor(bikeDraft);
                     const cps = (bikeDraft.checkpoints || []).length;
                     const summaries = [
-                      { title: BIKE_STEPS[0], done: !!bikeDraft.eventName, summary: `Bike ride · ${bikeDraft.eventName || "no name yet"}` },
-                      { title: BIKE_STEPS[1], done: !!rider, summary: rider?.name || "No rider picked yet" },
-                      { title: BIKE_STEPS[2], done: true, summary: `${bikeDraft.rideMode === "route" ? "Planned route" : "Free ride"} · ${bikeDraft.units === "km" ? "km" : "miles"}${bikeDraft.multiDay ? " · multi-day" : ""}` },
+                      { title: BIKE_STEPS[0], done: !!bikeDraft.eventName, summary: `${isRun ? "Run" : "Bike ride"} · ${bikeDraft.eventName || "no name yet"}` },
+                      { title: BIKE_STEPS[1], done: !!rider, summary: rider?.name || `No ${RW.rider} picked yet` },
+                      { title: BIKE_STEPS[2], done: true, summary: `${isRun ? "Run" : "Bike"} · ${bikeDraft.rideMode === "route" ? "Planned route" : (isRun ? "Free run" : "Free ride")} · ${bikeDraft.units === "km" ? "km" : "miles"}${bikeDraft.multiDay ? " · multi-day" : ""}` },
                       { title: BIKE_STEPS[3], done: cps > 0 || (bikeDraft.route || []).length > 1, summary: `${cps} checkpoint${cps !== 1 ? "s" : ""}${(bikeDraft.route || []).length > 1 ? " · route drawn" : ""}` },
                       { title: BIKE_STEPS[4], done: bikeFeedList.some(f => f.code === bikeDraft.code), summary: `Follow code ${bikeDraft.code}` },
                     ];
                     if (st === 0) {
                       return (
-                        <WizardStepList heading="Ride setup" subheading={bikeDraft.eventName || "Bike ride"} steps={summaries} onJump={setBikeSetupStep}>
+                        <WizardStepList heading={isRun ? "Run setup" : "Ride setup"} subheading={bikeDraft.eventName || (isRun ? "Run" : "Bike ride")} steps={summaries} onJump={setBikeSetupStep}>
                           <button onClick={publishDraft} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 24 }}>Save &amp; publish →</button>
                         </WizardStepList>
                       );
@@ -18972,7 +19010,7 @@ Start a new race anyway?`)) return;
                         )}
                         {st === 2 && (<>
                       <div style={S.card}>
-                        <div style={S.label}>Rider</div>
+                        <div style={S.label}>{RW.Rider}</div>
                         {bikeRiders.length === 0 ? (
                           <div style={{ fontSize:14, color:"#3D434B", marginBottom:10 }}>
                             No rider profiles yet. Create one — it's reusable for every future ride, so you only enter their bio and photo once.
@@ -18991,7 +19029,7 @@ Start a new race anyway?`)) return;
                           </div>
                         )}
                         <button onClick={() => { setBikeRiderDraft(newBikeRider()); setBikeView("riders"); }}
-                          style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>+ New rider profile</button>
+                          style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>+ New {RW.rider} profile</button>
                         {(() => {
                           const r = bikeRiderFor(bikeDraft);
                           if (!r) return null;
@@ -19021,7 +19059,7 @@ Start a new race anyway?`)) return;
                         <div style={S.label}>Event</div>
                         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                           <input value={bikeDraft.eventName} onChange={e => setBikeDraft(d => ({ ...d, eventName: e.target.value }))}
-                            placeholder="Ride / event name (e.g. Hill Country 100)" style={S.input} />
+                            placeholder={isRun ? "Run / event name (e.g. Turkey Trot 5K)" : "Ride / event name (e.g. Hill Country 100)"} style={S.input} />
                           <div style={S.row}>
                             <span style={{ fontSize:14, color:"#3D434B" }}>Units</span>
                             {["mi","km"].map(u => (
@@ -19051,9 +19089,21 @@ Start a new race anyway?`)) return;
                       </div>
 
                       <div style={S.card}>
-                        <div style={S.label}>Ride type</div>
+                        <div style={S.label}>Bike or run?</div>
+                         <div style={{ ...S.row, gap:8, marginBottom:14 }}>
+                           {[["bike", "🚲 Bike ride", "Speed in mph, routes on roads"], ["run", "🏃 Run", "Pace per mile, routes on paths"]].map(([k, label, hint]) => (
+                             <button key={k} onClick={() => setBikeDraft(d => ({ ...d, sport: k, snapProfile: k === "run" ? "hiking-mountain" : "trekking" }))}
+                               style={{ flex:1, padding:"12px", borderRadius:8, cursor:"pointer", textAlign:"left",
+                                 background: (bikeDraft.sport || "bike") === k ? "#8A5A00" : "#FFFFFF",
+                                 border: (bikeDraft.sport || "bike") === k ? "2px solid #8A5A00" : "2px solid #C9C5BC" }}>
+                               <div style={{ fontSize:16, fontWeight:800, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#0B0D10" }}>{label}</div>
+                               <div style={{ fontSize:14, fontWeight:600, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#3D434B", marginTop:2 }}>{hint}</div>
+                             </button>
+                           ))}
+                         </div>
+                         <div style={S.label}>{isRun ? "Run type" : "Ride type"}</div>
                         <div style={{ ...S.row, gap:8, flexWrap:"wrap" }}>
-                          {[["free","🧭 Free ride","Just traces wherever they go"],
+                          {[["free", isRun ? "🧭 Free run" : "🧭 Free ride","Just traces wherever they go"],
                             ["route","🗺 Planned route","Follows a course you import"]].map(([m, label, hint]) => (
                             <button key={m} onClick={() => setBikeDraft(d => ({ ...d, rideMode: m }))}
                               style={{ flex:"1 1 150px", textAlign:"left", padding:"10px 12px", borderRadius:8, cursor:"pointer",
@@ -19069,8 +19119,8 @@ Start a new race anyway?`)) return;
                         </>)}
                         {st === 4 && (<>
                           <div style={{ ...rowStyle(TM.bike), marginBottom: 12 }}>
-                            <div style={{ fontSize: 16, fontWeight: 700 }}>Optional for a free ride.</div>
-                            <div style={TM_CAPTION}>Checkpoints and a planned route show followers where the rider is headed.</div>
+                            <div style={{ fontSize: 16, fontWeight: 700 }}>Optional for a free {RW.ride}.</div>
+                            <div style={TM_CAPTION}>Checkpoints and a planned route show followers where the {RW.rider} is headed.</div>
                           </div>
                       <div style={S.card}>
                         <div style={S.label}>Map</div>
@@ -19090,7 +19140,7 @@ Start a new race anyway?`)) return;
                             ? "Tap the map to drop a checkpoint. Drag any pin to move it; name and type it in the list below."
                             : bikeEditMode === "route"
                             ? (bikeDraft.snapToRoads !== false
-                                ? "Tap roughly where you want to go — each leg is routed along real rideable roads, so you can't draw across a field. Distance is the true road distance."
+                                ? (isRun ? "Tap roughly where you want to go — each leg follows real paths and pavements, so you can't draw across a field. Distance is the true distance on foot." : "Tap roughly where you want to go — each leg is routed along real rideable roads, so you can't draw across a field. Distance is the true road distance.")
                                 : "Snapping is off, so taps join in straight lines. Turn it back on for a course that follows actual roads.")
                             : "Tapping won't add anything — pan and zoom freely."}
                         </div>
@@ -19124,18 +19174,18 @@ Start a new race anyway?`)) return;
                                   background: bikeDraft.snapToRoads !== false ? "#04613F" : "#FFFFFF",
                                   border: bikeDraft.snapToRoads !== false ? "2px solid #04613F" : "2px solid #C9C5BC",
                                   color: bikeDraft.snapToRoads !== false ? "#FFFFFF" : "#3D434B" }}>
-                                {bikeDraft.snapToRoads !== false ? "● Snap to roads" : "Snap to roads: off"}
+                                {bikeDraft.snapToRoads !== false ? (isRun ? "● Snap to paths" : "● Snap to roads") : (isRun ? "Snap to paths: off" : "Snap to roads: off")}
                               </button>
                               {bikeSnapping > 0 && <span style={{ fontSize:14, color:"#8A5A00" }}>Finding roads…</span>}
                             </div>
                             {bikeDraft.snapToRoads !== false && (
                               <div style={{ ...S.row, gap:6, flexWrap:"wrap", marginTop:6 }}>
-                                {BIKE_SNAP_PROFILES.map(([k, label, hint]) => (
+                                {(isRun ? RUN_SNAP_PROFILES : BIKE_SNAP_PROFILES).map(([k, label, hint]) => (
                                   <button key={k} title={hint} onClick={() => setBikeDraft(d => ({ ...d, snapProfile: k }))}
                                     style={{ padding:"5px 10px", fontSize:14, fontWeight:700, borderRadius:5, cursor:"pointer",
-                                      background: (bikeDraft.snapProfile || "trekking") === k ? "#EFEDE8" : "transparent",
-                                      border: (bikeDraft.snapProfile || "trekking") === k ? "2px solid #04613F" : "2px solid #C9C5BC",
-                                      color: (bikeDraft.snapProfile || "trekking") === k ? "#04613F" : "#3D434B" }}>{label}</button>
+                                      background: (bikeDraft.snapProfile || (isRun ? "hiking-mountain" : "trekking")) === k ? "#EFEDE8" : "transparent",
+                                      border: (bikeDraft.snapProfile || (isRun ? "hiking-mountain" : "trekking")) === k ? "2px solid #04613F" : "2px solid #C9C5BC",
+                                      color: (bikeDraft.snapProfile || (isRun ? "hiking-mountain" : "trekking")) === k ? "#04613F" : "#3D434B" }}>{label}</button>
                                 ))}
                               </div>
                             )}
@@ -19496,7 +19546,7 @@ Start a new race anyway?`)) return;
                       {/* Ride complete: keep the route as a course, keep (or drop) the ride */}
                       {bikeDone && !bikeRiding && (
                         <div id="bike-done-panel" style={{ ...S.card, borderColor: "#04613F" }}>
-                          <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#04613F" }}>✓ Ride complete</div>
+                          <div style={{ fontFamily: "var(--tm-font)", fontSize: 22, color: "#04613F" }}>✓ {RW.Ride} complete</div>
                           <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 10 }}>{fmtDist(bikeDone.distM)} · {fmtRideClock(bikeDone.elapsedMs)}</div>
                           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
                             <input type="checkbox" checked={bikeDoneOpts.saveRoute} onChange={e => setBikeDoneOpts(o => ({ ...o, saveRoute: e.target.checked }))} />
@@ -19514,7 +19564,7 @@ Start a new race anyway?`)) return;
                           )}
                           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, marginBottom: 12 }}>
                             <input type="checkbox" checked={bikeDoneOpts.keepRide} onChange={e => setBikeDoneOpts(o => ({ ...o, keepRide: e.target.checked }))} />
-                            Keep this ride in My Races
+                            Keep this {RW.ride} in My Races
                           </label>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button onClick={finishBikeDone} style={{ ...btnStyle("#04613F"), padding: "0 18px" }}>Done</button>
@@ -19561,7 +19611,7 @@ Start a new race anyway?`)) return;
                               style={{ background:"rgba(255,255,255,0.92)", color:"#0B0D10", border:"2px solid #0B0D10", borderRadius:6, padding:"6px 10px", fontSize:14, fontWeight:700 }}>✕ Exit map</button>
                             <button onClick={startBikePip}
                               style={{ background:"rgba(255,255,255,0.92)", color:"#0B3FCC", border:"2px solid #0B3FCC", borderRadius:6, padding:"6px 10px", fontSize:14, fontWeight:700 }}>⧉ Mini window</button>
-                            <button onClick={() => { if (confirm("Complete this ride?")) stopBikeRide(true); }}
+                            <button onClick={() => { if (confirm(`Complete this ${RW.ride}?`)) stopBikeRide(true); }}
                               style={{ background:"#B3001B", color:"#FFFFFF", border:"2px solid #B3001B", borderRadius:6, padding:"6px 10px", fontSize:14, fontWeight:700 }}>■ Complete</button>
                           </div>
                         )}
@@ -19633,7 +19683,7 @@ Start a new race anyway?`)) return;
                           if (!bikeRiding) return (
                             <div style={{ ...S.row, gap:8, flexWrap:"wrap", justifyContent:"center" }}>
                               <button onClick={() => begin(false)}
-                                style={{ ...btnStyle("#04613F"), fontSize:16, padding:"14px 28px" }}>▶ Start Ride</button>
+                                style={{ ...btnStyle("#04613F"), fontSize:16, padding:"14px 28px" }}>▶ Start {RW.Ride}</button>
                               {multi && (
                                 <button onClick={() => begin(true)}
                                   style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 28px" }}>⏭ Resume Tour</button>
@@ -19663,13 +19713,13 @@ Start a new race anyway?`)) return;
                           return (
                             <div style={{ ...S.row, gap:8, flexWrap:"wrap", justifyContent:"center" }}>
                               <button onClick={() => { acquireWakeLock(); setPocketOn(true); }}
-                                style={{ ...btnStyle(TM.ink), width: "100%" }}>🌙 Pocket mode — screen goes dark, ride keeps sending</button>
+                                style={{ ...btnStyle(TM.ink), width: "100%" }}>🌙 Pocket mode — screen goes dark, {RW.ride} keeps sending</button>
                               {multi && (
                                 <button onClick={() => { if (confirm("Pause for the day? Distance and time are kept, and the trail stays on the map.")) stopBikeRide(false); }}
                                   style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 24px" }}>⏸ Pause for Day</button>
                               )}
-                              <button onClick={() => { if (confirm(multi ? "Finish the whole tour? This ends the feed for good." : "Complete this ride?")) stopBikeRide(true); }}
-                                style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 24px" }}>■ {multi ? "Finish Tour" : "Complete Ride"}</button>
+                              <button onClick={() => { if (confirm(multi ? "Finish the whole tour? This ends the feed for good." : `Complete this ${RW.ride}?`)) stopBikeRide(true); }}
+                                style={{ ...btnStyle("#B3001B"), fontSize:16, padding:"14px 24px" }}>■ {multi ? "Finish Tour" : `Complete ${RW.Ride}`}</button>
                             </div>
                           );
                         })()}
@@ -19682,7 +19732,7 @@ Start a new race anyway?`)) return;
                     <div>
                       {(bikeWatchCode || "").trim().length < 4 ? (
                         <div style={S.card}>
-                          <div style={S.label}>Follow a ride</div>
+                          <div style={S.label}>Follow a ride or run</div>
                           <div style={S.row}>
                             <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
                               placeholder="Type code" maxLength={12}
@@ -19732,9 +19782,9 @@ Start a new race anyway?`)) return;
                                     </div>
                                     <div style={{ textAlign:"right" }}>
                                       <div className="tm-metric" style={{ fontSize:14, fontWeight:700, color:col }}>
-                                        {r.live?.spd != null ? fmtSpeed(r.live.spd).replace(/ (mph|km\/h)/, "") : "—"}
+                                        {r.live?.spd != null ? fmtSpeed(r.live.spd).replace(/ (mph|km\/h|\/mi|\/km)/, "") : "—"}
                                       </div>
-                                      <div style={{ fontSize:14, color:"#3D434B", letterSpacing:1 }}>{useKm ? "KM/H" : "MPH"}</div>
+                                      <div style={{ fontSize:14, color:"#3D434B", letterSpacing:1 }}>{isRun ? (useKm ? "MIN/KM" : "MIN/MI") : useKm ? "KM/H" : "MPH"}</div>
                                     </div>
                                     <button title="Unfollow" aria-label={`Unfollow ${r.name}`} onClick={e => {
                                       e.stopPropagation();
@@ -19849,7 +19899,7 @@ Start a new race anyway?`)) return;
                                 const h = Math.floor(remainS / 3600), m = Math.round((remainS % 3600) / 60);
                                 return (
                                   <div style={{ fontSize:14, color:"#3D434B", marginTop:6 }}>
-                                    At the pace so far, about {h > 0 ? `${h}h ${m}m` : `${m}m`} of riding left.
+                                    At the pace so far, about {h > 0 ? `${h}h ${m}m` : `${m}m`} of {RW.riding} left.
                                   </div>
                                 );
                               })()}
@@ -19969,10 +20019,10 @@ Start a new race anyway?`)) return;
                                 {bikeTrailSpeed ? "Speed" : "Speed off"}
                               </div>
                               <div style={{ display:"flex", height:7, width:96, maxWidth:"100%", borderRadius:4, overflow:"hidden" }}>
-                                {BIKE_SPEED_STOPS.map(([kmh, col]) => <div key={kmh} style={{ flex:1, background:col }} />)}
+                                {(isRun ? RUN_SPEED_STOPS : BIKE_SPEED_STOPS).map(([kmh, col]) => <div key={kmh} style={{ flex:1, background:col }} />)}
                               </div>
                               <div style={{ display:"flex", justifyContent:"space-between", fontSize:14, color:"#3D434B", marginTop:2 }}>
-                                <span>slow</span><span>{useKm ? "50+ km/h" : "32+ mph"}</span>
+                                <span>slow</span><span>{isRun ? (useKm ? "3:20/km" : "5:20/mi") : useKm ? "50+ km/h" : "32+ mph"}</span>
                               </div>
                             </div>
                           </div>
