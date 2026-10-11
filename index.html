@@ -9742,9 +9742,9 @@ ${html}</body></html>`);
           const keys = Object.keys(c); if (keys.length > 80) delete c[keys[0]];
           return null;
         }
-        function drawPipMap(ctx, X, Y, MW, MH) {
-          const pts = bikeRideTrailPtsRef.current || [];
-          const me = bikeLiveRef.current && bikeLiveRef.current.lat != null ? [bikeLiveRef.current.lat, bikeLiveRef.current.lng] : pts[pts.length - 1];
+        function drawPipMap(ctx, X, Y, MW, MH, src) {
+          const pts = src ? (src.pts || []) : (bikeRideTrailPtsRef.current || []);
+          const me = src ? (src.me || pts[pts.length - 1]) : (bikeLiveRef.current && bikeLiveRef.current.lat != null ? [bikeLiveRef.current.lat, bikeLiveRef.current.lng] : pts[pts.length - 1]);
           ctx.fillStyle = "#E5E3DF"; ctx.fillRect(X, Y, MW, MH);
           if (!me) { ctx.fillStyle = "#3D434B"; ctx.font = "bold 28px Archivo, Arial"; ctx.fillText("Waiting for GPS…", X + 30, Y + MH / 2); return; }
           const z = 16, n = 256 * Math.pow(2, z);
@@ -9759,7 +9759,7 @@ ${html}</body></html>`);
               if (img) ctx.drawImage(img, X + tx * 256 - left, Y + ty * 256 - top);
             }
           const P = p => [X + wx(p[1]) - left, Y + wy(p[0]) - top];
-          const course = bikeRideCourse && bikeRideCourse.route;
+          const course = src ? src.course : (bikeRideCourse && bikeRideCourse.route);
           if (course && course.length > 1) {
             ctx.strokeStyle = "rgba(11,63,204,0.75)"; ctx.lineWidth = 6; ctx.beginPath();
             course.forEach((p, i) => { const [x, y] = P(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
@@ -9792,17 +9792,20 @@ ${html}</body></html>`);
           ctx.fillStyle = "#2FC27A"; ctx.fillText(spd != null ? spd.toFixed(1) + (km ? " km/h" : " mph") : "— " + (km ? "km/h" : "mph"), 20, 200);
           ctx.fillStyle = "#FF5A5A"; ctx.fillText("HR " + (hr != null ? hr : "—"), 20, 272);
         }
-        async function startBikePip() {
+        function startBikePip() { return startPip(drawBikePip); }
+        // A small live card on top of other apps (Android Chrome). While it's open
+        // the page counts as in use, so GPS keeps sending with the screen off.
+        async function startPip(draw) {
           try {
             if (!document.pictureInPictureEnabled) { alert("Picture-in-picture isn't available in this browser. On Android, use Chrome."); return; }
             stopBikePip();
             const W = 960, H = 400;   // 2.4 : 1 — numbers left, map right
             const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
-            const ctx = canvas.getContext("2d"); drawBikePip(ctx, W, H);
+            const ctx = canvas.getContext("2d"); draw(ctx, W, H);
             const video = document.createElement("video");
             video.muted = true; video.playsInline = true; video.srcObject = canvas.captureStream(2);
-            const timer = setInterval(() => drawBikePip(ctx, W, H), 1000);
-            bikePipRef.current = { video, canvas, ctx, timer, W, H };
+            const timer = setInterval(() => draw(ctx, W, H), 1000);
+            bikePipRef.current = { video, canvas, ctx, timer, W, H, draw };
             await video.play();
             await video.requestPictureInPicture();
             video.addEventListener("leavepictureinpicture", () => stopBikePip(), { once: true });
@@ -9818,7 +9821,45 @@ ${html}</body></html>`);
         // For checking the mini window's picture without opening one.
         window.__tmPipPreview = () => { const c = document.createElement("canvas"); c.width = 960; c.height = 400; drawBikePip(c.getContext("2d"), 960, 400); return c.toDataURL("image/png"); };
         // Background tabs throttle timers, so each new fix also redraws the card.
-        const bikePipRedraw = () => { const p = bikePipRef.current; if (p) drawBikePip(p.ctx, p.W, p.H); };
+        const bikePipRedraw = () => { const p = bikePipRef.current; if (p) (p.draw || drawBikePip)(p.ctx, p.W, p.H); };
+
+        // ── Triathlon mini window: race clock, the leg I'm on, bike miles, map ──
+        const triPipRef = useRef({});
+        triPipRef.current = { race: joinLiveData || joinRace, idx: joinAthIdx, pos: joinGpsPos, bike: joinBikeStats };
+        useEffect(() => { bikePipRedraw(); }, [joinGpsPos, joinBikeStats, joinLiveData]);
+        function drawTriPip(ctx, W, H) {
+          const { race, idx, pos, bike } = triPipRef.current || {};
+          ctx.fillStyle = "#0B0D10"; ctx.fillRect(0, 0, W, H);
+          const NW = 330;
+          const routes = race && race.raceRoutes;
+          const legKind = me0 => { const sp = (me0 && me0.splits) || []; const c = SEGMENTS.findIndex((_, i) => sp[i] == null); return c >= 0 ? kindAt(c) : null; };
+          const meNow = race && idx != null ? asList(race.athletes)[idx] : null;
+          const pick = k => routes && Array.isArray(routes[k]) && routes[k].length > 1 ? routes[k] : null;
+          const course = routes ? (pick(legKind(meNow)) || pick("bike") || pick("run") || pick("swim")) : null;
+          drawPipMap(ctx, NW, 0, W - NW, H, { pts: joinGpsTrailRef.current || [], me: pos ? [pos.lat, pos.lng] : null, course });
+          const d = race ? withLiveClock(race) : null;
+          const clock = d && (d.clockStarted || d.clockRunning || d.clockMs > 0) ? liveClockNow(d) : null;
+          const me = race && idx != null ? asList(race.athletes)[idx] : null;
+          ctx.textBaseline = "top"; ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 70px Archivo, Arial, sans-serif";
+          ctx.fillText(clock != null ? fmtSplit(clock) : "0:00", 20, 22);
+          let legName = "Waiting", legMs = null, col = "#B8B3A9";
+          if (me && me.started && me.startOffset != null && clock != null) {
+            const sp = me.splits || [];
+            const cur = SEGMENTS.findIndex((_, i) => sp[i] == null);
+            if (me.finished || cur < 0) { legName = "Finished"; col = "#2FC27A"; legMs = sp[SEGMENTS.length - 1] - me.startOffset; }
+            else { legName = SEGMENTS[cur]; const prev = cur === 0 ? me.startOffset : sp[cur - 1]; legMs = prev != null ? clock - prev : null;
+                   col = ({ swim: "#5B8CFF", bike: "#FF8A3D", run: "#2FC27A" })[kindAt(cur)] || "#B8B3A9"; }
+          }
+          ctx.font = "bold 50px Archivo, Arial, sans-serif"; ctx.fillStyle = col;
+          ctx.fillText(legName.toUpperCase(), 20, 120);
+          ctx.fillStyle = "#FFFFFF"; ctx.fillText(legMs != null ? fmtSplit(legMs) : "—", 20, 186);
+          ctx.fillStyle = "#FF8A3D"; ctx.font = "bold 44px Archivo, Arial, sans-serif";
+          if (bike && bike.onBike && bike.distMi != null) ctx.fillText(bike.distMi.toFixed(2) + " mi", 20, 262);
+          ctx.fillStyle = "#B8B3A9"; ctx.font = "bold 26px Archivo, Arial, sans-serif";
+          ctx.fillText(pos ? "GPS sending" : "Waiting for GPS…", 20, H - 50);
+        }
+        const startTriPip = () => startPip(drawTriPip);
+        window.__tmTriPipPreview = () => { const c = document.createElement("canvas"); c.width = 960; c.height = 400; drawTriPip(c.getContext("2d"), 960, 400); return c.toDataURL("image/png"); };
 
         // The watch's fixes → this ride (only while riding).
         useEffect(() => {
@@ -13553,10 +13594,14 @@ Start a new race anyway?`)) return;
                           </div>}
 
                           {joinGpsActive && (
-                            <button onClick={() => { acquireWakeLock(); setPocketOn(true); }}
-                              style={{ ...btnStyle(TM.ink), width: "100%", marginBottom: 12 }}>
-                              🌙 Pocket mode — screen goes dark, GPS keeps sending
-                            </button>
+                            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                              <button onClick={() => { acquireWakeLock(); setPocketOn(true); }}
+                                style={{ ...btnStyle(TM.ink), flex: "1 1 180px" }}>
+                                🌙 Pocket mode
+                              </button>
+                              <button onClick={startTriPip} style={{ ...btnStyle(TM.swim, true), flex: "1 1 180px" }}>⧉ Mini window</button>
+                              <div style={{ ...TM_CAPTION, flexBasis: "100%" }}>Either one keeps GPS sending. Mini window floats on top so you can use other apps.</div>
+                            </div>
                           )}
                           {/* GPS-miles bike leg: a workout-watch screen on the rider's phone. */}
                           {(() => {
