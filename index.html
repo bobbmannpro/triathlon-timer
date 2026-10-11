@@ -1308,6 +1308,10 @@
         );
       }
 
+      // A table column that stays put on the left while the rest scrolls sideways under it.
+      const STICKY_COL = (bg) => ({ position: "sticky", left: 0, zIndex: 2, background: bg, minWidth: 140, maxWidth: 190,
+                                    boxShadow: "6px 0 6px -4px rgba(11,13,16,0.18)" });
+
       function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint,
                               code, onCode, codeStatus, codeLocked, onChangeLocked, listed, onListed, extra }) {
         const [changing, setChanging] = React.useState(false);
@@ -16505,9 +16509,7 @@ Start a new race anyway?`)) return;
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                         <thead>
                           <tr style={{ borderBottom: "2px solid #C9C5BC" }}>
-                            <th style={thStyle("#3D434B")}>#</th>
-                            <th style={{ ...thStyle("#0B3FCC") }}>Bib</th>
-                            <th style={{ ...thStyle("#3D434B"), textAlign: "left" }}>Athlete</th>
+                            <th style={{ ...thStyle("#3D434B"), ...STICKY_COL("#FFFFFF"), textAlign: "left" }}>Athlete · Final</th>
                             <th style={thStyle("#3D434B")}>Gender</th>
                             <th style={thStyle("#04613F")}>Age Grp</th>
                             <th style={thStyle("#04613F")}>Ag #</th>
@@ -16518,6 +16520,7 @@ Start a new race anyway?`)) return;
                             <th style={{ ...thStyle("#0B3FCC"), borderLeft: "2px solid #C9C5BC" }}>Swim Pace</th>
                             <th style={thStyle("#8A5A00")}>Bike</th>
                             <th style={thStyle("#04613F")}>Run Pace</th>
+                            <th style={thStyle("#3D434B")}>Certificate</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -16535,18 +16538,16 @@ Start a new race anyway?`)) return;
                             const placeColor = place === 0 ? "#04613F" : place === 1 ? "#8A5A00" : place === 2 ? "#04613F" : "#3D434B";
                             return (
                               <tr key={ath.id} style={{ borderBottom: "2px solid #C9C5BC", background: place === 0 && chip !== null ? "#EFEDE8" : "transparent" }}>
-                                <td style={{ padding: "10px 8px", fontFamily: "var(--tm-font)", fontSize: 20, color: ath.dnf ? TM.live : placeColor }}>{chip !== null ? place + 1 : ath.dnf ? "DNF" : "–"}</td>
-                                <td style={{ padding: "10px 6px", textAlign: "center", color: "#0B3FCC", fontFamily: "var(--tm-font)", fontSize: 14, whiteSpace: "nowrap" }}>{ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
-                                <td style={{ padding: "10px 8px", fontWeight: 700, color: "#0B0D10", whiteSpace: "nowrap" }}>
-                                  {ath.name}
-                                  {(chip !== null || ath.dnf) && (
-                                    <span style={{ display: "inline-flex", gap: 4, marginLeft: 8, verticalAlign: "middle" }}>
-                                      <button onClick={() => openCertShare(hostCertRace(), ath, "share")} aria-label={`Share ${ath.name}’s certificate`} title="Share certificate"
-                                        style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 8px", fontSize: 13 }}>📤 Share</button>
-                                      <button onClick={() => openCertShare(hostCertRace(), ath, "save")} aria-label={`Save ${ath.name}’s certificate`} title="Save certificate"
-                                        style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 8px", fontSize: 13 }}>⬇ Save</button>
-                                    </span>
-                                  )}
+                                {/* Frozen on the left: place, name, bib and final time stay put while the splits scroll under them. */}
+                                <td style={{ padding: "8px 10px 8px 8px", ...STICKY_COL(place === 0 && chip !== null ? "#EFEDE8" : "#FFFFFF") }}>
+                                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                                    <span style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: ath.dnf ? TM.live : placeColor, minWidth: 22 }}>{chip !== null ? place + 1 : ath.dnf ? "–" : "–"}</span>
+                                    <span style={{ fontWeight: 800, color: "#0B0D10", fontSize: 15, lineHeight: 1.2 }}>{ath.name}</span>
+                                  </div>
+                                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, paddingLeft: 28, marginTop: 2, whiteSpace: "nowrap" }}>
+                                    <span style={{ fontFamily: "var(--tm-font)", fontSize: 17, fontWeight: 800, color: ath.dnf ? TM.live : "#04613F" }}>{ath.dnf ? "DNF" : chip !== null ? formatElapsed(chip) : "--"}</span>
+                                    {ath.raceNumber != null && <span style={{ fontSize: 13, color: "#0B3FCC", fontWeight: 700 }}>#{ath.raceNumber}</span>}
+                                  </div>
                                 </td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: ath.gender === "Female" ? "#B3001B" : "#04613F", fontSize: 14, whiteSpace: "nowrap" }}>{ath.gender}</td>
                                 <td style={{ padding: "10px 6px", textAlign: "center", color: "#04613F", fontSize: 14, whiteSpace: "nowrap" }}>{ath.ageGroup}</td>
@@ -16561,6 +16562,16 @@ Start a new race anyway?`)) return;
                                 <td style={{ padding: "10px 8px", textAlign: "center", color: "#0B3FCC", whiteSpace: "nowrap", borderLeft: "2px solid #C9C5BC" }}>{sp ?? "--"}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "center", color: "#8A5A00", whiteSpace: "nowrap" }}>{bp ?? "--"}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "center", color: "#04613F", whiteSpace: "nowrap" }}>{rp ?? "--"}</td>
+                                <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>
+                                  {(chip !== null || ath.dnf) && (
+                                    <span style={{ display: "inline-flex", gap: 4 }}>
+                                      <button onClick={() => openCertShare(hostCertRace(), ath, "share")} aria-label={`Share ${ath.name}’s certificate`} title="Share certificate"
+                                        style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 8px", fontSize: 13 }}>📤 Share</button>
+                                      <button onClick={() => openCertShare(hostCertRace(), ath, "save")} aria-label={`Save ${ath.name}’s certificate`} title="Save certificate"
+                                        style={{ ...btnStyle(TM.ink, true), minHeight: 34, padding: "0 8px", fontSize: 13 }}>⬇ Save</button>
+                                    </span>
+                                  )}
+                                </td>
                               </tr>
                             );
                           })}
@@ -16576,8 +16587,7 @@ Start a new race anyway?`)) return;
                               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                                 <thead>
                                   <tr style={{ borderBottom: "2px solid #C9C5BC" }}>
-                                    <th style={thStyle("#3D434B")}>#</th>
-                                    <th style={{ ...thStyle("#3D434B"), textAlign: "left" }}>Athlete</th>
+                                    <th style={{ ...thStyle("#3D434B"), ...STICKY_COL("#FFFFFF"), textAlign: "left" }}>Athlete · Final</th>
                                     {SEGMENTS.map((seg, si) => <th key={si} style={thStyle(segColors[si])}>{seg}</th>)}
                                     <th style={thStyle("#04613F")}>Chip</th>
                                   </tr>
@@ -16588,8 +16598,13 @@ Start a new race anyway?`)) return;
                                     const agPlaceColor = agPlace === 0 ? "#04613F" : agPlace === 1 ? "#8A5A00" : agPlace === 2 ? "#04613F" : "#3D434B";
                                     return (
                                       <tr key={ath.id} style={{ borderBottom: "2px solid #C9C5BC" }}>
-                                        <td style={{ padding: "8px 8px", fontFamily: "var(--tm-font)", fontSize: 18, color: agPlaceColor }}>{agPlace + 1}</td>
-                                        <td style={{ padding: "8px 8px", fontWeight: 700, color: "#0B0D10", whiteSpace: "nowrap" }}>{ath.name}</td>
+                                        <td style={{ padding: "8px 10px 8px 8px", ...STICKY_COL("#FFFFFF") }}>
+                                          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                                            <span style={{ fontFamily: "var(--tm-font)", fontSize: 17, color: agPlaceColor, minWidth: 22 }}>{agPlace + 1}</span>
+                                            <span style={{ fontWeight: 800, color: "#0B0D10", fontSize: 15, lineHeight: 1.2 }}>{ath.name}</span>
+                                          </div>
+                                          <div style={{ paddingLeft: 28, marginTop: 2, fontFamily: "var(--tm-font)", fontSize: 16, fontWeight: 800, color: "#04613F", whiteSpace: "nowrap" }}>{chip !== null ? formatElapsed(chip) : "--"}</div>
+                                        </td>
                                         {SEGMENTS.map((_, si) => {
                                           const dur = segmentDuration(ath, si);
                                           return <td key={si} style={{ padding: "8px 6px", textAlign: "center", color: segColors[si], whiteSpace: "nowrap" }}>{dur !== null ? formatElapsed(dur) : "--"}</td>;
