@@ -2052,8 +2052,15 @@
       // sign-ups there is no clock at all.
       function withLiveClock(d) {
         if (!d || typeof d !== "object") return d;
-        if (d.status === "registration" || d.status === "closed")
+        // Sign-ups (and sign-ups closed before the start) show no clock. A race that
+        // was run and then closed keeps its final clock, exactly as it finished.
+        const ran = d.clock && typeof d.clock === "object" ? !!d.clock.started : !!d.clockStarted;
+        if (d.status === "registration" || (d.status === "closed" && !ran))
           return { ...d, clockMs: 0, clockRunning: false, clockStarted: false };
+        if (d.status === "closed") {
+          const c0 = d.clock && typeof d.clock === "object" ? d.clock : null;
+          return { ...d, clockMs: c0 ? (c0.ms || 0) : (d.clockMs || 0), clockRunning: false, clockStarted: true, updatedAt: (c0 && c0.at) || d.updatedAt };
+        }
         const c = d.clock;
         if (c && typeof c === "object")
           return { ...d, clockMs: c.ms || 0, clockRunning: !!c.running, clockStarted: !!c.started, updatedAt: c.at || d.updatedAt };
@@ -8292,7 +8299,8 @@ ${html}</body></html>`);
               )
             }));
           }
-          if (data.status === "registration" || data.status === "closed") {
+          // A race that was run and then closed opens as a finished race, not a sign-up form.
+          if (data.status === "registration" || (data.status === "closed" && !(data.clock && data.clock.started))) {
             const raceCourses = data.courses || [];
             const raceAgeGroups = data.ageGroups || ageGroups;
             const prefilled = {
@@ -13139,7 +13147,7 @@ Start a new race anyway?`)) return;
                       {[...savedArchive].sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)).map(race => {
                         const isOpen = archiveOpenId === race.id;
                         const finishers = (race.athletes || []).filter(a => a.finished && !a.dnf).sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity));
-                        const dnf = (race.athletes || []).filter(a => !a.finished);
+                        const dnf = (race.athletes || []).filter(a => !a.finished || a.dnf);   // DNF stays in the standings, below the finishers
                         const segs = race.segments || SEGMENTS;
                         return (
                           <div key={race.id} style={{ background: "#EFEDE8", borderRadius: 8, border: "2px solid #C9C5BC", overflow: "hidden" }}>
@@ -13148,7 +13156,7 @@ Start a new race anyway?`)) return;
                               <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ fontWeight: 800, fontSize: 17, color: "#0B0D10", lineHeight: 1.25 }}>{race.name}</div>
-                                  <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>{race.date} · {race.finishedCount}/{race.totalCount} finished</div>
+                                  <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>{race.date} · {finishers.length}/{(race.athletes || []).length || race.totalCount} finished{dnf.length ? ` · ${dnf.length} DNF` : ""}</div>
                                 </div>
                                 {archiveDeleteConfirm === race.id ? (
                                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -13178,15 +13186,16 @@ Start a new race anyway?`)) return;
                             </div>
                             {isOpen && (
                               <div style={{ borderTop: "2px solid #C9C5BC", padding: "10px 14px" }}>
-                                {finishers.map((ath, rank) => {
+                                {[...finishers, ...dnf].map((ath, rank) => {
                                   const athOpen = archiveOpenAthId === `${race.id}-${ath.id}`;
                                   const medals = ["🥇","🥈","🥉"];
+                                  const out = rank >= finishers.length;
                                   return (
                                     <div key={ath.id} style={{ marginBottom: 8 }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "2px solid #C9C5BC", cursor: "pointer" }} onClick={() => setArchiveOpenAthId(athOpen ? null : `${race.id}-${ath.id}`)}>
-                                        <div style={{ fontSize: 14 }}>{rank < 3 ? medals[rank] : `${rank + 1}.`}</div>
+                                        <div style={{ fontSize: 14 }}>{out ? "–" : rank < 3 ? medals[rank] : `${rank + 1}.`}</div>
                                         <div style={{ flex: 1, fontSize: 14, color: "#0B0D10", fontWeight: 600 }}>{ath.name}</div>
-                                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: "#04613F", letterSpacing: 0.5 }}>{ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
+                                        <div style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: out ? TM.live : "#04613F", letterSpacing: 0.5 }}>{out ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
                                         <button onClick={e => { e.stopPropagation(); printArchivedCert(race, ath); }} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, padding: "3px 8px", fontSize: 14, color: "#0B3FCC", cursor: "pointer" }}>🏆</button>
                                       </div>
                                       {athOpen && (
@@ -13197,7 +13206,6 @@ Start a new race anyway?`)) return;
                                     </div>
                                   );
                                 })}
-                                {dnf.length > 0 && <div style={{ fontSize: 14, color: "#3D434B", marginTop: 6 }}>DNF: {dnf.map(a => a.name).join(", ")}</div>}
                               </div>
                             )}
                           </div>
