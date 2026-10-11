@@ -19434,7 +19434,7 @@ Start a new race anyway?`)) return;
                             style={{ ...btnStyle("#04613F", true), flex:"1 1 160px", opacity: btSupported ? 1 : 0.5 }}>
                             {btScanning ? "Scanning…" : "+ Connect Bluetooth device"}
                           </button>
-                          <button onClick={connectKeiser} style={{ ...btnStyle("#8A5A00", true), flex:"1 1 160px" }}>🚲 Connect Keiser bike</button>
+                          {!isRun && <button onClick={connectKeiser} style={{ ...btnStyle("#8A5A00", true), flex:"1 1 160px" }}>🚲 Connect Keiser bike</button>}
                           {!bikeWatchPair && (
                             <button onClick={() => { const c = (bikeRideCode || "").trim().toUpperCase(); pairBikeWatch(bikeFeedList.find(f => f.code === c) || (c ? { code: c } : null)); }}
                               disabled={!(bikeRideCode || "").trim()}
@@ -19598,7 +19598,7 @@ Start a new race anyway?`)) return;
                           <div style={{ position:"absolute", left:0, right:0, top:0, zIndex:700, display:"flex", justifyContent:"space-around",
                             background:"rgba(11,13,16,0.82)", color:"#FFFFFF", padding:"10px 6px 8px", paddingTop:"max(10px, env(safe-area-inset-top))" }}>
                             {[["TIME", fmtRideClock(bikeElapsedMs), "#FFFFFF"], ["DIST", fmtDist(bikeLive?.dst), "#FF8A3D"],
-                              ["SPEED", fmtSpeed(bikeLive?.spd), "#2FC27A"], ["HR", bikeLive?.hr != null ? bikeLive.hr : "—", "#FF6B6B"]].map(([l, v, c]) => (
+                              [isRun ? "PACE" : "SPEED", fmtSpeed(bikeLive?.spd), "#2FC27A"], ["HR", bikeLive?.hr != null ? bikeLive.hr : "—", "#FF6B6B"]].map(([l, v, c]) => (
                               <div key={l} style={{ textAlign:"center", minWidth:0 }}>
                                 <div style={{ fontSize:14, letterSpacing:1, color:"#B8B3A9", fontWeight:700 }}>{l}</div>
                                 <div className="tm-metric" style={{ fontSize:24, fontWeight:900, color:c, whiteSpace:"nowrap" }}>{v}</div>
@@ -19691,7 +19691,7 @@ Start a new race anyway?`)) return;
                               )}
                               {code.length >= 4 && !bikeDone && (
                                 <div style={{ width: "100%", textAlign: "center", marginTop: 6 }}>
-                                  <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 6 }}>Rode a course you'll use again? Save the route for building races:</div>
+                                  <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 6 }}>{isRun ? "Ran" : "Rode"} a course you'll use again? Save the route for building races:</div>
                                   {["bike", "run"].map(leg => (
                                     <button key={leg} onClick={async () => {
                                       try {
