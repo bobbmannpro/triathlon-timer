@@ -3,9 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Timeathon</title>
+    <title>Timeathon — Live Triathlon Timing, Results &amp; Certificates</title>
     <!-- Link preview (texts, Facebook, Instagram, Slack): the logo banner -->
-    <meta name="description" content="Live race timing, results & certificates for triathlons, swim meets and bike rides." />
+    <meta name="description" content="Time your triathlon, swim meet or bike ride from your phone. Live standings for spectators, parent lap counting, instant results, finisher certificates and race photo albums. No chip mats needed." />
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"SoftwareApplication","name":"Timeathon","url":"https://timeathon.com/",
+     "applicationCategory":"SportsApplication","operatingSystem":"Web, iPhone, Android",
+     "description":"Phone-based race timing for triathlons, swim meets and bike rides: live standings, lap counting, results, certificates and photo albums.",
+     "offers":{"@type":"Offer","price":"10.00","priceCurrency":"USD","description":"Hosting, per month. Athletes and spectators are free."}}
+    </script>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Timeathon" />
     <meta property="og:title" content="Timeathon" />
@@ -198,7 +204,18 @@
         </linearGradient>
       </defs>
     </svg>
-    <div id="root"></div>
+    <div id="root">
+      <!-- What search engines and link previews read before the app loads; the app replaces it. -->
+      <main style="font-family:Arial,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#0B0D10">
+        <h1>Timeathon: live race timing from your phone</h1>
+        <p>Run a triathlon, swim meet or bike ride with nothing but phones. Start everyone at once or one at a time, log splits with a tap, and let parents count laps from the pool deck.</p>
+        <h2>For spectators</h2>
+        <p>Follow every athlete live: the race clock, each leg's time, and live age-group standings, right on your phone.</p>
+        <h2>For race directors</h2>
+        <p>Instant results, finisher certificates with your logo and signature, results emails for families, race photo albums, GPS course maps, Garmin watch support and Keiser spin bike distance tracking.</p>
+        <p>Youth triathlons, kids' tris, indoor and reverse triathlons, summer swim leagues and group rides.</p>
+      </main>
+    </div>
     <script>
       var LOGO_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2MjAgMTgwIiB3aWR0aD0iNjIwIiBoZWlnaHQ9IjE4MCI+CiAgPHJlY3Qgd2lkdGg9IjYyMCIgaGVpZ2h0PSIxODAiIGZpbGw9IiNGRkZGRkYiLz4KICA8IS0tIE1hcms6IHN3aW0sIGJpa2UgYW5kIHJ1biBsaW5lcyBjb252ZXJnaW5nIG9uIHRoZSBmaW5pc2ggcG9zdCAtLT4KICA8ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSg1Niw5MCkiPgogICAgPHBhdGggZD0iTS0yOCAtMzQgTDYgMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMEIzRkNDIiBzdHJva2Utd2lkdGg9IjkiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogICAgPHBhdGggZD0iTS0yOCAwIEw2IDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0I0NEEwMCIgc3Ryb2tlLXdpZHRoPSI5IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICAgIDxwYXRoIGQ9Ik0tMjggMzQgTDYgMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDQ2MTNGIiBzdHJva2Utd2lkdGg9IjkiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogICAgPHBhdGggZD0iTTYgMCBMNDAgMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMEIwRDEwIiBzdHJva2Utd2lkdGg9IjExIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICAgIDxjaXJjbGUgY3g9IjYiIGN5PSIwIiByPSI3LjUiIGZpbGw9IiNGRkZGRkYiIHN0cm9rZT0iIzBCMEQxMCIgc3Ryb2tlLXdpZHRoPSI1Ii8+CiAgPC9nPgogIDx0ZXh0IHg9IjEyOCIgeT0iMTEyIiBmb250LWZhbWlseT0iQXJjaGl2bywnQXJpYWwgQmxhY2snLEFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNjYiIGZvbnQtd2VpZ2h0PSI5MDAiIGxldHRlci1zcGFjaW5nPSItMiIgZmlsbD0iIzBCMEQxMCI+VElNRUFUSE9OPC90ZXh0PgogIDxyZWN0IHg9IjEzMCIgeT0iMTI0IiB3aWR0aD0iMTQyIiBoZWlnaHQ9IjgiIGZpbGw9IiMwQjNGQ0MiLz4KICA8cmVjdCB4PSIyNzIiIHk9IjEyNCIgd2lkdGg9IjE0MiIgaGVpZ2h0PSI4IiBmaWxsPSIjQjQ0QTAwIi8+CiAgPHJlY3QgeD0iNDE0IiB5PSIxMjQiIHdpZHRoPSIxNDIiIGhlaWdodD0iOCIgZmlsbD0iIzA0NjEzRiIvPgogIDx0ZXh0IHg9IjEzMSIgeT0iMTU4IiBmb250LWZhbWlseT0iQXJjaGl2byxBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjE3IiBmb250LXdlaWdodD0iODAwIiBsZXR0ZXItc3BhY2luZz0iMS41IiBmaWxsPSIjM0Q0MzRCIj5UUklBVEhMT04gwrcgU1dJTSBNRUVUIMK3IEJJS0UgUklERTwvdGV4dD4KPC9zdmc+Cg==";
     </script>
