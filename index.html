@@ -16504,8 +16504,9 @@ Start a new race anyway?`)) return;
                       No race data yet — head to <strong style={{ color: "#0B3FCC" }}>Race</strong> to start timing.
                     </div>
                   ) : (
-                    <div style={{ overflowX: "auto" }}>
+                    <div>
                       <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 6 }}>Overall</div>
+                      <div style={{ overflowX: "auto" }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                         <thead>
                           <tr style={{ borderBottom: "2px solid #C9C5BC" }}>
@@ -16577,6 +16578,7 @@ Start a new race anyway?`)) return;
                           })}
                         </tbody>
                       </table>
+                      </div>
 
                       {ageGroupSections.length > 0 && (
                         <div style={{ marginTop: 24 }}>
@@ -16584,6 +16586,7 @@ Start a new race anyway?`)) return;
                           {ageGroupSections.map(([label, group]) => (
                             <div key={label} style={{ marginBottom: 20 }}>
                               <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#04613F", marginBottom: 6, borderLeft: "3px solid #04613F", paddingLeft: 8 }}>{label}</div>
+                              <div style={{ overflowX: "auto" }}>
                               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                                 <thead>
                                   <tr style={{ borderBottom: "2px solid #C9C5BC" }}>
@@ -16615,6 +16618,7 @@ Start a new race anyway?`)) return;
                                   })}
                                 </tbody>
                               </table>
+                              </div>
                             </div>
                           ))}
                         </div>
