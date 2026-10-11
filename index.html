@@ -13160,10 +13160,10 @@ Start a new race anyway?`)) return;
                               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                                 <button onClick={() => race.photoCode && hostAlbums[race.photoCode]
                                   ? openAlbumEditor({ name: hostAlbums[race.photoCode].name, link: hostAlbums[race.photoCode].folderId ? "https://drive.google.com/drive/folders/" + hostAlbums[race.photoCode].folderId : "", code: race.photoCode, raceId: race.id, editing: race.photoCode })
-                                  : openAlbumEditor({ name: race.name, raceId: race.id })} style={{ ...btnStyle("#0B3FCC", true), minHeight: 44, padding: "0 14px", fontSize: 15, flex: "1 1 0" }}>📷 Photos</button>
-                                <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#8A5A00", true), minHeight: 44, padding: "0 14px", fontSize: 15, flex: "1 1 0" }}>🏆 Certs</button>
+                                  : openAlbumEditor({ name: race.name, raceId: race.id })} style={{ ...btnStyle("#0B3FCC", true), minHeight: 44, padding: "0 6px", fontSize: 15, flex: "1 1 0", whiteSpace: "nowrap" }}>📷 Photos</button>
+                                <button onClick={() => printArchivedCert(race, null)} style={{ ...btnStyle("#8A5A00", true), minHeight: 44, padding: "0 6px", fontSize: 15, flex: "1 1 0", whiteSpace: "nowrap" }}>🏆 Certs</button>
                                 <button onClick={() => setArchiveOpenId(isOpen ? null : race.id)} aria-expanded={isOpen}
-                                  style={{ ...btnStyle(TM.ink, !isOpen), minHeight: 44, padding: "0 14px", fontSize: 15, flex: "1 1 0" }}>{isOpen ? "Hide ▲" : "Results ▼"}</button>
+                                  style={{ ...btnStyle(TM.ink, !isOpen), minHeight: 44, padding: "0 6px", fontSize: 15, flex: "1 1 0", whiteSpace: "nowrap" }}>{isOpen ? "Hide ▲" : "Results ▼"}</button>
                               </div>
                             </div>
                             {isOpen && (
