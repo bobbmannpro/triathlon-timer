@@ -4647,6 +4647,7 @@ ${html}</body></html>`);
         const [viewersOpen, setViewersOpen] = useState(false);
         const athleteGpsListenerRef = useRef(null);
         const lastPushedRef = useRef([]);
+        const liveAthCountRef = useRef(0);   // how many athlete slots the live race holds online
         // Which screen is running a live race. Each publish or reopen stamps the
         // race with this screen's session; a screen that sees the race reset to
         // sign-ups, or stamped by another screen, stops writing to it.
@@ -5679,6 +5680,7 @@ ${html}</body></html>`);
           const ref = rtdb.ref(`liveRaces/${liveRaceCode}/athletes`);
           const fn = snap => {
             const athArr = snap.val() || [];
+            liveAthCountRef.current = Array.isArray(athArr) ? athArr.length : Object.keys(athArr).reduce((m, k) => Math.max(m, +k + 1), 0);
             const now = Date.now();
             const gpsMap = {};
             const trainerMap = {};
@@ -6474,6 +6476,8 @@ ${html}</body></html>`);
                   if (at < 0) at = next.findIndex(a => !a.uid && norm(athleteName(a) || a.name) === norm(full));
                   if (at >= 0) {
                     next = next.map((a, k) => k === at ? { ...a, uid: r.uid, dob: a.dob || r.dob || "", courseId: r.courseId || a.courseId } : a);
+                  } else if (next.some(a => norm(athleteName(a) || a.name) === norm(full))) {
+                    return;   // already on the roster under that name — never add a second copy
                   } else {
                     next = [...next, { ...freshAthlete(full, r.uid, r.gender, r.ageGroup), uid: r.uid, dob: r.dob || "",
                                        courseId: r.courseId || courses[0]?.id || null, raceNumber: ++bib }];
@@ -6717,6 +6721,9 @@ ${html}</body></html>`);
             updates[`athletes/${i}/splits`]      = ath.splits;
             updates[`athletes/${i}/dnf`]         = !!ath.dnf;
           });
+          // Someone removed mid-race: clear the slots past the end, or the race
+          // online keeps the old last entry and spectators see a duplicate.
+          for (let k = athletes.length; k < liveAthCountRef.current; k++) updates[`athletes/${k}`] = null;
           rtdb.ref("liveRaces/" + code).update(updates).catch(console.error);
         }
 
