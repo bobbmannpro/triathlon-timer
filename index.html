@@ -19062,7 +19062,7 @@ Start a new race anyway?`)) return;
                             <div style={{ ...S.row, gap:10, marginTop:12, paddingTop:12, borderTop:"2px solid #C9C5BC" }}>
                               {r.photoUrl
                                 ? <img src={r.photoUrl} alt="" style={{ width:40, height:40, borderRadius:"50%", objectFit:"cover", border:"2px solid #8A5A00", flexShrink:0 }} />
-                                : <div style={{ width:40, height:40, borderRadius:"50%", background:"#FFFFFF", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>🚴</div>}
+                                : <div style={{ width:40, height:40, borderRadius:"50%", background:"#FFFFFF", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>{isRun ? "🏃" : "🚴"}</div>}
                               <div style={{ flex:1, minWidth:0 }}>
                                 <div style={{ fontSize:14, fontWeight:700, color:"#0B0D10" }}>{r.name || "Unnamed"}</div>
                                 <div style={{ fontSize:14, color:"#3D434B" }}>
@@ -19212,7 +19212,7 @@ Start a new race anyway?`)) return;
                         <div style={{ position:"relative" }}>
                           <div ref={initBikeEditMap} style={{ height:320, borderRadius:8, border:"2px solid #C9C5BC", background:"#EFEDE8" }} />
                           {bikeEditMode === "route" && (
-                            <div style={{ position:"absolute", left:10, top:10, zIndex:500, pointerEvents:"none",
+                            <div style={{ position:"absolute", right:10, top:10, zIndex:500, pointerEvents:"none",
                               background:"rgba(255,255,255,0.88)", border:"2px solid #04613F",
                               borderRadius:8, padding:"8px 12px", minWidth:110 }}>
                               <div style={{ fontSize:14, letterSpacing:1.2, textTransform:"uppercase", color:"#3D434B", fontWeight:700 }}>
