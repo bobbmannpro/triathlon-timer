@@ -3877,6 +3877,7 @@ ${html}</body></html>`);
         const cert = race.cert || {};
         return {
           eventName: race.raceName || "Race", orgName: cert.orgName || "", accent: cert.accentColor || "#0B3FCC", logo: cert.logo || LOGO_B64,
+          signature: cert.signature || null, signer: cert.signer || "", signerTitle: cert.signerTitle || "",
           name: ath.name || "", bib: ath.raceNumber, overall: ath.dnf ? null : overall, gender: ath.gender || "", ageGroup: ath.ageGroup || "", agPlace: ath.dnf ? null : agPlace, dnf: !!ath.dnf,
           chipMs: finishOf(ath), legs, paces,
           course: c ? `${c.name || "Course"} — ${courseDists(c, " · ", undefined, true)}` : "",
@@ -3937,6 +3938,20 @@ ${html}</body></html>`);
         if (d.paces.length) { g.font = F(700, 28); g.fillStyle = "#3D434B"; g.textAlign = "center"; g.fillText(d.paces.join("     "), W / 2, y + 52); y += 52; }
         g.fillStyle = d.accent; g.fillRect(W / 2 - 260, H - 120, 520, 6);
         if (d.course) center(d.course, H - 78, 700, 22, "#3D434B");
+        // Race director's signature, bottom left
+        if (d.signature) {
+          const sig = await loadImg(d.signature);
+          if (sig) {
+            const bx = 110, bw = 360, lineY = H - 128;
+            const sh = Math.min(96, bw * sig.height / sig.width), sw = sh * sig.width / sig.height;
+            g.drawImage(sig, bx + (bw - sw) / 2, lineY - sh - 4, sw, sh);
+            g.fillStyle = "#3D434B"; g.fillRect(bx, lineY, bw, 2);
+            g.textAlign = "center"; g.fillStyle = "#0B0D10"; g.font = F(800, 22);
+            if (d.signer) g.fillText(d.signer, bx + bw / 2, lineY + 28);
+            g.fillStyle = "#3D434B"; g.font = F(700, 17);
+            g.fillText((d.signerTitle || "Race Director").toUpperCase(), bx + bw / 2, lineY + (d.signer ? 52 : 28));
+          }
+        }
         g.font = F(800, 18); g.fillStyle = "#3D434B"; g.textAlign = "right"; g.fillText("TIMEATHON", W - 64, H - 58);
         return await new Promise(res => cv.toBlob(res, "image/png"));
       }
@@ -3975,6 +3990,51 @@ ${html}</body></html>`);
                 </div>
               </>)}
               <button onClick={onClose} style={{ ...btnStyle(TM.ink, true), width: "100%", marginTop: 10 }}>Close</button>
+            </div>
+          </div>
+        );
+      }
+
+      // Draw a signature with a finger or mouse. Hands back a trimmed PNG with a
+      // transparent background, so it sits on any certificate.
+      function SignaturePad({ onSave, onCancel }) {
+        const ref = useRef(null);
+        const drawing = useRef(false);
+        const [blank, setBlank] = useState(true);
+        useEffect(() => {
+          const c = ref.current, dpr = window.devicePixelRatio || 1;
+          c.width = c.clientWidth * dpr; c.height = c.clientHeight * dpr;
+          const g = c.getContext("2d"); g.scale(dpr, dpr);
+          g.lineWidth = 3.2; g.lineCap = "round"; g.lineJoin = "round"; g.strokeStyle = "#0B1F5C";
+        }, []);
+        const at = e => { const r = ref.current.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+        const down = e => { e.preventDefault(); ref.current.setPointerCapture(e.pointerId); drawing.current = true;
+          const g = ref.current.getContext("2d"); const [x, y] = at(e); g.beginPath(); g.moveTo(x, y); g.lineTo(x + 0.1, y + 0.1); g.stroke(); setBlank(false); };
+        const move = e => { if (!drawing.current) return; const g = ref.current.getContext("2d"); const [x, y] = at(e); g.lineTo(x, y); g.stroke(); };
+        const up = () => { drawing.current = false; };
+        const clear = () => { const c = ref.current; c.getContext("2d").clearRect(0, 0, c.width, c.height); setBlank(true); };
+        const save = () => {
+          const c = ref.current, g = c.getContext("2d");
+          const { data, width, height } = g.getImageData(0, 0, c.width, c.height);
+          let x0 = width, y0 = height, x1 = 0, y1 = 0;
+          for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (data[(y * width + x) * 4 + 3] > 10) {
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+          if (x1 <= x0) return;
+          const pad = 8, w = x1 - x0 + pad * 2, h = y1 - y0 + pad * 2;
+          const out = document.createElement("canvas");
+          const sc = Math.min(1, 600 / w); out.width = Math.round(w * sc); out.height = Math.round(h * sc);
+          out.getContext("2d").drawImage(c, x0 - pad, y0 - pad, w, h, 0, 0, out.width, out.height);
+          onSave(out.toDataURL("image/png"));
+        };
+        return (
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Sign in the box with your finger.</div>
+            <canvas ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+              style={{ width: "100%", height: 180, background: "#FFFFFF", border: "2px dashed #3D434B", borderRadius: 8, touchAction: "none", display: "block" }} />
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button onClick={clear} style={{ ...btnStyle(TM.ink, true), minHeight: 46, padding: "0 14px" }}>Clear</button>
+              {onCancel && <button onClick={onCancel} style={{ ...btnStyle(TM.ink, true), minHeight: 46, padding: "0 14px" }}>Cancel</button>}
+              <button onClick={save} disabled={blank} style={{ ...btnStyle(TM.run), flex: 1, minHeight: 46, opacity: blank ? 0.5 : 1 }}>✓ Use this signature</button>
             </div>
           </div>
         );
@@ -4020,8 +4080,17 @@ ${html}</body></html>`);
         function closeCertShare() { setCertShare(null); }
         // The host's own race, shaped like a live race, for certificates from the Results tab.
         const hostCertRace = () => ({ raceName: certConfig.eventName || "Race", athletes, courses, units, ageGroups, segments: SEGMENTS,
-          cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC", logo: certConfig.customLogoB64 || null } });
+          cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC", logo: certConfig.customLogoB64 || null, ...sigCert() } });
         const [certConfig, setCertConfig] = useState({ eventName: "Timeathon Race Event", accentColor: "#0B3FCC", orgName: "", customLogoB64: null });
+        // The race director's signature: one for all their races.
+        const [hostSig, setHostSigRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("tm-signature") || "null"); } catch (_) { return null; } });
+        const [sigOpen, setSigOpen] = useState(false);
+        const setHostSig = v => {
+          setHostSigRaw(v);
+          try { if (v) localStorage.setItem("tm-signature", JSON.stringify(v)); else localStorage.removeItem("tm-signature"); } catch (_) {}
+          try { if (auth.currentUser) rtdb.ref("users/" + auth.currentUser.uid + "/signature").set(v || null).catch(() => {}); } catch (_) {}
+        };
+        const sigCert = () => hostSig && hostSig.img ? { signature: hostSig.img, signer: hostSig.name || "", signerTitle: hostSig.title || "Race Director" } : {};
         const [units, setUnits] = useState({ swim: "yards", bike: "miles", run: "miles" });
         const [loadedRaceId, setLoadedRaceId] = useState(null);
 
@@ -5848,8 +5917,9 @@ ${html}</body></html>`);
           rtdb.ref("liveRaces/" + liveRaceCode + "/cert").set({
             orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
             logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null,
+            ...sigCert(),
           }).catch(console.error);
-        }, [certConfig.orgName, certConfig.accentColor, certConfig.customLogoB64, liveRaceCode]);
+        }, [certConfig.orgName, certConfig.accentColor, certConfig.customLogoB64, liveRaceCode, hostSig && hostSig.img, hostSig && hostSig.name, hostSig && hostSig.title]);
         // Turning laps on (or changing distances) after going live reaches
         // parents' and athletes' phones straight away.
         useEffect(() => {
@@ -6519,7 +6589,7 @@ ${html}</body></html>`);
             status: "registration",
             raceName: certConfig.eventName || "Timeathon Race",
             cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
-                    logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
+                    logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null, ...sigCert() },
             courses: courses.map(c => ({ id: c.id, name: c.name, swimYards: c.swimYards, bikeMiles: c.bikeMiles, runMiles: c.runMiles, bikeType: c.bikeType || "gps", lapMi: c.lapMi ?? null, minLapSec: c.minLapSec ?? null,
               swimByLaps: !!c.swimByLaps, swimLap: c.swimLap ?? null, swimMinLapSec: c.swimMinLapSec ?? null,
               runByLaps: !!c.runByLaps, runLap: c.runLap ?? null, runMinLapSec: c.runMinLapSec ?? null })),
@@ -6697,7 +6767,7 @@ ${html}</body></html>`);
             clock: clockStamp(clockMs, false, false), hostSession: hostSessionRef.current,
             raceName: certConfig.eventName || "Race",
             cert: { orgName: certConfig.orgName || "", accentColor: certConfig.accentColor || "#0B3FCC",
-                    logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null },
+                    logo: certConfig.customLogoB64 && certConfig.customLogoB64.length < 300000 ? certConfig.customLogoB64 : null, ...sigCert() },
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits, dnf: !!a.dnf })),
             segments: SEGMENTS, updatedAt: Date.now(),
             courses, units, autoSplits, ageGroups, courseMap: courseMapOn, legOrder, raceMode,
@@ -6882,10 +6952,10 @@ ${html}</body></html>`);
             const medal = place >= 0 && place < 3 ? medalEmoji[place] : "🏅";
             const agp = archiveAgPlace(race.athletes, ath);
             const segPills = segs.map((seg, si) => { const dur = archiveSegDur(ath, si); return dur !== null ? `<div class="seg"><div class="seg-name">${seg}</div><div class="seg-time">${formatElapsed(dur)}</div></div>` : ""; }).join("");
-            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${ath.dnf ? "Did Not Finish" : place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">${ath.dnf ? "Result" : "Chip Time"}</div><div class="time-val">${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div></div>`;
+            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${ath.dnf ? "Did Not Finish" : place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">${ath.dnf ? "Result" : "Chip Time"}</div><div class="time-val">${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div>${hostSig && hostSig.img ? `<div class="sig"><img src="${hostSig.img}" alt="Signature" /><div class="sig-line"></div>${hostSig.name ? `<div class="sig-name">${hostSig.name}</div>` : ""}<div class="sig-title">${hostSig.title || "Race Director"}</div></div>` : ""}</div>`;
           }).join("");
           const win = window.open("", "_blank");
-          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:11in 8.5in;margin:0;}@media screen{html{background:#8f949b;}body{background:#8f949b;padding:16px 0;}.cert{margin:0 auto 16px;box-shadow:0 6px 24px rgba(0,0,0,.35);}}@media print{html,body{zoom:1!important;padding:0!important;background:#fff!important;}.cert{margin:0!important;box-shadow:none!important;}}body{background:#fff;font-family:'Archivo',Arial,sans-serif;}.cert{width:11in;height:8.5in;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;border:5px solid #0B3FCC;background:linear-gradient(150deg,#EFEDE8 0%,#ffffff 55%,#EFEDE8 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:84px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#0B3FCC,transparent);}.event{font-size:18px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;text-align:center;}.org{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;text-align:center;margin-top:-4px;}.medal-emoji{font-size:64px;line-height:1;}.place{font-family:'Archivo',Arial,sans-serif;font-size:40px;letter-spacing:4px;}.ag-place{font-size:18px;letter-spacing:2px;color:#0B0D10;font-weight:700;text-align:center;}.name{font-family:'Archivo',Arial,sans-serif;font-size:92px;letter-spacing:5px;color:#0B0D10;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.time-val{font-family:'Archivo',Arial,sans-serif;font-size:48px;letter-spacing:3px;color:#0B0D10;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.seg-time{font-family:'Archivo',Arial,sans-serif;font-size:26px;letter-spacing:2px;color:#0B0D10;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:14px;color:#3D434B;font-weight:600;background:#EFEDE8;border:2px solid #C9C5BC;border-radius:20px;padding:3px 12px;}.bib-num{font-size:14px;letter-spacing:3px;color:#0B3FCC;font-weight:700;text-transform:uppercase;margin-top:-4px;}</style></head><body>${certHTML}<script>(function(){var w=11*96+32;if(innerWidth<w)document.body.style.zoom=(innerWidth/w).toFixed(3);})();window.onload=()=>{window.print();}<\/script></body></html>`);
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:11in 8.5in;margin:0;}@media screen{html{background:#8f949b;}body{background:#8f949b;padding:16px 0;}.cert{margin:0 auto 16px;box-shadow:0 6px 24px rgba(0,0,0,.35);}}@media print{html,body{zoom:1!important;padding:0!important;background:#fff!important;}.cert{margin:0!important;box-shadow:none!important;}}body{background:#fff;font-family:'Archivo',Arial,sans-serif;}.cert{width:11in;height:8.5in;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;border:5px solid #0B3FCC;background:linear-gradient(150deg,#EFEDE8 0%,#ffffff 55%,#EFEDE8 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:84px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#0B3FCC,transparent);}.event{font-size:18px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;text-align:center;}.org{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;text-align:center;margin-top:-4px;}.medal-emoji{font-size:64px;line-height:1;}.place{font-family:'Archivo',Arial,sans-serif;font-size:40px;letter-spacing:4px;}.ag-place{font-size:18px;letter-spacing:2px;color:#0B0D10;font-weight:700;text-align:center;}.name{font-family:'Archivo',Arial,sans-serif;font-size:92px;letter-spacing:5px;color:#0B0D10;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.time-val{font-family:'Archivo',Arial,sans-serif;font-size:48px;letter-spacing:3px;color:#0B0D10;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.seg-time{font-family:'Archivo',Arial,sans-serif;font-size:26px;letter-spacing:2px;color:#0B0D10;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:14px;color:#3D434B;font-weight:600;background:#EFEDE8;border:2px solid #C9C5BC;border-radius:20px;padding:3px 12px;}.bib-num{font-size:14px;letter-spacing:3px;color:#0B3FCC;font-weight:700;text-transform:uppercase;margin-top:-4px;}.sig{position:absolute;left:56px;bottom:34px;width:250px;text-align:center;}.sig img{max-width:240px;max-height:70px;object-fit:contain;display:block;margin:0 auto;}.sig-line{height:2px;background:#3D434B;margin-top:2px;}.sig-name{font-size:15px;font-weight:800;color:#0B0D10;margin-top:4px;}.sig-title{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#3D434B;font-weight:700;}</style></head><body>${certHTML}<script>(function(){var w=11*96+32;if(innerWidth<w)document.body.style.zoom=(innerWidth/w).toFixed(3);})();window.onload=()=>{window.print();}<\/script></body></html>`);
           win.document.close();
         }
 
@@ -8558,6 +8628,12 @@ ${html}</body></html>`);
             setBikeNamesRaw(prev => { const n = { ...v, ...prev }; try { localStorage.setItem("keiser-names", JSON.stringify(n)); } catch (_) {} return n; });
           }).catch(() => {});
         }, [currentUser?.uid]);
+        useEffect(() => {
+          if (!currentUser) return;
+          rtdb.ref("users/" + currentUser.uid + "/signature").once("value").then(sn => {
+            const v = sn.val(); if (v && v.img && !hostSig) { setHostSigRaw(v); try { localStorage.setItem("tm-signature", JSON.stringify(v)); } catch (_) {} }
+          }).catch(() => {});
+        }, [currentUser?.uid]);
         async function connectKeiser() {
           setKeiserMsg("");
           if (!btSupported) { setKeiserMsg("Bluetooth needs Chrome on Android."); return; }
@@ -8924,6 +9000,7 @@ ${html}</body></html>`);
                 </div>
                 <div class="bottom-rule"></div>
                 <div class="dist-note">${ac.name} &mdash; ${courseDists(ac, " &middot; ", undefined, true)}</div>
+                ${hostSig && hostSig.img ? `<div class="sig"><img src="${hostSig.img}" alt="Signature" /><div class="sig-line"></div>${hostSig.name ? `<div class="sig-name">${hostSig.name}</div>` : ""}<div class="sig-title">${hostSig.title || "Race Director"}</div></div>` : ""}
               </div>`;
           }).join("");
 
@@ -8948,6 +9025,7 @@ ${html}</body></html>`);
               .bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}
               .logo{height:84px;object-fit:contain;margin-bottom:2px;}
               .top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#0B3FCC,transparent);}
+              .sig{position:absolute;left:56px;bottom:34px;width:250px;text-align:center;}.sig img{max-width:240px;max-height:70px;object-fit:contain;display:block;margin:0 auto;}.sig-line{height:2px;background:#3D434B;margin-top:2px;}.sig-name{font-size:15px;font-weight:800;color:#0B0D10;margin-top:4px;}.sig-title{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#3D434B;font-weight:700;}
               .event{font-size:18px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;text-align:center;}
               .org{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;text-align:center;margin-top:-4px;}
               .medal-emoji{font-size:64px;line-height:1;}
@@ -14858,6 +14936,32 @@ Start a new race anyway?`)) return;
                         {certConfig.customLogoB64 && <span style={{ fontSize: 14, color: "#04613F" }}>&#10003; Logo uploaded</span>}
                         {certConfig.customLogoB64 && <button onClick={() => setCertConfig(cfg => ({ ...cfg, customLogoB64: null }))} style={{ background: "none", border: "none", color: "#3D434B", cursor: "pointer", fontSize: 14 }}>Remove</button>}
                         <input ref={logoInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleLogoImport} />
+                      </div>
+                      <div style={{ borderTop: "2px solid #C9C5BC", paddingTop: 10, marginTop: 4 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>Your signature</div>
+                        {sigOpen ? (
+                          <SignaturePad onCancel={hostSig && hostSig.img ? () => setSigOpen(false) : null}
+                            onSave={img => { setHostSig({ name: (hostSig && hostSig.name) || [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(" "), title: (hostSig && hostSig.title) || "Race Director", ...(hostSig || {}), img }); setSigOpen(false); }} />
+                        ) : hostSig && hostSig.img ? (
+                          <div>
+                            <div style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 8, padding: 10, textAlign: "center" }}>
+                              <img src={hostSig.img} alt="Your signature" style={{ maxWidth: "100%", maxHeight: 90 }} />
+                            </div>
+                            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                              <input value={hostSig.name || ""} onChange={e => setHostSig({ ...hostSig, name: e.target.value })} placeholder="Name under the signature"
+                                style={{ flex: "1 1 160px", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 12px", fontSize: 14 }} />
+                              <input value={hostSig.title || ""} onChange={e => setHostSig({ ...hostSig, title: e.target.value })} placeholder="Title (Race Director)"
+                                style={{ flex: "1 1 140px", background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 12px", fontSize: 14 }} />
+                            </div>
+                            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                              <button onClick={() => setSigOpen(true)} style={{ ...btnStyle(TM.ink, true), padding: "7px 14px", fontSize: 14 }}>✍ Sign again</button>
+                              <button onClick={() => setHostSig(null)} style={{ background: "none", border: "none", color: "#3D434B", cursor: "pointer", fontSize: 14 }}>Remove</button>
+                            </div>
+                            <div style={{ ...TM_CAPTION, marginTop: 6 }}>On every certificate, for all your races.</div>
+                          </div>
+                        ) : (
+                          <button onClick={() => setSigOpen(true)} style={{ ...btnStyle(TM.ink), padding: "10px 16px", fontSize: 15 }}>✍ Add your signature</button>
+                        )}
                       </div>
                     </div>
                   </SetupSection>
