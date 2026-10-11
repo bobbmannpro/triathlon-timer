@@ -6529,7 +6529,12 @@ ${html}</body></html>`);
                           if (ld.legOrder) setLegOrder(legOrderOf(ld.legOrder));
                           if (ld.raceMode) setRaceMode(ld.raceMode);
                           setRaceInitialized(true);
-                          setView("race");
+                          // Only jump back into a race that's still going. A finished
+                          // race (or one from yesterday) opens on My Races instead.
+                          const ldAths = asList(ld.athletes).filter(Boolean);
+                          const allDone = ldAths.length > 0 && ldAths.some(a => a.started) && ldAths.every(a => a.finished || a.dnf);
+                          const stale = ld.updatedAt && Date.now() - ld.updatedAt > 12 * 3600 * 1000;
+                          if (!allDone && !stale) setView("race");
                         } else {
                           localStorage.removeItem("tri-active-live");
                         }
@@ -6545,7 +6550,16 @@ ${html}</body></html>`);
                   const watchRaw = localStorage.getItem("tri-active-watch");
                   if (watchRaw) {
                     const { code } = JSON.parse(watchRaw);
-                    if (code) { setView("watch"); watchRace(code); }
+                    if (code) {
+                      // Reopen only a race that's still going; a finished one opens on the home screen.
+                      const ws = await rtdb.ref("liveRaces/" + code).once("value").catch(() => null);
+                      const wd = ws && ws.val();
+                      const wa = wd ? asList(wd.athletes).filter(Boolean) : [];
+                      const over = !wd || (wa.length > 0 && wa.some(a => a.started) && wa.every(a => a.finished || a.dnf))
+                        || (wd.updatedAt && Date.now() - wd.updatedAt > 12 * 3600 * 1000);
+                      if (over) localStorage.removeItem("tri-active-watch");
+                      else { setView("watch"); watchRace(code); }
+                    }
                   }
                 } catch(_) {}
 
@@ -6568,7 +6582,9 @@ ${html}</body></html>`);
                         }
                         setJoinRace({ ...jd, code });
                         if (athIdx !== null && athIdx !== undefined) setJoinAthIdx(athIdx);
-                        setView("join");
+                        const me = athIdx != null ? asList(jd.athletes)[athIdx] : null;
+                        const joinOver = (me && (me.finished || me.dnf)) || (jd.updatedAt && Date.now() - jd.updatedAt > 12 * 3600 * 1000);
+                        if (!joinOver) setView("join");
                         // Restore GPS trail
                         try {
                           const trailRaw = localStorage.getItem("tri-gps-trail");
@@ -18523,16 +18539,18 @@ Start a new race anyway?`)) return;
                         onPointerDown={e => laneStop(e)}
                         onClick={e => { if (e.detail === 0) laneStop(e); }}
                         style={{
-                          width:"100%", padding:"32px 20px", fontSize:22, fontWeight:900, letterSpacing:1.2,
-                          borderRadius:8, marginBottom:16, userSelect:"none", WebkitUserSelect:"none",
+                          // Huge on purpose: timers hit it without looking down at the phone.
+                          width:"100%", minHeight:"max(240px, 38vh)", padding:"24px 20px",
+                          fontSize: swimLaneFinished ? 30 : 64, fontWeight:900, letterSpacing:2,
+                          borderRadius:16, marginBottom:16, userSelect:"none", WebkitUserSelect:"none", touchAction:"manipulation",
                           cursor: status === "racing" && !swimLaneFinished ? "pointer" : "default",
-                          background: swimLaneFinished ? "#EFEDE8" : status === "racing" ? "#EFEDE8" : "#EFEDE8",
-                          border: `3px solid ${swimLaneFinished ? "#0B3FCC" : status === "racing" ? "#B3001B" : "#C9C5BC"}`,
-                          color: swimLaneFinished ? "#0B3FCC" : status === "racing" ? "#B3001B" : "#3D434B",
-                          boxShadow: status === "racing" && !swimLaneFinished ? "0 0 32px rgba(11,13,16,0.18)" : "none",
-                          transition:"all 0.15s"
+                          background: swimLaneFinished ? "#FFFFFF" : status === "racing" ? "#B3001B" : "#EFEDE8",
+                          border: `4px solid ${swimLaneFinished ? "#0B3FCC" : status === "racing" ? "#B3001B" : "#C9C5BC"}`,
+                          color: swimLaneFinished ? "#0B3FCC" : status === "racing" ? "#FFFFFF" : "#8A8F96",
+                          boxShadow: status === "racing" && !swimLaneFinished ? "0 6px 28px rgba(179,0,27,0.35)" : "none",
+                          transition:"background 0.15s, color 0.15s"
                         }}>
-                        {swimLaneFinished ? "✓ FINISH RECORDED" : status === "racing" ? "⏹ STOP" : "■ STOP"}
+                        {swimLaneFinished ? "✓ FINISH RECORDED" : "STOP"}
                       </button>
                       <div style={{ ...TM_CAPTION, textAlign: "center", marginTop: -8, marginBottom: 14 }}>
                         {swimLaneClockErr ? `Clock matched to the host within ±${swimLaneClockErr} ms` : "Matching clock to the host…"}
