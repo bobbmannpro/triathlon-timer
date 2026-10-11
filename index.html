@@ -5871,6 +5871,8 @@ ${html}</body></html>`);
           return () => clearInterval(iv);
         }, [liveRaceCode, clockRunning, hostLost]);
 
+        // True while a finished race is open just to look at (so nothing re-saves it).
+        const finishedViewRef = useRef(false);
         useEffect(() => {
           if (athletes.some(a => a.finished)) autoArchiveRace();
         }, [athletes]);
@@ -6919,6 +6921,7 @@ ${html}</body></html>`);
         }
 
         async function publishLiveRace(codeIn) {
+          finishedViewRef.current = false;
           if (!currentUser) return "Not logged in.";
           const code = codeIn || generateRaceCode();
           stopRegListener();
@@ -7040,18 +7043,24 @@ ${html}</body></html>`);
 
         function autoArchiveRace() {
           if (!athletes.some(a => a.finished)) return;
+          // A finished race reopened later: edits go back into its own results entry
+          // (same date), never a new copy. With no entry to update, nothing is saved.
+          const fv = finishedViewRef.current;
+          if (fv === true) return;
+          const raceKey = liveRaceCode || registrationCode || loadedRaceId;
+          if (typeof fv === "string") archiveSessionRef.current = fv;
           // One results entry per race per day: a reload or reopening the race
           // keeps updating the same entry instead of starting a copy.
-          const raceKey = liveRaceCode || registrationCode || loadedRaceId;
-          if (raceKey) archiveSessionRef.current = `race_${raceKey}_${new Date().toISOString().slice(0, 10)}`;
+          else if (raceKey) archiveSessionRef.current = `race_${raceKey}_${new Date().toISOString().slice(0, 10)}`;
           else if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
           const sessionId = archiveSessionRef.current;
           const prevEntry = savedArchive.find(r => r.id === sessionId) || {};
           const entry = {
             ...prevEntry,   // keeps photoCode and anything else already attached
             raceId: loadedRaceId || prevEntry.raceId || null, code: raceKey && raceKey !== loadedRaceId ? raceKey : (prevEntry.code || null),
-            id: sessionId, name: certConfig.eventName || "Race", date: new Date().toLocaleDateString(),
-            savedAt: Date.now(), segments: SEGMENTS, courses, units, certConfig,
+            id: sessionId, name: (typeof fv === "string" && prevEntry.name) || certConfig.eventName || "Race",
+            date: typeof fv === "string" && prevEntry.date ? prevEntry.date : new Date().toLocaleDateString(),
+            savedAt: typeof fv === "string" && prevEntry.savedAt ? prevEntry.savedAt : Date.now(), segments: SEGMENTS, courses, units, certConfig,
             athletes: athletes.map(a => ({ id: a.id, name: athleteName(a) || a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, raceNumber: a.raceNumber ?? null, splits: [...a.splits], startOffset: a.startOffset, finished: a.finished, finishMs: totalChipTime(a), dnf: !!a.dnf })),
             finishedCount: athletes.filter(a => a.finished).length, totalCount: athletes.length,
           };
@@ -7221,6 +7230,7 @@ ${html}</body></html>`);
         // courses and sign-up links — so a test run can be followed by another.
         function resetTimers() {
           archiveSessionRef.current = null;
+          finishedViewRef.current = false;
           const blank = Array(SEGMENTS.length).fill(null);
           setAthletes(a => a.map(ath => ({ ...ath, splits: blank.slice(), startOffset: null, started: false, finished: false, dnf: false })));
           resetClock();
@@ -7412,6 +7422,7 @@ ${html}</body></html>`);
         }, [loadedRaceId, raceInitialized, athletes, ageGroups, courses, units, certConfig, waypoints, raceRoutes, raceListed, autoSplits, courseMapOn, saveRaceName, customRaceCode, legOrder, raceMode]);
 
         async function loadRace(race) {
+          finishedViewRef.current = false;
           // Opening a different race lets go of whichever race was live, so its
           // clock and roster can't be overwritten by this one.
           if (liveRaceCode && liveRaceCode !== race.code) setLiveRaceCode(null);
@@ -7520,6 +7531,41 @@ ${html}</body></html>`);
                 }
               }
             } catch(e) { console.error(e); }
+          }
+
+          // A race that was run and finished comes back exactly as it ended: every
+          // split, DNFs, and the clock stopped at its final time.
+          if (currentUser) {
+            for (const fc of [race.plannedCode, race.code].filter((c, i, arr) => c && arr.indexOf(c) === i)) {
+              try {
+                const fsnap = await rtdb.ref("liveRaces/" + fc).once("value");
+                const fd = fsnap.val();
+                if (!fd || fd.status !== "closed" || fd.publishedBy !== currentUser.uid || !(fd.clock && fd.clock.started)) continue;
+                const fl = withLiveClock(fd);
+                const segs = fd.segments || SEGMENTS;
+                const byName = new Map(asList(race.athletes).map(a => [String(a.name || "").trim().toLowerCase(), a]));
+                const done = asList(fd.athletes).filter(Boolean).map(a => ({
+                  ...freshAthlete(a.name, a.id, a.gender, a.ageGroup),
+                  email: (byName.get(String(a.name || "").trim().toLowerCase()) || {}).email || "",
+                  uid: a.uid || null, courseId: a.courseId ?? null, dob: a.dob || "", raceNumber: a.raceNumber ?? null,
+                  startOffset: a.startOffset ?? null,
+                  splits: Array.from({ length: segs.length }, (_, idx) => a.splits?.[idx] ?? null),
+                  started: !!a.started, finished: !!a.finished, dnf: !!a.dnf
+                }));
+                if (!done.length) continue;
+                const prevRes = resultsForRace(race).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
+                finishedViewRef.current = prevRes ? prevRes.id : true;
+                setAthletes(done);
+                if (fd.legOrder) setLegOrder(legOrderOf(fd.legOrder));
+                if (fd.raceMode) setRaceMode(fd.raceMode);
+                offsetRef.current = fl.clockMs || 0;
+                setClockMs(fl.clockMs || 0);
+                setClockStarted(true);
+                setClockRunning(false);
+                setSetupStep(0); setView("race");
+                return;
+              } catch (e) { console.error(e); }
+            }
           }
 
           clearClockLocal();
@@ -13194,7 +13240,14 @@ Start a new race anyway?`)) return;
                                     <div key={ath.id} style={{ marginBottom: 8 }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "2px solid #C9C5BC", cursor: "pointer" }} onClick={() => setArchiveOpenAthId(athOpen ? null : `${race.id}-${ath.id}`)}>
                                         <div style={{ fontSize: 14 }}>{out ? "–" : rank < 3 ? medals[rank] : `${rank + 1}.`}</div>
-                                        <div style={{ flex: 1, fontSize: 14, color: "#0B0D10", fontWeight: 600 }}>{ath.name}</div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ fontSize: 15, color: "#0B0D10", fontWeight: 700 }}>{ath.name}</div>
+                                          {/* Every split at a glance; tap the row for the full breakdown. */}
+                                          {(() => {
+                                            const parts = segs.map((seg, si) => { const dur = archiveSegDur(ath, si); return dur != null && dur > 0 ? `${seg} ${formatElapsed(dur)}` : null; }).filter(Boolean);
+                                            return parts.length ? <div style={{ fontSize: 13, color: "#3D434B", marginTop: 2, lineHeight: 1.35 }}>{parts.join(" · ")}</div> : null;
+                                          })()}
+                                        </div>
                                         <div style={{ fontFamily: "var(--tm-font)", fontSize: 18, color: out ? TM.live : "#04613F", letterSpacing: 0.5 }}>{out ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div>
                                         <button onClick={e => { e.stopPropagation(); printArchivedCert(race, ath); }} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, padding: "3px 8px", fontSize: 14, color: "#0B3FCC", cursor: "pointer" }}>🏆</button>
                                       </div>
