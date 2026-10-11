@@ -18826,9 +18826,9 @@ Start a new race anyway?`)) return;
                   {bikeView === "home" && (
                     <div>
                       <div style={S.card}>
-                        <div style={S.label}>Follow a ride</div>
+                        <div style={S.label}>Follow a ride or run</div>
                         <div style={{ fontSize:14, color:"#3D434B", marginBottom:8 }}>
-                          Enter the 6-character code the rider shared with you.
+                          Enter the code they shared with you.
                         </div>
                         <div style={S.row}>
                           <input value={bikeWatchCode} onChange={e => setBikeWatchCode(normCode(e.target.value))}
@@ -18840,9 +18840,9 @@ Start a new race anyway?`)) return;
                       </div>
 
                       <div style={{ ...S.row, justifyContent:"space-between", margin:"18px 0 8px" }}>
-                        <div style={{ ...S.label, marginBottom:0 }}>Your ride feeds</div>
+                        <div style={{ ...S.label, marginBottom:0 }}>Your bike &amp; run events</div>
                         <button onClick={() => { setBikeDraft(newBikeFeed()); setBikeSetupStep(1); setBikeView("setup"); }}
-                          style={{ ...btnStyle("#8A5A00"), padding:"7px 14px", fontSize:14 }}>+ New Feed</button>
+                          style={{ ...btnStyle("#8A5A00"), padding:"7px 14px", fontSize:14 }}>+ New event</button>
                       </div>
 
                       {bikeFeedList.length === 0 ? (
