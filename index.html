@@ -1092,6 +1092,25 @@
         };
         const stop = () => { clearInterval(timer.current); setHold(0); };
         React.useEffect(() => () => clearInterval(timer.current), []);
+        // Back button / back swipe does nothing while locked (Android and iPhone).
+        // Full screen hides Android's button bar. The Home button can't be blocked
+        // by any app — the phone's own app-pinning does that (tips below).
+        const IS_IPHONE = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        const [left, setLeft] = React.useState(false);
+        React.useEffect(() => {
+          try { history.pushState({ pocket: 1 }, ""); } catch (_) {}
+          const onPop = () => { try { history.pushState({ pocket: 1 }, ""); } catch (_) {} };
+          window.addEventListener("popstate", onPop);
+          try { const el = document.documentElement; if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen({ navigationUI: "hide" }).catch(() => {}); } catch (_) {}
+          const onVis = () => { if (document.visibilityState === "hidden") setLeft(true); };
+          document.addEventListener("visibilitychange", onVis);
+          return () => {
+            window.removeEventListener("popstate", onPop);
+            document.removeEventListener("visibilitychange", onVis);
+            try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (_) {}
+            try { if (history.state && history.state.pocket) history.back(); } catch (_) {}
+          };
+        }, []);
         return (
           <div role="dialog" aria-label="Pocket mode" onContextMenu={e => e.preventDefault()}
             style={{ position: "fixed", inset: 0, zIndex: 5000, background: "#000000", color: "#7A7A7A",
@@ -1111,8 +1130,14 @@
                        fontSize: 16, fontWeight: 800, cursor: "pointer", touchAction: "none" }}>
               Hold to<br />unlock
             </button>
-            <div style={{ fontSize: 15, fontWeight: 600, marginTop: 20, maxWidth: 300, lineHeight: 1.4 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginTop: 20, maxWidth: 320, lineHeight: 1.4 }}>
               Keep the app open and don't press the power button — that stops the GPS.
+            </div>
+            {left && <div style={{ fontSize: 15, fontWeight: 800, color: "#C9A227", marginTop: 12, maxWidth: 320 }}>You left the app for a moment — tracking may have paused while it was closed.</div>}
+            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 16, maxWidth: 320, lineHeight: 1.4, color: "#5E5E5E" }}>
+              {IS_IPHONE
+                ? "To lock the phone to this screen: turn on Guided Access (Settings › Accessibility › Guided Access), then triple-click the side button here. Triple-click again to end."
+                : "To lock the phone to this screen: turn on App pinning (Settings › Security › Pin app). Then open Recent apps, tap this app's icon and choose Pin. Hold Back + Recents to unpin."}
             </div>
           </div>
         );
