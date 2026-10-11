@@ -12173,9 +12173,9 @@ Start a new race anyway?`)) return;
                                       </button>
                                       {detachAlbumFor === r.race.id
                                         ? <button onClick={() => { attachAlbumToRace(r.race, null); setDetachAlbumFor(null); }}
-                                            style={{ ...btnStyle(TM.live, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>Remove album from race?</button>
+                                            style={{ ...btnStyle(TM.live, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>Yes, remove album</button>
                                         : <button onClick={() => setDetachAlbumFor(r.race.id)} aria-label="Remove photo album from this race"
-                                            style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>✕</button>}
+                                            style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>Remove album</button>}
                                     </>) : (() => {
                                       // Albums already attached to another race can't be picked: one album, one race.
                                       const taken = new Set(savedRaces.filter(x => x.id !== r.race.id).map(x => photoCodeForRace(x)).filter(Boolean));
@@ -12185,7 +12185,7 @@ Start a new race anyway?`)) return;
                                         <select value="" aria-label="Attach a photo album to this race"
                                           onChange={e => { const v = e.target.value; if (v === "__new") openAlbumEditor({ name: r.name, raceId: res[0] ? res[0].id : null, savedRaceId: r.race.id }); else if (v) attachAlbumToRace(r.race, v); }}
                                           style={{ minHeight: 38, fontSize: 14, fontWeight: 700, color: TM.swim, maxWidth: "100%", border: `2px solid ${TM.swim}`, borderRadius: 6, background: "#FFFFFF", padding: "0 8px" }}>
-                                          <option value="">📷 Attach photo album…</option>
+                                          <option value="">📷 Add photo album</option>
                                           {free.map(([c, a]) => <option key={c} value={c}>{(a && a.name) || "Album"} · {c}{a && a.count ? ` · ${a.count} photos` : ""}</option>)}
                                           <option value="__new">+ New album…</option>
                                         </select>
