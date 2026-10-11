@@ -6701,6 +6701,7 @@ ${html}</body></html>`);
             athletes: athletes.map(a => ({ id: a.id, uid: a.uid || null, name: a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, courseId: a.courseId || null, dob: a.dob || null, raceNumber: a.raceNumber ?? null, started: a.started, finished: a.finished, startOffset: a.startOffset, splits: a.splits, dnf: !!a.dnf })),
             segments: SEGMENTS, updatedAt: Date.now(),
             courses, units, autoSplits, ageGroups, courseMap: courseMapOn, legOrder, raceMode,
+            photoCode: photoCodeForRace(savedRaces.find(r => r.id === loadedRaceId)) || null,
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes
           };
@@ -6727,6 +6728,7 @@ ${html}</body></html>`);
             waypoints: waypoints.filter(wp => wp.lat !== null),
             raceRoutes,
             units, courses, autoSplits, legOrder, raceMode,
+            photoCode: (savedArchive.find(r => r.id === archiveSessionRef.current) || {}).photoCode || photoCodeForRace(savedRaces.find(r => r.id === loadedRaceId)) || null,
           };
           athletes.forEach((ath, i) => {
             updates[`athletes/${i}/id`]          = ath.id;
@@ -6809,7 +6811,10 @@ ${html}</body></html>`);
           if (raceKey) archiveSessionRef.current = `race_${raceKey}_${new Date().toISOString().slice(0, 10)}`;
           else if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
           const sessionId = archiveSessionRef.current;
+          const prevEntry = savedArchive.find(r => r.id === sessionId) || {};
           const entry = {
+            ...prevEntry,   // keeps photoCode and anything else already attached
+            raceId: loadedRaceId || prevEntry.raceId || null, code: raceKey && raceKey !== loadedRaceId ? raceKey : (prevEntry.code || null),
             id: sessionId, name: certConfig.eventName || "Race", date: new Date().toLocaleDateString(),
             savedAt: Date.now(), segments: SEGMENTS, courses, units, certConfig,
             athletes: athletes.map(a => ({ id: a.id, name: athleteName(a) || a.name, firstName: a.firstName || "", lastName: a.lastName || "", gender: a.gender, ageGroup: a.ageGroup, raceNumber: a.raceNumber ?? null, splits: [...a.splits], startOffset: a.startOffset, finished: a.finished, finishMs: totalChipTime(a), dnf: !!a.dnf })),
@@ -7367,6 +7372,27 @@ ${html}</body></html>`);
           photoAlbumUrlsRef.current = [];
           setPhotoAlbum(null);
         }
+
+        // A saved race's results in Past Results: linked by id, by its code, or by hand.
+        function resultsForRace(race) {
+          if (!race) return [];
+          const codes = [race.code, race.plannedCode, ...(race.oldCodes || [])].filter(Boolean);
+          return savedArchive.filter(r => r && (
+            (race.resultsIds || []).includes(r.id) ||
+            (r.raceId != null && String(r.raceId) === String(race.id)) ||
+            (r.code && codes.includes(r.code)) ||
+            codes.some(c => String(r.id).startsWith(`race_${c}_`))));
+        }
+        function photoCodeForRace(race) {
+          if (race && race.photoCode) return race.photoCode;
+          const withPhotos = resultsForRace(race).filter(r => r.photoCode).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+          return withPhotos[0] ? withPhotos[0].photoCode : null;
+        }
+        function linkRaceResults(raceId, archiveId) {
+          persistRaces(savedRaces.map(r => r.id === raceId ? { ...r, resultsIds: archiveId ? [archiveId] : [] } : r));
+          if (archiveId) persistArchiveUpdate(savedArchive.map(r => r.id === archiveId ? { ...r, raceId } : r));
+        }
+        const [linkingRace, setLinkingRace] = useState(null);   // My Races: saved race id choosing its past results
 
         function persistArchiveUpdate(updated) {
           setSavedArchive(updated);
@@ -11660,7 +11686,7 @@ Start a new race anyway?`)) return;
                 };
                 const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); setView("bike"); setBikeView("setup"); };
                 const saved = [
-                  ...savedRaces.map(r => ({ key: "t" + r.id, kind: "triathlon", name: r.name || "Untitled race",
+                  ...savedRaces.map(r => ({ key: "t" + r.id, kind: "triathlon", name: r.name || "Untitled race", race: r,
                     meta: `${asList(r.athletes).length} athlete${asList(r.athletes).length !== 1 ? "s" : ""} · saved ${r.savedAt || ""}`,
                     open: () => openTri(r), del: () => deleteRace(r.id) })),
                   ...swimSavedMeets.map(m => ({ key: "s" + m.id, kind: "swim", name: m.meetName || "Untitled meet",
@@ -11715,6 +11741,34 @@ Start a new race anyway?`)) return;
                               <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: RACE_KINDS[r.kind].colour }}>{RACE_KINDS[r.kind].label}</div>
                               <div style={{ fontSize: 17, fontWeight: 800, color: TM.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
                               <div style={TM_CAPTION}>{r.meta}</div>
+                              {r.kind === "triathlon" && (() => {
+                                const res = resultsForRace(r.race).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+                                const pc = photoCodeForRace(r.race);
+                                if (linkingRace === r.race.id) return (
+                                  <div style={{ marginTop: 8 }}>
+                                    <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Which results are this race?</div>
+                                    <select defaultValue="" onChange={e => { linkRaceResults(r.race.id, e.target.value || null); setLinkingRace(null); }}
+                                      style={{ minHeight: 40, fontSize: 15, maxWidth: "100%", border: "2px solid #C9C5BC", borderRadius: 6 }}>
+                                      <option value="">Choose…</option>
+                                      {[...savedArchive].sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)).map(a => <option key={a.id} value={a.id}>{a.name} · {a.date}</option>)}
+                                    </select>
+                                    <button onClick={() => setLinkingRace(null)} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 10px", fontSize: 14, marginLeft: 6 }}>Cancel</button>
+                                  </div>
+                                );
+                                return (
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                                    {res.length > 0
+                                      ? <button onClick={() => { selectMode("triathlon"); setArchiveOpenId(res[0].id); setView("archive"); }}
+                                          style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>📊 Results</button>
+                                      : savedArchive.length > 0 && <button onClick={() => setLinkingRace(r.race.id)}
+                                          style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>🔗 Link results</button>}
+                                    {pc
+                                      ? <button onClick={() => loadPhotosByCode(pc)} style={{ ...btnStyle(TM.swim, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>📷 Photos · {pc}</button>
+                                      : res.length > 0 && <button onClick={() => openAlbumEditor({ name: r.name, raceId: res[0].id })}
+                                          style={{ ...btnStyle(TM.swim, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>📷 Add photos</button>}
+                                  </div>
+                                );
+                              })()}
                             </div>
                             {deleteConfirm === r.key ? (
                               <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
@@ -11846,6 +11900,11 @@ Start a new race anyway?`)) return;
                          `${ordinal(place)} of ${finishers.length} overall` + (ag ? ` · ${ordinal(ag)} in ${a.gender} ${a.ageGroup}` : "") + "\n" +
                          segTimes(a);
                 };
+                const thisRace = savedRaces.find(r => r.id === loadedRaceId);
+                const pcode = (savedArchive.find(r => r.id === archiveSessionRef.current) || {}).photoCode || photoCodeForRace(thisRace);
+                const photoText = pcode
+                  ? `\n\nRACE PHOTOS\nOpen timeathon.com (sign in with your free account), tap 📷 Race photos, type the photo code ${pcode} and tap View. Tap any photo to see it full size and save it.`
+                  : "";
                 const templates = {
                   watch: {
                     subject: raceName === "the race" ? "Watch the race live" : `${raceName}: watch it live`,
@@ -11857,7 +11916,7 @@ Start a new race anyway?`)) return;
                     subject: raceName === "the race" ? "Race results" : `${raceName}: results`,
                     body: `Hi everyone,\n\nThanks for coming to ${raceName}! Here are the results:\n\n` +
                           finishers.map((a, i) => `${i + 1}. ${athleteName(a)} — ${formatTime(totalChipTime(a))}`).join("\n") +
-                          (link ? `\n\nFull live results: ${link}` : "") + `\n\nGreat racing, everyone!`,
+                          (link ? `\n\nFull live results: ${link}` : "") + photoText + `\n\nGreat racing, everyone!`,
                   },
                   custom: { subject: raceName, body: "" },
                 };
@@ -11932,7 +11991,7 @@ Start a new race anyway?`)) return;
                             {emailKind === "results" && totalChipTime(a) !== null && (
                               <button type="button" onClick={e => { e.preventDefault();
                                 openMail(a.email, null, `${raceName}: ${athleteName(a)}'s result`,
-                                  `Hi,\n\nHere's how ${a.firstName || athleteName(a)} did at ${raceName}:\n\n${resultFor(a)}\n\n` + (link ? `All results: ${link}\n\n` : "") + "Great racing!"); }}
+                                  `Hi,\n\nHere's how ${a.firstName || athleteName(a)} did at ${raceName}:\n\n${resultFor(a)}\n\n` + (link ? `All results: ${link}\n\n` : "") + (photoText ? photoText.trim() + "\n\n" : "") + "Great racing!"); }}
                                 style={{ ...btnStyle(TM.ink, true), padding: "0 12px", fontSize: 15, flexShrink: 0 }}>Just theirs</button>
                             )}
                           </label>
@@ -13937,6 +13996,9 @@ Start a new race anyway?`)) return;
                 const wOnCourse = rankedWatchAthletes.filter(a => a.started && !a.finished).length;
                 return (
                   <div style={{ paddingTop: 8 }}>
+                    {liveRace && liveRace.photoCode && (
+                      <button onClick={() => loadPhotosByCode(liveRace.photoCode)} style={{ ...btnStyle(TM.swim, true), width: "100%", marginBottom: 10 }}>📷 Race photos</button>
+                    )}
                     {liveRace && liveRace.status === "live" && (
                       <>
                         <button onClick={() => startSpectatorCount(liveRace)} disabled={lapGeo.busy}
