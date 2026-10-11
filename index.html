@@ -11983,7 +11983,8 @@ Start a new race anyway?`)) return;
                 const lapRows = race.athletes.map((a, i) => a ? { a, i, course: courseFor(race, a) } : null).filter(Boolean);
                 const picked = Object.keys(lapMine).filter(k => lapMine[k]);
                 const myIdx = mode === "self" && joinRace && race.code === joinRace.code ? joinAthIdx : null;
-                const shown = mode === "self" ? lapRows.filter(x => x.i === myIdx)
+                // "My laps": me, plus every athlete linked to my account (a parent's kids).
+                const shown = mode === "self" ? lapRows.filter(x => x.i === myIdx || (x.a.uid && currentUser && x.a.uid === currentUser.uid))
                             : mode === "one" ? lapRows.filter(x => lapMine[x.i])
                             : (picked.length ? lapRows.filter(x => lapMine[x.i]) : lapRows);
                 const flash = lapFlash && (lapFlash.error || Date.now() - (lapFlash.at || 0) < 8000) ? lapFlash : null;
