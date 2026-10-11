@@ -6545,7 +6545,8 @@ ${html}</body></html>`);
                           setRaceInitialized(true);
                           // Only jump back into a race that's still going. A finished
                           // race (or one from yesterday) opens on My Races instead.
-                          if (raceStillGoing(liveSnap.val())) setView("race");
+                          // The race is reloaded in the background but the app opens on My Races,
+                          // where a Resume button takes the host back in.
                         } else {
                           localStorage.removeItem("tri-active-live");
                         }
@@ -12130,13 +12131,14 @@ Start a new race anyway?`)) return;
                                  color: clockRunning ? "#FFFFFF" : TM.ink, border: "none", borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
                         <span style={{ flex: 1 }}>
                           <span style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase" }}>
-                            {clockRunning ? "● Live now" : "Open"}
+                            {clockRunning ? "● Live now" : liveRaceCode ? `● Live · ${liveRaceCode}` : "In progress"}
                           </span>
-                          <span style={{ display: "block", fontWeight: 900, fontSize: 22, textTransform: "uppercase", marginTop: 2 }}>
+                          <span style={{ display: "block", fontWeight: 900, fontSize: 22, textTransform: "uppercase", marginTop: 2, overflowWrap: "anywhere" }}>
                             {saveRaceName || certConfig.eventName || "Current race"}
                           </span>
                         </span>
-                        <ArrowIcon />
+                        <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44, padding: "0 16px", borderRadius: 6, fontWeight: 900, fontSize: 17,
+                                       background: clockRunning ? "#FFFFFF" : TM.ink, color: clockRunning ? TM.live : "#FFFFFF" }}>Resume →</span>
                       </button>
                     )}
 
