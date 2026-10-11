@@ -9648,13 +9648,13 @@ ${html}</body></html>`);
                 p => { bikeSimCenterRef.current = [p.coords.latitude, p.coords.longitude]; }, () => {},
                 { enableHighAccuracy: false, timeout: 5000 });
             }
-            setBikeGpsStatus("Trainer mode · movement simulated from sensor speed");
+            setBikeGpsStatus(((feed.sport || bikeRideSport) === "run" ? "Treadmill mode" : "Trainer mode") + " · movement simulated from sensor speed");
             bikeSimTimerRef.current = setInterval(() => {
               const now = Date.now();
               const s   = bikeSensorRef.current;
               // Real wheel speed from the trainer drives the dot. No sensor yet?
               // hold at a plausible pace so the feed is still visibly alive.
-              const mps = s.sensorSpeed != null ? s.sensorSpeed / 3.6 : 7.5;
+              const mps = s.sensorSpeed != null ? s.sensorSpeed / 3.6 : ((feed.sport || bikeRideSport) === "run" ? 3.0 : 7.5);
               const dt  = Math.min(5, Math.max(0, (now - bikeSimLastRef.current) / 1000));
               bikeSimLastRef.current = now;
               bikeDistMRef.current += mps * dt;
@@ -11923,7 +11923,7 @@ Start a new race anyway?`)) return;
             {isHost && (() => {
               const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimathletes:"athletes", swimfiles:"files", swimdevices:"devices" };
               const navTabs = appMode === "bike"
-                ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__","Ride"],["__bike_feed__","Follow"],["__bike_riders__","Riders"]]
+                ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Run" : "Ride"],["__bike_feed__","Follow"],["__bike_riders__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Runners" : "Riders"]]
                 : appMode === "swim"
                 ? [["myraces","My Races"],["swimsetup","Setup"],["swimrace","Race"],["swimresults","Results"],["swimathletes","Athletes"],["swimfiles","Import / Export"],["swimdevices","Devices"],["swimlane","Lane"]]
                 : [["myraces","My Races"],["setup","Setup"],["race","Race"], ...(courseMapOn ? [["racemap","Map"]] : []),["results","Results"],["athletes","Athletes"],["devices","Devices"]];
@@ -19467,8 +19467,8 @@ Start a new race anyway?`)) return;
                       <div style={S.card}>
                         <div style={{ ...S.row, justifyContent:"space-between", gap:10 }}>
                           <div style={{ minWidth:0 }}>
-                            <div style={{ ...S.label, marginBottom:2 }}>Trainer mode</div>
-                            <div style={{ fontSize:14, color:"#3D434B", lineHeight:1.5 }}>Indoor ride on a smart trainer.</div>
+                            <div style={{ ...S.label, marginBottom:2 }}>{isRun ? "Treadmill mode" : "Trainer mode"}</div>
+                            <div style={{ fontSize:14, color:"#3D434B", lineHeight:1.5 }}>{isRun ? "Indoor run on a treadmill." : "Indoor ride on a smart trainer."}</div>
                           </div>
                           <button onClick={() => { if (!bikeRiding) setBikeSimulate(v => !v); }}
                             disabled={bikeRiding}
