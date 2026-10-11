@@ -12355,7 +12355,7 @@ Start a new race anyway?`)) return;
                       return (
                         <label key={i} style={{ ...rowStyle(on ? TM.ink : TM.line), display: "flex", gap: 12, alignItems: "center", cursor: "pointer" }}>
                           <input type={multi ? "checkbox" : "radio"} name="lap-athlete" checked={on}
-                            onChange={e => multi ? saveLapMine({ ...lapMine, [i]: e.target.checked }) : pickOne(i)} />
+                            onChange={e => { if (multi && mode === "one" && !lapPicking) setLapPicking(true); multi ? saveLapMine({ ...lapMine, [i]: e.target.checked }) : pickOne(i); }} />
                           <span style={{ fontSize: 17, fontWeight: 800 }}>{a.raceNumber != null ? `#${a.raceNumber} ` : ""}{nameOf(a)}</span>
                         </label>
                       );
