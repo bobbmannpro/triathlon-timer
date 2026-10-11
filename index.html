@@ -5257,7 +5257,7 @@ ${html}</body></html>`);
         const [albumRemove, setAlbumRemove] = useState(null);
         const [albumUpload, setAlbumUpload] = useState(null); // { code, done, total, failed, skipped, finished }
         useEffect(() => {
-          if (view !== "photos" || !currentUser) return;
+          if ((view !== "photos" && view !== "myraces") || !currentUser) return;
           rtdb.ref("users/" + currentUser.uid + "/photoAlbums").once("value")
             .then(sn => setHostAlbums(sn.val() || {})).catch(() => {});
         }, [view, currentUser && currentUser.uid]); // participant view: { code, raceName, photos:[{name,url}], lightboxIdx, loading, error }
@@ -7616,6 +7616,13 @@ ${html}</body></html>`);
           if (archiveId) persistArchiveUpdate(savedArchive.map(r => r.id === archiveId ? { ...r, raceId } : r));
         }
         const [linkingRace, setLinkingRace] = useState(null);   // My Races: saved race id choosing its past results
+        // One photo album per race: the race and its results all carry the album's code.
+        function attachAlbumToRace(race, code) {
+          persistRaces(savedRaces.map(r => r.id === race.id ? { ...r, photoCode: code || null } : r));
+          const ids = resultsForRace(race).map(a => a.id);
+          if (ids.length) persistArchiveUpdate(savedArchive.map(a => ids.includes(a.id) ? { ...a, photoCode: code || null } : a));
+        }
+        const [detachAlbumFor, setDetachAlbumFor] = useState(null);
 
         function persistArchiveUpdate(updated) {
           setSavedArchive(updated);
@@ -7721,6 +7728,7 @@ ${html}</body></html>`);
             await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).set(entry);
             setHostAlbums(a => { const n = { ...a }; if (d.editing && d.editing !== code) delete n[d.editing]; n[code] = entry; return n; });
             if (d.raceId) persistArchiveUpdate(savedArchive.map(r => r.id === d.raceId ? { ...r, photoCode: code } : r));
+            if (d.savedRaceId) persistRaces(savedRaces.map(r => r.id === d.savedRaceId ? { ...r, photoCode: code } : r));
             setAlbumDraft(null);
             setAlbumMsg({ ok: true, text: count == null
               ? `Saved “${name}” — share code ${code}. Parents who type it get a button to open the photos in Google Drive. Make sure the folder is shared “Anyone with the link · Viewer”.`
@@ -7749,6 +7757,7 @@ ${html}</body></html>`);
           await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).set(entry);
           setHostAlbums(a => { const n = { ...a }; if (d.editing && d.editing !== code) delete n[d.editing]; n[code] = entry; return n; });
           if (d.raceId) persistArchiveUpdate(savedArchive.map(r => r.id === d.raceId ? { ...r, photoCode: code } : r));
+            if (d.savedRaceId) persistRaces(savedRaces.map(r => r.id === d.savedRaceId ? { ...r, photoCode: code } : r));
           setAlbumDraft(null);
           setAlbumMsg({ ok: true, text: count
             ? `Saved “${name}” — share code ${code}.`
@@ -12158,10 +12167,30 @@ Start a new race anyway?`)) return;
                                           style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>📊 Results</button>
                                       : savedArchive.length > 0 && <button onClick={() => setLinkingRace(r.race.id)}
                                           style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>🔗 Link results</button>}
-                                    {pc
-                                      ? <button onClick={() => loadPhotosByCode(pc)} style={{ ...btnStyle(TM.swim, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>📷 Photos · {pc}</button>
-                                      : res.length > 0 && <button onClick={() => openAlbumEditor({ name: r.name, raceId: res[0].id })}
-                                          style={{ ...btnStyle(TM.swim, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>📷 Add photos</button>}
+                                    {pc ? (<>
+                                      <button onClick={() => loadPhotosByCode(pc)} style={{ ...btnStyle(TM.swim, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>
+                                        📷 {(hostAlbums[pc] && hostAlbums[pc].name) || "Photos"} · {pc}
+                                      </button>
+                                      {detachAlbumFor === r.race.id
+                                        ? <button onClick={() => { attachAlbumToRace(r.race, null); setDetachAlbumFor(null); }}
+                                            style={{ ...btnStyle(TM.live, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>Remove album from race?</button>
+                                        : <button onClick={() => setDetachAlbumFor(r.race.id)} aria-label="Remove photo album from this race"
+                                            style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 }}>✕</button>}
+                                    </>) : (() => {
+                                      // Albums already attached to another race can't be picked: one album, one race.
+                                      const taken = new Set(savedRaces.filter(x => x.id !== r.race.id).map(x => photoCodeForRace(x)).filter(Boolean));
+                                      const free = Object.entries(hostAlbums || {}).filter(([c]) => !taken.has(c))
+                                        .sort((a, b) => ((b[1] && b[1].createdAt) || 0) - ((a[1] && a[1].createdAt) || 0));
+                                      return (
+                                        <select value="" aria-label="Attach a photo album to this race"
+                                          onChange={e => { const v = e.target.value; if (v === "__new") openAlbumEditor({ name: r.name, raceId: res[0] ? res[0].id : null, savedRaceId: r.race.id }); else if (v) attachAlbumToRace(r.race, v); }}
+                                          style={{ minHeight: 38, fontSize: 14, fontWeight: 700, color: TM.swim, maxWidth: "100%", border: `2px solid ${TM.swim}`, borderRadius: 6, background: "#FFFFFF", padding: "0 8px" }}>
+                                          <option value="">📷 Attach photo album…</option>
+                                          {free.map(([c, a]) => <option key={c} value={c}>{(a && a.name) || "Album"} · {c}{a && a.count ? ` · ${a.count} photos` : ""}</option>)}
+                                          <option value="__new">+ New album…</option>
+                                        </select>
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })()}
