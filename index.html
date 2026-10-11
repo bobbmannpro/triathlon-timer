@@ -523,9 +523,14 @@
         "APE","DOG","CAT","PIG","COW","SUN","SKY","ICE","GEM","ACE","JET","ZAP","POP","FUN","ZIP","SEA","BAY","OAK","FIN"];
       const FRIENDLY_WORDS4 = ["WOLF","HAWK","LION","ORCA","PUMA","STAR","WAVE","BEAR","LAKE","FROG","DUCK","SEAL","KITE",
         "MOON","SWIM","BIKE","RACE","ZOOM","DASH","GOAL","LEAP","TIDE","REEF","DOVE","LYNX","TUNA","CRAB","MOTH","WREN"];
+      // Codes the app suggested (not typed) — if one turns out to be taken,
+      // the code check quietly swaps in another.
+      const SUGGESTED_CODES = new Set();
       function friendlyCode() {
         const pick = (a) => a[Math.floor(Math.random() * a.length)];
-        return Math.random() < 0.6 ? pick(FRIENDLY_WORDS3) + String(2 + Math.floor(Math.random() * 8)) : pick(FRIENDLY_WORDS4);
+        const c = Math.random() < 0.6 ? pick(FRIENDLY_WORDS3) + String(2 + Math.floor(Math.random() * 8)) : pick(FRIENDLY_WORDS4);
+        SUGGESTED_CODES.add(c);
+        return c;
       }
       // What people type is forgiving: "tigers 24", "Tigers-24" and "TIGERS24"
       // are the same code.
@@ -11186,7 +11191,18 @@ ${html}</body></html>`);
           setCodeCheck({ code: codeToCheck, status: "checking" });
           let live = true;
           const t = setTimeout(() => {
-            codeIsFree(codeToCheck).then(ok => { if (live) setCodeCheck({ code: codeToCheck, status: ok ? "free" : "taken" }); });
+            codeIsFree(codeToCheck).then(ok => {
+              if (!live) return;
+              if (!ok && SUGGESTED_CODES.has(codeToCheck)) {
+                const nc = friendlyCode();
+                if (view === "newrace") setNewRaceCode(nc);
+                else if (view === "setup") setCustomRaceCode(nc);
+                else if (view === "swim") setSwimMeet(m => ({ ...m, code: nc }));
+                else if (view === "bike") setBikeDraft(d => d ? { ...d, code: nc } : d);
+                return;
+              }
+              setCodeCheck({ code: codeToCheck, status: ok ? "free" : "taken" });
+            });
           }, 450);
           return () => { live = false; clearTimeout(t); };
         }, [codeToCheck]);
@@ -19346,7 +19362,7 @@ Start a new race anyway?`)) return;
                                 <><br />Multi-day: add an overnight stop for each night below.</>
                               ) : null}
                             </div>
-                            <button onClick={() => setBikeDraft(d => ({ ...d, route: [], routeMeta: null }))}
+                            <button onClick={() => setBikeDraft(d => ({ ...d, route: [], routeAnchors: [], routeSegs: [], routeSegElev: [], routeMeta: null }))}
                               style={{ ...btnStyle("#B3001B", true), padding:"4px 10px", fontSize:14, marginTop:8 }}>Remove route</button>
                           </div>
                         )}
@@ -19368,7 +19384,7 @@ Start a new race anyway?`)) return;
                         <div style={{ fontSize:14, color:"#3D434B", marginTop:6 }}>
                           {(bikeDraft.route || []).length} route point{(bikeDraft.route||[]).length === 1 ? "" : "s"}
                         </div>
-                        <div style={{ marginTop:10, padding:"10px 12px", background:"#EFEDE8", border:"2px dashed #C9C5BC", borderRadius:6 }}>
+                        <div style={{ marginTop:10, padding:"10px 12px", background:"#EFEDE8", border:"2px dashed #C9C5BC", borderRadius:6, display: WAHOO.enabled ? "block" : "none" }}>
                           <div style={{ fontSize:14, fontWeight:700, color:"#8A5A00", letterSpacing:1, textTransform:"uppercase" }}>Import from Wahoo</div>
                           <div style={{ fontSize:14, color:"#3D434B", marginTop:5, lineHeight:1.5 }}>
                             {WAHOO.enabled
