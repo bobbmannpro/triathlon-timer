@@ -1281,6 +1281,26 @@
 
       // Step 1 of every setup: what kind of race, and what it's called. The three
       // kinds are full-bleed blocks; the chosen one is solid, the others outlined.
+      // Bike / Run events: which one this is. Sets the words, units and route snapping.
+      function BikeRunChooser({ value, onChange }) {
+        const cur = value || "bike";
+        return (
+          <div>
+            <div style={{ ...TM_LABEL, marginTop: 16 }}>Bike or run?</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["bike", "🚲 Bike ride", "Speed in mph, routes on roads"], ["run", "🏃 Run", "Pace per mile, routes on paths"]].map(([k, label, hint]) => (
+                <button key={k} onClick={() => onChange(k)} aria-pressed={cur === k}
+                  style={{ flex: 1, padding: "12px", borderRadius: 8, cursor: "pointer", textAlign: "left",
+                    background: cur === k ? "#8A5A00" : "#FFFFFF", border: cur === k ? "2px solid #8A5A00" : "2px solid #C9C5BC" }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: cur === k ? "#FFFFFF" : "#0B0D10" }}>{label}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: cur === k ? "#FFFFFF" : "#3D434B", marginTop: 2 }}>{hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
       function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint,
                               code, onCode, codeStatus, codeLocked, onChangeLocked, listed, onListed, extra }) {
         const [changing, setChanging] = React.useState(false);
@@ -4420,6 +4440,7 @@ ${html}</body></html>`);
         // 0 = the step list (editing a saved race), 1-5 = wizard steps.
         const [setupStep, setSetupStep] = useState(1);
         const [newRaceKind, setNewRaceKind] = useState("triathlon");
+        const [newRaceSport, setNewRaceSport] = useState("bike");
         const [newRaceName, setNewRaceName] = useState("");
         const [newRaceCode, setNewRaceCode] = useState("");
         const [saveAsOpen, setSaveAsOpen] = useState(false);
@@ -11550,7 +11571,7 @@ Start a new race anyway?`)) return;
             setSwimView("setup");
             return;
           }
-          setBikeDraft({ ...newBikeFeed(), eventName: nm, code: cd }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
+          setBikeDraft({ ...newBikeFeed(), eventName: nm, code: cd, sport: newRaceSport, snapProfile: newRaceSport === "run" ? "hiking-mountain" : "trekking" }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
         }
 
         const watchLinkRef = useRef(false);
@@ -12202,7 +12223,8 @@ Start a new race anyway?`)) return;
                   nextDisabled={codeBlocksNext}
                   nextHint={codeBlocksNext && codeStatus !== "checking" ? "Pick a code that's available first" : null}>
                   <RaceKindStep kind={newRaceKind} onKind={setNewRaceKind} name={newRaceName} onName={setNewRaceName} nameId="new-race-name"
-                    code={newRaceCode} onCode={setNewRaceCode} codeStatus={codeStatus} />
+                    code={newRaceCode} onCode={setNewRaceCode} codeStatus={codeStatus}
+                    extra={newRaceKind === "bike" ? <BikeRunChooser value={newRaceSport} onChange={setNewRaceSport} /> : null} />
                 </WizardFrame>
               )}
 
@@ -19009,20 +19031,7 @@ Start a new race anyway?`)) return;
                             onName={v => setBikeDraft(d => ({ ...d, eventName: v }))}
                             onKind={k => { if (k !== "bike") startRaceOfKind(k, bikeDraft.eventName); }}
                             lockedHint="Picking a different kind starts a new race of that kind."
-                            extra={<div>
-                        <div style={{ ...TM_LABEL, marginTop: 16 }}>Bike or run?</div>
-                         <div style={{ ...S.row, gap:8, marginBottom:4 }}>
-                           {[["bike", "🚲 Bike ride", "Speed in mph, routes on roads"], ["run", "🏃 Run", "Pace per mile, routes on paths"]].map(([k, label, hint]) => (
-                             <button key={k} onClick={() => setBikeDraft(d => ({ ...d, sport: k, snapProfile: k === "run" ? "hiking-mountain" : "trekking" }))}
-                               style={{ flex:1, padding:"12px", borderRadius:8, cursor:"pointer", textAlign:"left",
-                                 background: (bikeDraft.sport || "bike") === k ? "#8A5A00" : "#FFFFFF",
-                                 border: (bikeDraft.sport || "bike") === k ? "2px solid #8A5A00" : "2px solid #C9C5BC" }}>
-                               <div style={{ fontSize:16, fontWeight:800, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#0B0D10" }}>{label}</div>
-                               <div style={{ fontSize:14, fontWeight:600, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#3D434B", marginTop:2 }}>{hint}</div>
-                             </button>
-                           ))}
-                         </div>
-                            </div>} />
+                            extra={<BikeRunChooser value={bikeDraft.sport} onChange={k => setBikeDraft(d => ({ ...d, sport: k, snapProfile: k === "run" ? "hiking-mountain" : "trekking" }))} />} />
                         )}
                         {st === 2 && (<>
                       <div style={S.card}>
