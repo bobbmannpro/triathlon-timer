@@ -15,7 +15,7 @@
     "liveRaces": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && (!data.exists() || data.child('publishedBy').val() === auth.uid)",
+        ".write": "auth != null && ((!data.exists() && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))) || data.child('publishedBy').val() === auth.uid)",
         "waypoints": {
           ".read": "root.child('liveRaces').child($code).child('status').val() === 'live'"
         },
@@ -54,7 +54,7 @@
     "raceDirectory": {
       ".read": true,
       "$code": {
-        ".write": "auth != null && (data.exists() ? data.child('hostUid').val() === auth.uid : newData.child('hostUid').val() === auth.uid)",
+        ".write": "auth != null && (data.exists() ? data.child('hostUid').val() === auth.uid : (newData.child('hostUid').val() === auth.uid && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))))",
         ".validate": "!newData.exists() || (newData.child('hostUid').val() === auth.uid && newData.hasChildren(['kind', 'name', 'status']))"
       }
     },
@@ -135,6 +135,23 @@
           ".write": "auth != null",
           "$crumb": {
             ".validate": "newData.hasChildren(['0', '1'])"
+          }
+        }
+      }
+    },
+    "hostAccess": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3'))",
+        ".write": "auth != null && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || (auth.uid === $uid && newData.child('via').val() === 'promo' && root.child('promoCodes').child(newData.child('code').val()).exists() && !data.exists()))"
+      }
+    },
+    "promoCodes": {
+      ".read": "auth != null && (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3')",
+      "$code": {
+        ".write": "auth != null && (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3')",
+        "redeemed": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('hostAccess').child($uid).child('code').val() === $code"
           }
         }
       }

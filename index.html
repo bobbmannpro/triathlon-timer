@@ -3995,6 +3995,13 @@ ${html}</body></html>`);
         );
       }
 
+      // ── Hosting is paid (or by promo code) ──
+      // Owner accounts always host. Everyone else needs hostAccess/{uid}: from a
+      // subscription, or a promo code the owner hands out.
+      const OWNER_UIDS = ["nfH10ASvHbZkazkXMkEIoo8IbGY2", "yomrf3PDWoRGMsAZJudT7Y4LuYE3"];
+      const HOST_PRICE = "$10/month";
+      const STRIPE_HOST_LINK = "";   // Stripe Payment Link for the host subscription, once the account is set up
+
       // Draw a signature with a finger or mouse. Hands back a trimmed PNG with a
       // transparent background, so it sits on any certificate.
       function SignaturePad({ onSave, onCancel }) {
@@ -10806,6 +10813,40 @@ ${html}</body></html>`);
         const signedIn = !!currentUser && !currentUser.isAnonymous;
         const effectiveRole = chosenRole || (signedIn ? profileRole : null);
         const isHost      = effectiveRole === "host";
+        const isOwner = !!currentUser && OWNER_UIDS.includes(currentUser.uid);
+        const [hostAccess, setHostAccess] = useState(undefined);   // undefined = checking, null = none, object = allowed
+        useEffect(() => {
+          if (!currentUser || currentUser.isAnonymous) { setHostAccess(null); return; }
+          if (OWNER_UIDS.includes(currentUser.uid)) { setHostAccess({ via: "owner" }); return; }
+          const ref = rtdb.ref("hostAccess/" + currentUser.uid);
+          const fn = sn => { const v = sn.val(); setHostAccess(v && (!v.until || v.until > Date.now()) ? v : null); };
+          ref.on("value", fn, () => setHostAccess(null));
+          return () => ref.off("value", fn);
+        }, [currentUser && currentUser.uid]);
+        const [promoInput, setPromoInput] = useState("");
+        const [promoMsg, setPromoMsg] = useState(null);
+        async function redeemPromo() {
+          const code = normCode(promoInput);
+          if (!code) return;
+          setPromoMsg({ busy: true });
+          try {
+            await rtdb.ref("hostAccess/" + currentUser.uid).set({ via: "promo", code, at: Date.now(), email: currentUser.email || "" });
+            rtdb.ref("promoCodes/" + code + "/redeemed/" + currentUser.uid).set({ email: currentUser.email || "", at: Date.now() }).catch(() => {});
+            setPromoMsg({ ok: true, text: "You're in — welcome, host!" });
+          } catch (e) {
+            setPromoMsg({ ok: false, text: "That code didn't work. Check it with whoever gave it to you." });
+          }
+        }
+        // Owner: make and list promo codes
+        const [promoList, setPromoList] = useState(null);
+        const [newPromo, setNewPromo] = useState("");
+        useEffect(() => {
+          if (!isOwner) return;
+          const ref = rtdb.ref("promoCodes");
+          const fn = sn => setPromoList(sn.val() || {});
+          ref.on("value", fn, () => setPromoList({}));
+          return () => ref.off("value", fn);
+        }, [isOwner]);
         const isAthlete   = effectiveRole === "athlete";
         const isSpectator = effectiveRole === "spectator";
 
@@ -11607,6 +11648,45 @@ Start a new race anyway?`)) return;
                     </button>
                   )}
                 </form>
+              </div>
+            </div>
+          );
+        }
+
+        if (isHost && signedIn && hostAccess === null) {
+          return (
+            <div style={{ minHeight: "100vh", background: TM.bg, color: TM.ink }}>
+              <div style={{ background: TM.swim, color: "#FFFFFF", padding: "24px 20px 28px" }}>
+                <button onClick={() => { setChosenRole(null); setRolePickerOpen(true); try { localStorage.removeItem("tm-role"); } catch (_) {} }}
+                  style={{ ...btnStyle("#FFFFFF", true), color: "#FFFFFF", borderColor: "#FFFFFF", minHeight: 44 }}>← Change role</button>
+                <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.4, marginTop: 18 }}>HOST</div>
+                <h1 style={{ ...TM_DISPLAY, color: "#FFFFFF", marginTop: 4 }}>Run your race on Timeathon</h1>
+              </div>
+              <div style={{ maxWidth: 560, margin: "0 auto", padding: "20px 16px 60px" }}>
+                <div style={{ fontSize: 17, lineHeight: 1.5 }}>
+                  Live timing from phones, lap counting by parents, live standings, certificates, results emails and photo albums — for triathlons, swim meets and bike rides.
+                </div>
+                <div style={{ ...rowStyle(TM.swim), marginTop: 18 }}>
+                  <div style={{ fontSize: 30, fontWeight: 900 }}>{HOST_PRICE}</div>
+                  <div style={{ ...TM_CAPTION, marginTop: 2 }}>Cancel any time. Athletes and spectators are always free.</div>
+                  {STRIPE_HOST_LINK
+                    ? <a href={`${STRIPE_HOST_LINK}?client_reference_id=${encodeURIComponent(currentUser.uid)}&prefilled_email=${encodeURIComponent(currentUser.email || "")}`}
+                        style={{ ...btnStyle(TM.swim), display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", marginTop: 12 }}>Subscribe →</a>
+                    : <div style={{ fontSize: 15, fontWeight: 700, marginTop: 12 }}>Hosting opens to everyone soon. Have a promo code? Enter it below.</div>}
+                </div>
+                <div style={{ marginTop: 22 }}>
+                  <label htmlFor="promo" style={TM_LABEL}>Promo code</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input id="promo" value={promoInput} onChange={e => setPromoInput(normCode(e.target.value))} placeholder="Type code" autoCapitalize="characters"
+                      onKeyDown={e => { if (e.key === "Enter") redeemPromo(); }}
+                      style={{ flex: 1, minWidth: 0, minHeight: 50, fontSize: 18, fontWeight: 800, letterSpacing: 2, padding: "0 12px", border: `2px solid ${TM.line}`, borderRadius: 6 }} />
+                    <button onClick={redeemPromo} disabled={!promoInput || (promoMsg && promoMsg.busy)} style={{ ...btnStyle(TM.ink), minHeight: 50 }}>Apply</button>
+                  </div>
+                  {promoMsg && promoMsg.text && (
+                    <div role="alert" style={{ marginTop: 10, fontSize: 16, fontWeight: 700, color: promoMsg.ok ? TM.run : TM.live }}>{promoMsg.text}</div>
+                  )}
+                </div>
+                <div style={{ ...TM_CAPTION, marginTop: 26 }}>Signed in as {currentUser.email}. Here to race or watch? <button onClick={() => { setChosenRole(null); setRolePickerOpen(true); }} style={{ background: "none", border: "none", color: TM.swim, fontWeight: 800, textDecoration: "underline", cursor: "pointer", fontSize: 15, padding: 0 }}>Pick Athlete or Spectator</button>.</div>
               </div>
             </div>
           );
@@ -13946,6 +14026,30 @@ Start a new race anyway?`)) return;
               {view === "profile" && (
                 <div style={{ paddingTop: 8, maxWidth: 480, margin: "0 auto" }}>
                   <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 16 }}>My Profile</div>
+
+                  {isOwner && (
+                    <div style={{ background: "#FFFFFF", border: `2px solid ${TM.swim}`, borderRadius: 8, padding: "16px", marginBottom: 14 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: TM.swim, marginBottom: 6 }}>Host promo codes (owner)</div>
+                      <div style={{ ...TM_CAPTION, marginBottom: 10 }}>Anyone who enters one of these codes can host races for free.</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input value={newPromo} onChange={e => setNewPromo(normCode(e.target.value))} placeholder="New code, e.g. COACHJEN" autoCapitalize="characters"
+                          style={{ flex: 1, minWidth: 0, minHeight: 44, fontSize: 16, fontWeight: 800, letterSpacing: 1.5, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6 }} />
+                        <button disabled={newPromo.length < 4} onClick={() => { rtdb.ref("promoCodes/" + newPromo).set({ createdBy: currentUser.uid, at: Date.now() }).catch(e => alert("Couldn't save the code — publish the database rules first.")); setNewPromo(""); }}
+                          style={{ ...btnStyle(TM.swim), minHeight: 44, opacity: newPromo.length < 4 ? 0.5 : 1 }}>Add</button>
+                      </div>
+                      {promoList && Object.keys(promoList).length > 0 && (
+                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                          {Object.entries(promoList).map(([code, v]) => (
+                            <div key={code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15 }}>
+                              <span style={{ fontWeight: 900, letterSpacing: 1.5, flex: 1 }}>{code}</span>
+                              <span style={TM_CAPTION}>{Object.keys((v && v.redeemed) || {}).length} used</span>
+                              <button onClick={() => rtdb.ref("promoCodes/" + code).remove().catch(() => {})} style={{ background: "none", border: "none", color: TM.live, fontWeight: 700, cursor: "pointer" }}>Delete</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "18px 16px", marginBottom: 14 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 12 }}>Personal Info</div>
