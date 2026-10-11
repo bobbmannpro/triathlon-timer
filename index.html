@@ -14492,7 +14492,7 @@ Start a new race anyway?`)) return;
                   });
                 })() : [];
                 const watchMedals = ["🥇", "🥈", "🥉"];
-                const wFinished = rankedWatchAthletes.filter(a => a.finished).length;
+                const wFinished = rankedWatchAthletes.filter(a => a.finished && !a.dnf).length;
                 const wOnCourse = rankedWatchAthletes.filter(a => a.started && !a.finished).length;
                 return (
                   <div style={{ paddingTop: 8 }}>
