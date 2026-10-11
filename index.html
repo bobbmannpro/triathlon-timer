@@ -7212,7 +7212,7 @@ ${html}</body></html>`);
         function resetTimers() {
           archiveSessionRef.current = null;
           const blank = Array(SEGMENTS.length).fill(null);
-          setAthletes(a => a.map(ath => ({ ...ath, splits: blank.slice(), startOffset: null, started: false, finished: false })));
+          setAthletes(a => a.map(ath => ({ ...ath, splits: blank.slice(), startOffset: null, started: false, finished: false, dnf: false })));
           resetClock();
           if (liveRaceCode) {
             // Clear the published times too, plus each phone's GPS distance and lap
@@ -7223,6 +7223,7 @@ ${html}</body></html>`);
               updates[`athletes/${i}/startOffset`] = null;
               updates[`athletes/${i}/started`] = false;
               updates[`athletes/${i}/finished`] = false;
+              updates[`athletes/${i}/dnf`] = false;
               updates[`athletes/${i}/gps`] = null;
             });
             rtdb.ref("liveRaces/" + liveRaceCode).update(updates).catch(console.error);
