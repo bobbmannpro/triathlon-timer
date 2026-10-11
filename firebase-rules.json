@@ -155,6 +155,12 @@
           }
         }
       }
+    },
+    "hostPending": {
+      ".read": "auth != null && (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3')",
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3'))"
+      }
     }
   }
 }

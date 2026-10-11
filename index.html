@@ -4025,7 +4025,7 @@ ${html}</body></html>`);
       // subscription, or a promo code the owner hands out.
       const OWNER_UIDS = ["nfH10ASvHbZkazkXMkEIoo8IbGY2", "yomrf3PDWoRGMsAZJudT7Y4LuYE3"];
       const HOST_PRICE = "$10/month";
-      const STRIPE_HOST_LINK = "";   // Stripe Payment Link for the host subscription, once the account is set up
+      const STRIPE_HOST_LINK = "https://buy.stripe.com/test_4gM00k5RB7Dj6EK7uY0Jq00";   // TEST mode — swap for the live link once Stripe activates the account   // Stripe Payment Link for the host subscription, once the account is set up
 
       // Draw a signature with a finger or mouse. Hands back a trimmed PNG with a
       // transparent background, so it sits on any certificate.
@@ -10852,6 +10852,21 @@ ${html}</body></html>`);
           ref.on("value", fn, () => setHostAccess(null));
           return () => ref.off("value", fn);
         }, [currentUser && currentUser.uid]);
+        // Back from Stripe checkout (?subscribed=1): note it so the owner can switch hosting on.
+        const [subPending, setSubPending] = useState(() => /[?&]subscribed=1/.test(location.search));
+        useEffect(() => {
+          if (!subPending || !currentUser || currentUser.isAnonymous) return;
+          rtdb.ref("hostPending/" + currentUser.uid).set({ email: currentUser.email || "", at: Date.now() }).catch(() => {});
+          try { history.replaceState(null, "", location.pathname); } catch (_) {}
+        }, [subPending, currentUser && currentUser.uid]);
+        const [pendingList, setPendingList] = useState({});
+        useEffect(() => {
+          if (!currentUser || !OWNER_UIDS.includes(currentUser.uid)) return;
+          const ref = rtdb.ref("hostPending");
+          const fn = sn => setPendingList(sn.val() || {});
+          ref.on("value", fn, () => {});
+          return () => ref.off("value", fn);
+        }, [currentUser && currentUser.uid]);
         const [promoInput, setPromoInput] = useState("");
         const [promoMsg, setPromoMsg] = useState(null);
         async function redeemPromo() {
@@ -11702,6 +11717,7 @@ Start a new race anyway?`)) return;
                     ? <a href={`${STRIPE_HOST_LINK}?client_reference_id=${encodeURIComponent(currentUser.uid)}&prefilled_email=${encodeURIComponent(currentUser.email || "")}`}
                         style={{ ...btnStyle(TM.swim), display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", marginTop: 12 }}>Subscribe →</a>
                     : <div style={{ fontSize: 15, fontWeight: 700, marginTop: 12 }}>Have a promo code? Enter it below.</div>}
+                  {subPending && <div style={{ fontSize: 15, fontWeight: 700, color: TM.run, marginTop: 10 }}>✓ Thanks for subscribing! Your hosting is being switched on — usually within a few hours. This page unlocks by itself.</div>}
                 </div>
                 <div style={{ marginTop: 22 }}>
                   <label htmlFor="promo" style={TM_LABEL}>Promo code</label>
@@ -13440,11 +13456,12 @@ Start a new race anyway?`)) return;
                                 {open && (
                                   <div style={{ padding: "0 14px 12px" }}>
                                     {taken
-                                      ? <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Another account has claimed this name. You can still follow along.</div>
+                                      ? <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Another account has claimed this name. Here to watch? Open the spectator view.</div>
                                       : <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Linking keeps this name on your profile for every race after this.</div>}
                                     {regError && <div style={{ fontSize: 14, color: "#B3001B", marginBottom: 8 }}>{regError}</div>}
                                     <div style={{ display: "flex", gap: 8 }}>
-                                      <button onClick={() => { setClaimPick(null); setJoinAthIdx(idx); }} style={{ ...btnStyle("#3D434B", true), padding: "10px 14px", fontSize: 15 }}>{taken ? "Follow" : "Just view"}</button>
+                                      <button onClick={() => { setClaimPick(null); const c = joinRace.code; setJoinRace(null); setJoinAthIdx(null); try { localStorage.removeItem("tri-active-join"); } catch (_) {} setSpectatorCode(c); watchRace(c); setView("watch"); }}
+                                        style={{ ...btnStyle("#3D434B", true), padding: "10px 14px", fontSize: 15 }}>👀 Watch the race</button>
                                       {!taken && currentUser && (
                                         <button disabled={regWorking} onClick={() => claimRosterName({ ...(joinLiveData || joinRace), code: joinRace.code }, ath)}
                                           style={{ ...btnStyle("#04613F"), flex: 1, padding: "10px 14px", fontSize: 16, opacity: regWorking ? 0.5 : 1 }}>{regWorking ? "Linking…" : "✓ This is me"}</button>
@@ -14059,6 +14076,20 @@ Start a new race anyway?`)) return;
                   {isOwner && (
                     <div style={{ background: "#FFFFFF", border: `2px solid ${TM.swim}`, borderRadius: 8, padding: "16px", marginBottom: 14 }}>
                       <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: TM.swim, marginBottom: 6 }}>Host promo codes (owner)</div>
+                      {Object.keys(pendingList).length > 0 && (
+                        <div style={{ ...rowStyle(TM.run), marginBottom: 12 }}>
+                          <div style={{ fontWeight: 800, marginBottom: 6 }}>New subscribers waiting</div>
+                          <div style={{ ...TM_CAPTION, marginBottom: 6 }}>Check each one is in Stripe (Customers / Subscriptions), then switch on hosting.</div>
+                          {Object.entries(pendingList).map(([uid, v]) => (
+                            <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, marginTop: 4 }}>
+                              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{(v && v.email) || uid}</span>
+                              <button onClick={async () => { await rtdb.ref("hostAccess/" + uid).set({ via: "stripe", email: (v && v.email) || "", at: Date.now() }); rtdb.ref("hostPending/" + uid).remove().catch(() => {}); }}
+                                style={{ ...btnStyle(TM.run), minHeight: 38, padding: "0 10px", fontSize: 14 }}>Switch on</button>
+                              <button onClick={() => rtdb.ref("hostPending/" + uid).remove().catch(() => {})} style={{ background: "none", border: "none", color: TM.live, fontWeight: 700, cursor: "pointer" }}>Dismiss</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div style={{ ...TM_CAPTION, marginBottom: 10 }}>Anyone who enters one of these codes can host races for free.</div>
                       <div style={{ display: "flex", gap: 8 }}>
                         <input value={newPromo} onChange={e => setNewPromo(normCode(e.target.value))} placeholder="New code, e.g. COACHJEN" autoCapitalize="characters"
