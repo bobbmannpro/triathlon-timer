@@ -18973,7 +18973,7 @@ Start a new race anyway?`)) return;
                       <div style={S.card}>
                         <div style={S.label}>New event</div>
                         <div style={{ fontSize:14, color:"#3D434B", marginBottom:10 }}>
-                          Starts a fresh ride with its own follow code. You'll pick which rider it's for.
+                          Starts a fresh ride or run with its own follow code. You'll pick who it's for.
                         </div>
                         <button onClick={() => { setBikeDraft(newBikeFeed()); setBikeSetupStep(1); }} style={btnStyle("#8A5A00")}>+ New Event</button>
                       </div>
@@ -19784,7 +19784,7 @@ Start a new race anyway?`)) return;
                               <div style={{ ...S.row, justifyContent:"space-between", marginBottom:8 }}>
                                 <div style={{ ...S.label, marginBottom:0 }}>Following {bikeWatchCodes.length}</div>
                                 <button onClick={() => setBikeAddOpen(v => !v)}
-                                  style={{ ...btnStyle("#0B3FCC", true), padding:"4px 10px", fontSize:14 }}>+ Add rider</button>
+                                  style={{ ...btnStyle("#0B3FCC", true), padding:"4px 10px", fontSize:14 }}>+ Follow another</button>
                               </div>
                               {bikeStandings.map(r => {
                                 const focused = r.code === (bikeWatchCode || "").toUpperCase();
@@ -19849,7 +19849,7 @@ Start a new race anyway?`)) return;
                             {bikeWatchMeta?.photoUrl
                               ? <img src={bikeWatchMeta.photoUrl} alt={bikeWatchMeta?.riderName || "Rider"}
                                      style={{ width:64, height:64, borderRadius:"50%", objectFit:"cover", border:"2px solid #8A5A00", flexShrink:0 }} />
-                              : <div style={{ width:64, height:64, borderRadius:"50%", background:"#FFFFFF", border:"2px solid #C9C5BC", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>🚴</div>}
+                              : <div style={{ width:64, height:64, borderRadius:"50%", background:"#FFFFFF", border:"2px solid #C9C5BC", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>{isRun ? "🏃" : "🚴"}</div>}
                             <div style={{ minWidth:0, flex:1 }}>
                               <div style={{ fontFamily:"var(--tm-font)", fontSize:26, letterSpacing:0.5, color:"#0B0D10", lineHeight:1.1 }}>
                                 {bikeWatchMeta?.riderName || "Rider"}
@@ -19868,7 +19868,7 @@ Start a new race anyway?`)) return;
                                 {bikeWatchLive?.sim && (
                                   <span style={{ fontSize:14, letterSpacing:1, textTransform:"uppercase", fontWeight:700,
                                     color:"#0B3FCC", border:"2px solid #0B3FCC", borderRadius:4, padding:"1px 5px" }}>
-                                    Simulated
+                                    {isRun ? "Treadmill" : "Indoor trainer"}
                                   </span>
                                 )}
                               </div>
