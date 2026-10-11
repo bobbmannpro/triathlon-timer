@@ -46,6 +46,12 @@
             },
             "finished": {
               ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+            },
+            "trainer": {
+              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+            },
+            "hr": {
+              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
             }
           }
         }
