@@ -1282,7 +1282,7 @@
       // Step 1 of every setup: what kind of race, and what it's called. The three
       // kinds are full-bleed blocks; the chosen one is solid, the others outlined.
       function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint,
-                              code, onCode, codeStatus, codeLocked, onChangeLocked, listed, onListed }) {
+                              code, onCode, codeStatus, codeLocked, onChangeLocked, listed, onListed, extra }) {
         const [changing, setChanging] = React.useState(false);
         const [draft, setDraft] = React.useState("");
         const [changeErr, setChangeErr] = React.useState("");
@@ -1317,6 +1317,7 @@
               })}
               <div style={{ borderTop: `2px solid ${TM.line}` }} />
             </div>
+            {extra}
             {TUTORIALS[KIND_TUT[kind]] && (
               <div style={{ marginTop: 12 }}>
                 <TutorialButton which={KIND_TUT[kind]} onOpen={setKindVideo} />
@@ -10016,7 +10017,7 @@ ${html}</body></html>`);
             setBikeDoneOpts(o => ({ ...o, name: (feed && feed.eventName) || o.name || "" }));
           }
           setBikeRiding(false);
-          setBikeGpsStatus(finish ? "Ride finished." : "Paused for the day — resume when you set off again.");
+          setBikeGpsStatus(finish ? (bikeRideSport === "run" ? "Run finished." : "Ride finished.") : "Paused for the day — resume when you set off again.");
         }
 
         // ── Viewer subscription (one per followed rider) ────────────────────────
@@ -12041,7 +12042,7 @@ Start a new race anyway?`)) return;
                       <span style={{ fontWeight: 900, fontSize: 34, lineHeight: 1 }}>+</span>
                       <span style={{ flex: 1 }}>
                         <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>New race</span>
-                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet or bike ride</span>
+                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet, bike or run</span>
                       </span>
                       <ArrowIcon />
                     </button>
@@ -18958,7 +18959,7 @@ Start a new race anyway?`)) return;
                       )}
                     </div>
                   ) : (() => {
-                    const BIKE_STEPS = ["What kind of race?", `Who's ${RW.riding}?`, "Bike or run", "Map & route", "Save & publish"];
+                    const BIKE_STEPS = ["What kind of race?", `Who's ${RW.riding}?`, isRun ? "Run details" : "Ride details", "Map & route", "Save & publish"];
                     const st = bikeSetupStep;
                     const publishDraft = () => {
                           const r = bikeRiderFor(bikeDraft);
@@ -19007,7 +19008,21 @@ Start a new race anyway?`)) return;
                             listed={bikeDraft.listed} onListed={v => setBikeDraft(d => ({ ...d, listed: v }))}
                             onName={v => setBikeDraft(d => ({ ...d, eventName: v }))}
                             onKind={k => { if (k !== "bike") startRaceOfKind(k, bikeDraft.eventName); }}
-                            lockedHint="Picking a different kind starts a new race of that kind." />
+                            lockedHint="Picking a different kind starts a new race of that kind."
+                            extra={<div>
+                        <div style={{ ...TM_LABEL, marginTop: 16 }}>Bike or run?</div>
+                         <div style={{ ...S.row, gap:8, marginBottom:4 }}>
+                           {[["bike", "🚲 Bike ride", "Speed in mph, routes on roads"], ["run", "🏃 Run", "Pace per mile, routes on paths"]].map(([k, label, hint]) => (
+                             <button key={k} onClick={() => setBikeDraft(d => ({ ...d, sport: k, snapProfile: k === "run" ? "hiking-mountain" : "trekking" }))}
+                               style={{ flex:1, padding:"12px", borderRadius:8, cursor:"pointer", textAlign:"left",
+                                 background: (bikeDraft.sport || "bike") === k ? "#8A5A00" : "#FFFFFF",
+                                 border: (bikeDraft.sport || "bike") === k ? "2px solid #8A5A00" : "2px solid #C9C5BC" }}>
+                               <div style={{ fontSize:16, fontWeight:800, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#0B0D10" }}>{label}</div>
+                               <div style={{ fontSize:14, fontWeight:600, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#3D434B", marginTop:2 }}>{hint}</div>
+                             </button>
+                           ))}
+                         </div>
+                            </div>} />
                         )}
                         {st === 2 && (<>
                       <div style={S.card}>
@@ -19090,18 +19105,6 @@ Start a new race anyway?`)) return;
                       </div>
 
                       <div style={S.card}>
-                        <div style={S.label}>Bike or run?</div>
-                         <div style={{ ...S.row, gap:8, marginBottom:14 }}>
-                           {[["bike", "🚲 Bike ride", "Speed in mph, routes on roads"], ["run", "🏃 Run", "Pace per mile, routes on paths"]].map(([k, label, hint]) => (
-                             <button key={k} onClick={() => setBikeDraft(d => ({ ...d, sport: k, snapProfile: k === "run" ? "hiking-mountain" : "trekking" }))}
-                               style={{ flex:1, padding:"12px", borderRadius:8, cursor:"pointer", textAlign:"left",
-                                 background: (bikeDraft.sport || "bike") === k ? "#8A5A00" : "#FFFFFF",
-                                 border: (bikeDraft.sport || "bike") === k ? "2px solid #8A5A00" : "2px solid #C9C5BC" }}>
-                               <div style={{ fontSize:16, fontWeight:800, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#0B0D10" }}>{label}</div>
-                               <div style={{ fontSize:14, fontWeight:600, color: (bikeDraft.sport || "bike") === k ? "#FFFFFF" : "#3D434B", marginTop:2 }}>{hint}</div>
-                             </button>
-                           ))}
-                         </div>
                          <div style={S.label}>{isRun ? "Run type" : "Ride type"}</div>
                         <div style={{ ...S.row, gap:8, flexWrap:"wrap" }}>
                           {[["free", isRun ? "🧭 Free run" : "🧭 Free ride","Just traces wherever they go"],
