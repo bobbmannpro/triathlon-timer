@@ -18395,7 +18395,7 @@ Start a new race anyway?`)) return;
 
               return (
                 <div style={{ maxWidth:640, margin:"0 auto", padding:"0 16px 40px" }}>
-                  <div style={{ padding:"20px 0 10px", fontSize:20, fontWeight:700, color:"#0B0D10" }}>🏊 Lane Timer</div>
+                  {!connected && <div style={{ padding:"20px 0 10px", fontSize:20, fontWeight:700, color:"#0B0D10" }}>🏊 Lane Timer</div>}
 
                   {/* Swim meets live right now: tap one instead of typing its code */}
                   {!connected && (todayRaces || []).some(r => r.kind === "swim" && r.status === "live") && (
@@ -18456,7 +18456,7 @@ Start a new race anyway?`)) return;
                     return (
                     <div>
                       {/* Top bar */}
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", margin:"12px 0 10px" }}>
                         <div>
                           <div style={{ fontSize:15, fontWeight:700, color:"#0B0D10" }}>{swimLaneSession.meetName || "Unnamed Meet"}</div>
                           <div style={{ fontSize:14, color:"#3D434B", marginTop:1 }}>
@@ -18477,7 +18477,7 @@ Start a new race anyway?`)) return;
                       {(() => {
                         const on = heartbeatFresh(swimLaneSession.hostAt);
                         return (
-                          <div role="status" aria-live="polite" style={{ borderRadius: 8, padding: "12px 16px", marginBottom: 14, fontSize: 18, fontWeight: 900,
+                          <div role="status" aria-live="polite" style={{ borderRadius: 8, padding: "8px 14px", marginBottom: 10, fontSize: 17, fontWeight: 900,
                             background: on ? "#04613F" : "#EFEDE8", color: on ? "#FFFFFF" : "#B3001B", border: `3px solid ${on ? "#04613F" : "#B3001B"}` }}>
                             {on ? `✓ Connected to host — Lane ${swimLaneNum}` : "✕ Not connected to the host"}
                             <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2, opacity: 0.9 }}>
@@ -18488,7 +18488,7 @@ Start a new race anyway?`)) return;
                       })()}
 
                       {/* Lane + event/heat pill row */}
-                      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+                      <div style={{ display:"flex", gap:8, marginBottom:10, flexWrap:"wrap" }}>
                         <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"5px 14px", fontSize:14, fontWeight:700, color:"#0B3FCC" }}>
                           Lane {swimLaneNum}
                         </div>
@@ -18506,12 +18506,15 @@ Start a new race anyway?`)) return;
                       </div>
 
                       {/* Swimmer card */}
-                      <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"18px 20px", marginBottom:16, minHeight:80 }}>
+                      <div style={{ background:"#EFEDE8", border:"2px solid #C9C5BC", borderRadius:8, padding:"10px 16px", marginBottom:10, minHeight:64 }}>
                         {mySwimmer ? (
                           <div>
-                            <div style={{ fontSize:28, fontWeight:700, color:"#0B0D10", marginBottom:4 }}>{mySwimmer.name || "—"}</div>
-                            {mySwimmer.team && <div style={{ fontSize:14, color:"#04613F" }}>{mySwimmer.team}</div>}
-                            {mySwimmer.seedMs ? <div style={{ fontSize:14, color:"#3D434B", marginTop:4 }}>Seed: {formatSwimTime(mySwimmer.seedMs)}</div> : null}
+                            <div style={{ fontSize:26, fontWeight:700, color:"#0B0D10", marginBottom:2 }}>{mySwimmer.name || "—"}</div>
+                            <div style={{ fontSize:14, color:"#3D434B" }}>
+                              {mySwimmer.team && <span style={{ color:"#04613F", fontWeight:700 }}>{mySwimmer.team}</span>}
+                              {mySwimmer.team && mySwimmer.seedMs ? " · " : ""}
+                              {mySwimmer.seedMs ? `Seed ${formatSwimTime(mySwimmer.seedMs)}` : ""}
+                            </div>
                           </div>
                         ) : (
                           <div style={{ color:"#3D434B", fontSize:14, paddingTop:8 }}>
@@ -18521,8 +18524,8 @@ Start a new race anyway?`)) return;
                       </div>
 
                       {/* Clock */}
-                      <div style={{ textAlign:"center", marginBottom:20 }}>
-                        <div style={{ fontSize:64, fontWeight:700, letterSpacing:1.2, color: status === "racing" ? "#0B3FCC" : "#3D434B", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
+                      <div style={{ textAlign:"center", marginBottom:12 }}>
+                        <div style={{ fontSize:56, fontWeight:700, letterSpacing:1.2, color: status === "racing" ? "#0B3FCC" : "#3D434B", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
                           {formatSwimTime(swimLaneFinished && swimLaneSession?.results?.[swimLaneNum] ? swimLaneSession.results[swimLaneNum].finalMs : status === "racing" ? swimLaneClockMs : 0)}
                         </div>
                         <div style={{ fontSize:14, color:"#3D434B", marginTop:8 }}>
@@ -18540,7 +18543,7 @@ Start a new race anyway?`)) return;
                         onClick={e => { if (e.detail === 0) laneStop(e); }}
                         style={{
                           // Huge on purpose: timers hit it without looking down at the phone.
-                          width:"100%", minHeight:"max(240px, 38vh)", padding:"24px 20px",
+                          width:"100%", minHeight:"max(200px, 34vh)", padding:"24px 20px",
                           fontSize: swimLaneFinished ? 30 : 64, fontWeight:900, letterSpacing:2,
                           borderRadius:16, marginBottom:16, userSelect:"none", WebkitUserSelect:"none", touchAction:"manipulation",
                           cursor: status === "racing" && !swimLaneFinished ? "pointer" : "default",
