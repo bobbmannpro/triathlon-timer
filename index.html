@@ -9664,7 +9664,7 @@ ${html}</body></html>`);
           if (bikeFeedList.some(f => f.code === feed.code)) publishBikeMeta(feed);
 
           // ── Trainer / indoor mode ────────────────────────────────────────────
-          if (bikeSimulate) {
+          if (bikeSimulate || restore?.simulate) {
             const route = (feed.route && feed.route.length > 1) ? feed.route : null;
             if (route) bikeSimCenterRef.current = route[0];
             else {
@@ -19600,7 +19600,7 @@ Start a new race anyway?`)) return;
                             <button onClick={() => downloadRideGpx(bikeDone.code, bikeDoneOpts.name || bikeDone.name)} style={{ ...btnStyle("#0B3FCC", true), padding: "0 14px" }}>⬇ GPX for Strava / Garmin / TrainingPeaks</button>
                           </div>
                           <div style={{ fontSize: 14, color: "#3D434B", marginTop: 10 }}>
-                            Rode with the Timeathon watch app? It saved this ride as a Garmin activity, so it's already on its way to Garmin Connect — and to Strava or TrainingPeaks if they're linked there.
+                            Used the Timeathon watch app? It saved this {RW.ride} as a Garmin activity, so it's already on its way to Garmin Connect — and to Strava or TrainingPeaks if they're linked there.
                           </div>
                         </div>
                       )}
