@@ -2057,6 +2057,18 @@
           return { ...d, clockMs: c.ms || 0, clockRunning: !!c.running, clockStarted: !!c.started, updatedAt: c.at || d.updatedAt };
         return d;
       }
+      // Is this race worth reopening after a refresh? Only if its clock is running,
+      // or it hasn't started yet and was touched in the last few hours. A finished
+      // race (even with stragglers never marked) opens on the home screen instead.
+      function raceStillGoing(raw) {
+        const d = withLiveClock(raw);
+        if (!d) return false;
+        const aths = asList(d.athletes).filter(Boolean);
+        if (aths.length > 0 && aths.some(a => a.started) && aths.every(a => a.finished || a.dnf)) return false;
+        if (d.clockRunning) return true;
+        const notStarted = !d.clockStarted && !(d.clockMs > 0) && !aths.some(a => a.started);
+        return notStarted && (d.updatedAt || 0) > Date.now() - 4 * 3600 * 1000;
+      }
       // Race-clock reading right now from a (normalised) live race.
       const liveClockNow = d => (d.clockMs || 0) + (d.clockRunning ? Math.max(0, Date.now() - (d.updatedAt || Date.now())) : 0);
 
@@ -6531,10 +6543,7 @@ ${html}</body></html>`);
                           setRaceInitialized(true);
                           // Only jump back into a race that's still going. A finished
                           // race (or one from yesterday) opens on My Races instead.
-                          const ldAths = asList(ld.athletes).filter(Boolean);
-                          const allDone = ldAths.length > 0 && ldAths.some(a => a.started) && ldAths.every(a => a.finished || a.dnf);
-                          const stale = ld.updatedAt && Date.now() - ld.updatedAt > 12 * 3600 * 1000;
-                          if (!allDone && !stale) setView("race");
+                          if (raceStillGoing(liveSnap.val())) setView("race");
                         } else {
                           localStorage.removeItem("tri-active-live");
                         }
@@ -6554,9 +6563,7 @@ ${html}</body></html>`);
                       // Reopen only a race that's still going; a finished one opens on the home screen.
                       const ws = await rtdb.ref("liveRaces/" + code).once("value").catch(() => null);
                       const wd = ws && ws.val();
-                      const wa = wd ? asList(wd.athletes).filter(Boolean) : [];
-                      const over = !wd || (wa.length > 0 && wa.some(a => a.started) && wa.every(a => a.finished || a.dnf))
-                        || (wd.updatedAt && Date.now() - wd.updatedAt > 12 * 3600 * 1000);
+                      const over = !raceStillGoing(wd);
                       if (over) localStorage.removeItem("tri-active-watch");
                       else { setView("watch"); watchRace(code); }
                     }
@@ -6583,7 +6590,7 @@ ${html}</body></html>`);
                         setJoinRace({ ...jd, code });
                         if (athIdx !== null && athIdx !== undefined) setJoinAthIdx(athIdx);
                         const me = athIdx != null ? asList(jd.athletes)[athIdx] : null;
-                        const joinOver = (me && (me.finished || me.dnf)) || (jd.updatedAt && Date.now() - jd.updatedAt > 12 * 3600 * 1000);
+                        const joinOver = (me && (me.finished || me.dnf)) || !raceStillGoing(joinSnap.val());
                         if (!joinOver) setView("join");
                         // Restore GPS trail
                         try {
@@ -11612,6 +11619,8 @@ Start a new race anyway?`)) return;
           const code = normCode(new URLSearchParams(location.search).get("watch"));
           if (!code) return;
           watchLinkRef.current = true;
+          // Open the race once; a refresh later shouldn't drag you back to it.
+          try { const u = new URL(location.href); u.searchParams.delete("watch"); history.replaceState(history.state, "", u.pathname + u.search + u.hash); } catch (_) {}
           setChosenRole(r => r || "spectator");
           // Land somewhere this role is allowed right away, so the role guard has
           // nothing to redirect while the race is being looked up.
