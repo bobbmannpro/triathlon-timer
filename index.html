@@ -4045,10 +4045,34 @@ ${html}</body></html>`);
         );
       }
 
+      // ── How-to videos ── (a role's button shows once its video exists)
+      const TUTORIALS = {
+        intro:     { src: "media/timeathon-intro.mp4", poster: "media/timeathon-intro.jpg", title: "What is Timeathon?", len: "2 min" },
+        host:      null,
+        athlete:   null,
+        spectator: null,
+      };
+      function VideoModal({ video, onClose }) {
+        if (!video) return null;
+        return (
+          <div role="dialog" aria-modal="true" aria-label={video.title} onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+            style={{ position: "fixed", inset: 0, zIndex: 6000, background: "rgba(11,13,16,0.92)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}>
+            <video src={video.src} poster={video.poster} controls autoPlay playsInline
+              style={{ maxWidth: "100%", maxHeight: "calc(100vh - 90px)", borderRadius: 8, background: "#000" }} />
+            <button onClick={onClose} style={{ ...btnStyle("#FFFFFF", true), color: "#FFFFFF", borderColor: "#FFFFFF", marginTop: 12, minHeight: 46, padding: "0 22px" }}>Close</button>
+          </div>
+        );
+      }
+      function TutorialButton({ which, onOpen, style }) {
+        const v = TUTORIALS[which]; if (!v) return null;
+        return <button onClick={() => onOpen(v)} style={{ ...btnStyle(TM.ink, true), minHeight: 46, padding: "0 16px", ...style }}>▶ {v.title} <span style={{ fontWeight: 600, opacity: 0.75 }}>· {v.len}</span></button>;
+      }
+
       // ── Hosting is paid (or by promo code) ──
       // Owner accounts always host. Everyone else needs hostAccess/{uid}: from a
       // subscription, or a promo code the owner hands out.
       const OWNER_UIDS = ["nfH10ASvHbZkazkXMkEIoo8IbGY2", "yomrf3PDWoRGMsAZJudT7Y4LuYE3"];
+      const TESTER_UIDS = ["zaZlSgcfROeSKUwgFz2Qwsu0WVg2"];   // host.test@example.com — QA and tutorial recording
       const HOST_PRICE = "$10/month";
       const STRIPE_HOST_LINK = "https://buy.stripe.com/test_4gM00k5RB7Dj6EK7uY0Jq00";   // TEST mode — swap for the live link once Stripe activates the account   // Stripe Payment Link for the host subscription, once the account is set up
 
@@ -10905,6 +10929,7 @@ ${html}</body></html>`);
         const effectiveRole = chosenRole || (signedIn ? profileRole : null);
         const isHost      = effectiveRole === "host";
         const isOwner = !!currentUser && OWNER_UIDS.includes(currentUser.uid);
+        const [videoOpen, setVideoOpen] = useState(null);
         // Analytics: each screen counts as a page, tagged with the role using it.
         useEffect(() => {
           try { if (window.gtag) window.gtag("event", "page_view", { page_title: view, page_location: location.origin + location.pathname + "#" + view, role: effectiveRole || "none" }); } catch (_) {}
@@ -10913,6 +10938,7 @@ ${html}</body></html>`);
         useEffect(() => {
           if (!currentUser || currentUser.isAnonymous) { setHostAccess(null); return; }
           if (OWNER_UIDS.includes(currentUser.uid)) { setHostAccess({ via: "owner" }); return; }
+          if (TESTER_UIDS.includes(currentUser.uid)) { setHostAccess({ via: "tester" }); return; }
           const ref = rtdb.ref("hostAccess/" + currentUser.uid);
           const fn = sn => { const v = sn.val(); setHostAccess(v && (!v.until || v.until > Date.now()) ? v : null); };
           ref.on("value", fn, () => setHostAccess(null));
@@ -11644,7 +11670,9 @@ Start a new race anyway?`)) return;
                 <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted, marginTop: 12 }}>
                   We'll remember this. You can switch any time from the top of the screen.
                 </div>
+                <TutorialButton which="intro" onOpen={setVideoOpen} style={{ marginTop: 16 }} />
               </div>
+              <VideoModal video={videoOpen} onClose={() => setVideoOpen(null)} />
               <div>
                 {lanes.map(([role, bg, title, sub, icon]) => (
                   <button key={role} onClick={() => chooseRole(role)} aria-label={`${title}: ${sub}`}
@@ -11773,6 +11801,8 @@ Start a new race anyway?`)) return;
                 <h1 style={{ ...TM_DISPLAY, color: "#FFFFFF", marginTop: 4 }}>Run your race on Timeathon</h1>
               </div>
               <div style={{ maxWidth: 560, margin: "0 auto", padding: "20px 16px 60px" }}>
+                <TutorialButton which="intro" onOpen={setVideoOpen} style={{ marginBottom: 14 }} />
+                <VideoModal video={videoOpen} onClose={() => setVideoOpen(null)} />
                 <div style={{ fontSize: 17, lineHeight: 1.5 }}>
                   Live timing from phones, lap counting by parents, live standings, certificates, results emails and photo albums — for triathlons, swim meets and bike rides.
                 </div>
