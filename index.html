@@ -1978,6 +1978,11 @@
       // published roster, plus anyone who has just signed up and hasn't been
       // picked up by the host's screen yet (it may be closed). Order is stable:
       // the roster first, then sign-ups by when they joined.
+      function claimsOf(r) {
+        if (!r) return [];
+        const c = r.claimIds ? (Array.isArray(r.claimIds) ? r.claimIds : Object.values(r.claimIds)) : (r.claimId != null ? [r.claimId] : []);
+        return c.filter(x => x != null).map(String);
+      }
       function rosterWithSignups(race) {
         const base = [];
         const raw = race && race.athletes;
@@ -1985,10 +1990,13 @@
         else if (raw && typeof raw === "object") Object.keys(raw).sort((x, y) => +x - +y).forEach(k => raw[k] && base.push(raw[k]));
         const have = new Set(base.map(a => a.uid).filter(Boolean));
         // "This is me": a sign-up that claimed a name the host typed in.
+        // A parent may claim several kids: each claimed name links to their account.
         Object.values((race && race.registrations) || {}).forEach(r => {
-          if (!r || !r.uid || r.claimId == null || have.has(r.uid)) return;
-          const k = base.findIndex(a => !a.uid && String(a.id) === String(r.claimId));
-          if (k >= 0) { base[k] = { ...base[k], uid: r.uid }; have.add(r.uid); }
+          if (!r || !r.uid) return;
+          claimsOf(r).forEach(id => {
+            const k = base.findIndex(a => !a.uid && String(a.id) === id);
+            if (k >= 0) { base[k] = { ...base[k], uid: r.uid }; have.add(r.uid); }
+          });
         });
         const regs = Object.values((race && race.registrations) || {})
           .filter(r => r && r.uid && !have.has(r.uid))
@@ -4790,6 +4798,7 @@ ${html}</body></html>`);
         const [registrationStep, setRegistrationStep] = useState("code");
         const [regProfile, setRegProfile] = useState({ firstName: "", lastName: "", gender: "Male", ageGroup: "", dob: "" });
         const [claimPick, setClaimPick] = useState(null);   // roster index tapped before "This is me"
+        const [claimSel, setClaimSel] = useState([]);        // sign-up screen: roster ids picked (a parent can pick several)
         const [regCourseId, setRegCourseId] = useState(null);
         const [regRaceData, setRegRaceData] = useState(null);
         const regRaceDataState = regRaceData;
@@ -6466,7 +6475,13 @@ ${html}</body></html>`);
               const norm = (x) => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
               let next = prev, changed = false;
               let bib = Math.max(0, ...prev.map(a => a.raceNumber || 0));
-              entries.filter(r => r && r.uid && !existingUids.has(r.uid))
+              entries.filter(r => r && r.uid && claimsOf(r).length).forEach(r => {
+                claimsOf(r).forEach(id => {
+                  const at = next.findIndex(a => !a.uid && String(a.id) === id);
+                  if (at >= 0) { next = next.map((a, k) => k === at ? { ...a, uid: r.uid, courseId: r.courseId || a.courseId } : a); changed = true; }
+                });
+              });
+              entries.filter(r => r && r.uid && !claimsOf(r).length && !existingUids.has(r.uid) && !next.some(a => a.uid === r.uid))
                 .sort((x, y) => (x.joinedAt || 0) - (y.joinedAt || 0))
                 .forEach(r => {
                   const full = `${r.firstName || ""} ${r.lastName || ""}`.trim();
@@ -6574,6 +6589,12 @@ ${html}</body></html>`);
         // so emails live under raceContacts, which only the race's host can read.
         const [regEmailOptIn, setRegEmailOptIn] = useState(true);
         async function registerForRace(code, profileData, selectedCourseId, claimId = null, raceIn = null) {
+          let prevClaims = [];
+          if (claimId != null && currentUser) {
+            try { prevClaims = claimsOf((await rtdb.ref("liveRaces/" + code + "/registrations/" + currentUser.uid).once("value")).val()); } catch (_) {}
+          }
+          const newClaims = claimId == null ? [] : (Array.isArray(claimId) ? claimId : [claimId]).map(String);
+          const allClaims = [...new Set([...prevClaims, ...newClaims])];
           const regRaceData = raceIn || regRaceDataState;
           if (!currentUser) { setRegError("You must be logged in to register."); return; }
           setRegWorking(true); setRegError("");
@@ -6591,7 +6612,7 @@ ${html}</body></html>`);
             dob: profileData.dob || "",
             courseId: selectedCourseId || regRaceData?.courses?.[0]?.id || null,
             joinedAt: Date.now(),
-            ...(claimId != null ? { claimId: String(claimId) } : {})
+            ...(allClaims.length ? { claimId: allClaims[0], claimIds: allClaims } : {})
           };
           try {
             await rtdb.ref("liveRaces/" + code + "/registrations/" + uid).set(registration);
@@ -6622,7 +6643,7 @@ ${html}</body></html>`);
               }
               bikeSegTriggeredRef.current = false;
               setJoinRace({ ...raceData, code });
-              const athIdx = rosterWithSignups(raceData).findIndex(a => a.uid === uid || (claimId != null && String(a.id) === String(claimId)));
+              const athIdx = rosterWithSignups(raceData).findIndex(a => a.uid === uid || newClaims.includes(String(a.id)));
               setJoinAthIdx(athIdx >= 0 ? athIdx : null);
               setJoinGpsActive(false);
               setJoinNextSeg(0);
@@ -6636,11 +6657,14 @@ ${html}</body></html>`);
         }
 
         // "This is me": link this account to a name the host typed in.
+        // ath may be one roster entry or several (a parent claiming their kids).
         function claimRosterName(race, ath) {
-          const parts = (athleteName(ath) || ath.name || "").trim().split(/\s+/);
-          const prof = { firstName: ath.firstName || parts[0] || "", lastName: ath.lastName || parts.slice(1).join(" "),
-                         gender: ath.gender || "Male", ageGroup: ath.ageGroup || "", dob: ath.dob || "" };
-          return registerForRace(race.code, prof, ath.courseId ?? null, ath.id, race);
+          const list = Array.isArray(ath) ? ath : [ath];
+          const first = list[0];
+          const parts = (athleteName(first) || first.name || "").trim().split(/\s+/);
+          const prof = { firstName: first.firstName || parts[0] || "", lastName: first.lastName || parts.slice(1).join(" "),
+                         gender: first.gender || "Male", ageGroup: first.ageGroup || "", dob: first.dob || "" };
+          return registerForRace(race.code, prof, first.courseId ?? null, list.map(a => a.id), race);
         }
 
         async function rejoinRace(code) {
@@ -11041,16 +11065,16 @@ ${html}</body></html>`);
         }
         // A parent counting an athlete says so (30 s heartbeat), so the host can
         // see who's covered and who still needs a counter.
-        const countingIdx = !isHost && !isAthlete && lapCountCode ? Object.keys(lapMine).find(k => lapMine[k]) : undefined;
+        const countingIdxs = !isHost && !isAthlete && lapCountCode ? Object.keys(lapMine).filter(k => lapMine[k]) : [];
         useEffect(() => {
-          if (countingIdx == null || !lapCountCode || !auth.currentUser) return;
-          const ref = rtdb.ref(`liveRaces/${lapCountCode}/athletes/${countingIdx}/gps/counters/${auth.currentUser.uid}`);
+          if (!countingIdxs.length || !lapCountCode || !auth.currentUser) return;
+          const refs = countingIdxs.map(i => rtdb.ref(`liveRaces/${lapCountCode}/athletes/${i}/gps/counters/${auth.currentUser.uid}`));
           const name = (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || "A parent";
-          const beat = () => ref.set({ name, seen: Date.now() }).catch(() => {});
+          const beat = () => refs.forEach(ref => ref.set({ name, seen: Date.now() }).catch(() => {}));
           beat();
           const id = setInterval(beat, 30000);
-          return () => { clearInterval(id); ref.remove().catch(() => {}); };
-        }, [countingIdx, lapCountCode, currentUser && currentUser.uid]);
+          return () => { clearInterval(id); refs.forEach(ref => ref.remove().catch(() => {})); };
+        }, [countingIdxs.join(","), lapCountCode, currentUser && currentUser.uid]);
         // Firebase may hand back a sparse array or an object; keep athlete indexes.
         function indexedAthletes(raw) {
           const out = [];
@@ -11960,7 +11984,7 @@ Start a new race anyway?`)) return;
                 const picked = Object.keys(lapMine).filter(k => lapMine[k]);
                 const myIdx = mode === "self" && joinRace && race.code === joinRace.code ? joinAthIdx : null;
                 const shown = mode === "self" ? lapRows.filter(x => x.i === myIdx)
-                            : mode === "one" ? lapRows.filter(x => String(x.i) === picked[0])
+                            : mode === "one" ? lapRows.filter(x => lapMine[x.i])
                             : (picked.length ? lapRows.filter(x => lapMine[x.i]) : lapRows);
                 const flash = lapFlash && (lapFlash.error || Date.now() - (lapFlash.at || 0) < 8000) ? lapFlash : null;
                 const nameOf = (a) => athleteName(a) || a.name || "Athlete";
@@ -12010,13 +12034,14 @@ Start a new race anyway?`)) return;
                     {mode === "one" && (picked.length === 0 || lapPicking) && (
                       <div style={{ marginTop: 16 }}>
                         <h2 style={TM_H2}>Who are you counting?</h2>
-                        <div style={{ ...TM_CAPTION, marginTop: 4 }}>Pick one athlete. You can switch any time.</div>
-                        {picker(false)}
-                        {picked.length > 0 && <button onClick={() => setLapPicking(false)} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 12 }}>Count {nameOf((lapRows.find(x => String(x.i) === picked[0]) || {}).a || {})} →</button>}
+                        <div style={{ ...TM_CAPTION, marginTop: 4 }}>Tick your athlete — or each of your kids if you have more than one racing. Each gets their own counter. You can change it any time.</div>
+                        {picker(true)}
+                        {picked.length > 0 && <button onClick={() => setLapPicking(false)} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 12 }}>
+                          Count {picked.length === 1 ? nameOf((lapRows.find(x => String(x.i) === picked[0]) || {}).a || {}) : `these ${picked.length}`} →</button>}
                       </div>
                     )}
                     {mode === "one" && picked.length > 0 && !lapPicking && (
-                      <button onClick={() => setLapPicking(true)} style={{ ...btnStyle(TM.ink, true), marginTop: 16 }}>Switch athlete</button>
+                      <button onClick={() => setLapPicking(true)} style={{ ...btnStyle(TM.ink, true), marginTop: 16 }}>Change who I'm counting</button>
                     )}
 
 
@@ -13016,28 +13041,27 @@ Start a new race anyway?`)) return;
                         return (
                           <div style={{ marginBottom: 16 }}>
                             <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", marginBottom: 4 }}>ARE YOU ON THE LIST?</div>
-                            <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Tap your name, then “This is me”. It stays linked to your profile for every race after this.</div>
+                            <div style={{ fontSize: 14, color: "#3D434B", marginBottom: 8 }}>Tap your name, or <b>each of your kids</b> if you're a parent, then tap the green button. They stay linked to your account for every race after this.</div>
                             {named.map((ath, k) => {
                               const mine = ath.uid && ath.uid === currentUser?.uid;
                               const taken = ath.uid && !mine;
-                              const open = claimPick === k;
+                              const on = claimSel.includes(String(ath.id));
                               return (
-                                <div key={ath.id ?? k} style={{ background: open ? "#FFFFFF" : "#EFEDE8", border: `2px solid ${open ? "#04613F" : "#C9C5BC"}`, borderRadius: 6, marginBottom: 6 }}>
-                                  <button disabled={taken} onClick={() => setClaimPick(open ? null : k)}
-                                    style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", padding: "12px 14px", fontSize: 16, fontWeight: 700, color: "#0B0D10", cursor: taken ? "default" : "pointer", textAlign: "left", opacity: taken ? 0.5 : 1 }}>
-                                    <span style={{ flex: 1 }}>{athleteName(ath) || ath.name}</span>
-                                    <span style={{ fontSize: 14, fontWeight: 500, color: "#3D434B" }}>{mine ? "✓ You" : taken ? "Claimed" : [ath.gender, ath.ageGroup].filter(Boolean).join(" · ")}</span>
-                                  </button>
-                                  {open && (
-                                    <div style={{ display: "flex", gap: 8, padding: "0 14px 12px" }}>
-                                      <button onClick={() => setClaimPick(null)} style={{ ...btnStyle("#3D434B", true), padding: "10px 14px", fontSize: 15 }}>Cancel</button>
-                                      <button disabled={regWorking} onClick={() => claimRosterName(regRaceData, ath)}
-                                        style={{ ...btnStyle("#04613F"), flex: 1, padding: "10px 14px", fontSize: 16, opacity: regWorking ? 0.5 : 1 }}>{regWorking ? "Linking…" : "✓ This is me"}</button>
-                                    </div>
-                                  )}
-                                </div>
+                                <button key={ath.id ?? k} disabled={taken || mine} onClick={() => setClaimSel(sel => on ? sel.filter(x => x !== String(ath.id)) : [...sel, String(ath.id)])}
+                                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: on ? "#FFFFFF" : "#EFEDE8", border: `2px solid ${on ? "#04613F" : "#C9C5BC"}`, borderRadius: 6, marginBottom: 6,
+                                           padding: "12px 14px", fontSize: 16, fontWeight: 700, color: "#0B0D10", cursor: taken || mine ? "default" : "pointer", textAlign: "left", opacity: taken ? 0.5 : 1 }}>
+                                  <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: 4, flexShrink: 0, border: `2px solid ${on || mine ? "#04613F" : "#C9C5BC"}`, background: on || mine ? "#04613F" : "#FFFFFF", color: "#FFFFFF", fontSize: 15, lineHeight: "18px", textAlign: "center" }}>{on || mine ? "✓" : ""}</span>
+                                  <span style={{ flex: 1 }}>{athleteName(ath) || ath.name}</span>
+                                  <span style={{ fontSize: 14, fontWeight: 500, color: "#3D434B" }}>{mine ? "Linked to you" : taken ? "Claimed" : [ath.gender, ath.ageGroup].filter(Boolean).join(" · ")}</span>
+                                </button>
                               );
                             })}
+                            {claimSel.length > 0 && (
+                              <button disabled={regWorking} onClick={async () => { await claimRosterName(regRaceData, named.filter(a => claimSel.includes(String(a.id)))); setClaimSel([]); }}
+                                style={{ ...btnStyle("#04613F"), width: "100%", padding: "12px 14px", fontSize: 17, marginTop: 4, opacity: regWorking ? 0.5 : 1 }}>
+                                {regWorking ? "Linking…" : claimSel.length === 1 ? "✓ This is me (or my child)" : `✓ Link these ${claimSel.length} to my account`}
+                              </button>
+                            )}
                             <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, color: "#3D434B", margin: "16px 0 0" }}>NOT ON THE LIST? SIGN UP BELOW</div>
                           </div>
                         );
