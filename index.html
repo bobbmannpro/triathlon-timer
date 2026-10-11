@@ -2,6 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Google Analytics (GA4, bobbmannproductions account, property "timeathon") -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-PXT8QVT528"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-PXT8QVT528');
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Timeathon — Live Triathlon Timing, Results &amp; Certificates</title>
     <!-- Link preview (texts, Facebook, Instagram, Slack): the logo banner -->
@@ -10831,6 +10839,10 @@ ${html}</body></html>`);
         const effectiveRole = chosenRole || (signedIn ? profileRole : null);
         const isHost      = effectiveRole === "host";
         const isOwner = !!currentUser && OWNER_UIDS.includes(currentUser.uid);
+        // Analytics: each screen counts as a page, tagged with the role using it.
+        useEffect(() => {
+          try { if (window.gtag) window.gtag("event", "page_view", { page_title: view, page_location: location.origin + location.pathname + "#" + view, role: effectiveRole || "none" }); } catch (_) {}
+        }, [view, effectiveRole]);
         const [hostAccess, setHostAccess] = useState(undefined);   // undefined = checking, null = none, object = allowed
         useEffect(() => {
           if (!currentUser || currentUser.isAnonymous) { setHostAccess(null); return; }
