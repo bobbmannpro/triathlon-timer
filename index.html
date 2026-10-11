@@ -17780,10 +17780,10 @@ Start a new race anyway?`)) return;
                                     </button>
                                   </div>
                                   <div style={{ fontSize:14, color:"#3D434B" }}>Lane timers: open the app → <b>Lane timer</b> → this code → their lane.</div>
-                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }} aria-label="Lane timers connected">
+                                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 8 }} aria-label="Lane timers connected">
                                     {Array.from({ length: swimMeet.lanes || 8 }, (_, i) => i + 1).map(n => {
                                       const on = timerOn(n), t = swimTimersLive[n];
-                                      return <div key={n} title={on && t && t.name ? t.name : ""} style={{ minWidth: 52, textAlign: "center", borderRadius: 6, padding: "6px 8px", fontWeight: 900, fontSize: 15,
+                                      return <div key={n} title={on && t && t.name ? t.name : ""} style={{ flex: "1 0 40px", minWidth: 40, textAlign: "center", borderRadius: 6, padding: "6px 2px", overflow: "hidden", fontWeight: 900, fontSize: 15,
                                         background: on ? "#04613F" : "#FFFFFF", color: on ? "#FFFFFF" : "#3D434B", border: `2px solid ${on ? "#04613F" : "#C9C5BC"}` }}>
                                         {n}<div style={{ fontSize: 11, fontWeight: 700 }}>{on ? (t && t.name ? String(t.name).slice(0, 8) : "on") : "—"}</div></div>;
                                     })}
