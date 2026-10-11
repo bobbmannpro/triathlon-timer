@@ -11922,7 +11922,7 @@ Start a new race anyway?`)) return;
               const miles = joinBikeStats && joinBikeStats.onBike ? joinBikeStats.distMi
                           : (liveAth?.gps?.onBike ? (liveAth.gps.distanceMi || 0) : null);
               const lines = view === "bike"
-                ? [{ label: "Ride", value: "Sending" }]
+                ? [{ label: bikeRideSport === "run" ? "Run" : "Ride", value: "Sending" }]
                 : [{ label: "Race clock", value: formatTime(joinLiveClockMs).replace(/\.\d$/, "") },
                    ...(miles != null ? [{ label: "Bike miles", value: miles.toFixed(2) }] : [])];
               return <PocketMode lines={lines} onExit={() => setPocketOn(false)} />;
