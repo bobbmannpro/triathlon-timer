@@ -4048,9 +4048,9 @@ ${html}</body></html>`);
       // ── How-to videos ── (a role's button shows once its video exists)
       const TUTORIALS = {
         intro:     { src: "media/timeathon-intro.mp4", poster: "media/timeathon-intro.jpg", title: "What is Timeathon?", len: "2 min" },
-        host:      null,
-        athlete:   null,
-        spectator: null,
+        host:      { src: "media/tutorial-host.mp4", poster: "media/tutorial-host.jpg", title: "How to host a triathlon", len: "1 min" },
+        athlete:   { src: "media/tutorial-athlete.mp4", poster: "media/tutorial-athlete.jpg", title: "How to race", len: "50 sec" },
+        spectator: { src: "media/tutorial-spectator.mp4", poster: "media/tutorial-spectator.jpg", title: "How to watch", len: "45 sec" },
       };
       function VideoModal({ video, onClose }) {
         if (!video) return null;
@@ -11282,6 +11282,12 @@ ${html}</body></html>`);
           const list = todayRaces;
           return (
             <section aria-label="Today's races" style={{ marginTop: 20 }}>
+              {(mode === "join" || view === "spectate") && (
+                <div style={{ marginBottom: 14 }}>
+                  <TutorialButton which={mode === "join" ? "athlete" : "spectator"} onOpen={setVideoOpen} />
+                  <VideoModal video={videoOpen} onClose={() => setVideoOpen(null)} />
+                </div>
+              )}
               <h2 style={{ ...TM_H2, marginBottom: 10 }}>Today's races</h2>
               {list === null ? (
                 <div style={TM_CAPTION}>Loading…</div>
@@ -11999,6 +12005,8 @@ Start a new race anyway?`)) return;
                 return (
                   <div>
                     <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
+                    <TutorialButton which="host" onOpen={setVideoOpen} style={{ marginTop: 14 }} />
+                    <VideoModal video={videoOpen} onClose={() => setVideoOpen(null)} />
 
                     <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setNewRaceCode(friendlyCode()); setView("newrace"); }}
                       style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
