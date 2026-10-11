@@ -18739,7 +18739,8 @@ Start a new race anyway?`)) return;
               };
               const M_PER_MI = 1609.344;
               const useKm = (bikeView === "feed" ? (bikeWatchMeta?.units || "mi") : (bikeDraft?.units || "mi")) === "km";
-              const sport = (bikeView === "feed" ? bikeWatchMeta?.sport : bikeView === "ride" ? bikeRideSport : bikeDraft?.sport) || "bike";
+              const rideFeedSport = bikeRiding ? bikeRideSport : ((bikeFeedList.find(f => f.code === bikeRideCode) || {}).sport || bikeRideSport);
+              const sport = (bikeView === "feed" ? bikeWatchMeta?.sport : bikeView === "ride" ? rideFeedSport : bikeDraft?.sport) || "bike";
               const isRun = sport === "run";
               BIKE_SPORT_NOW = sport;
               // Ride words, or run words.
@@ -18824,7 +18825,7 @@ Start a new race anyway?`)) return;
                             <button onClick={() => { setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); setBikeView("setup"); }}
                               style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>⚙️ Edit</button>
                             <button onClick={() => { setBikeRideCode(f.code); setBikeView("ride"); }}
-                              style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>📡 Ride</button>
+                              style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>📡 {f.sport === "run" ? "Run" : "Ride"}</button>
                             <button onClick={() => { setBikeWatchCode(f.code); setBikeView("feed"); }}
                               style={{ ...btnStyle("#8A5A00", true), padding:"6px 12px", fontSize:14 }}>👀 Follow</button>
                             <button onClick={() => {
