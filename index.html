@@ -19487,9 +19487,9 @@ Start a new race anyway?`)) return;
                         <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                           {metricTile("Elapsed", fmtRideClock(bikeElapsedMs), "#8A5A00")}
                           {metricTile("Distance", fmtDist(bikeLive?.dst), "#8A5A00")}
-                          {metricTile("Speed", fmtSpeed(bikeLive?.spd), "#04613F")}
-                          {metricTile("Power", bikeLive?.pwr != null ? bikeLive.pwr + " W" : "—", "#04613F")}
-                          {metricTile("Cadence", bikeLive?.cad != null ? bikeLive.cad + " rpm" : "—", "#0B3FCC")}
+                          {metricTile(isRun ? "Pace" : "Speed", fmtSpeed(bikeLive?.spd), "#04613F")}
+                          {!isRun && metricTile("Power", bikeLive?.pwr != null ? bikeLive.pwr + " W" : "—", "#04613F")}
+                          {metricTile("Cadence", bikeLive?.cad != null ? bikeLive.cad + (isRun ? " spm" : " rpm") : "—", "#0B3FCC")}
                           {metricTile("Heart", bikeLive?.hr != null ? bikeLive.hr + " bpm" : "—", "#B3001B")}
                         </div>
                         <div style={{ fontSize:14, color: bikeRiding ? "#04613F" : "#3D434B", marginTop:10, textAlign:"center" }}>
@@ -19503,10 +19503,10 @@ Start a new race anyway?`)) return;
                         let tone, title, detail;
                         if (!bikeRiding) {
                           tone = "#3D434B"; title = "Not broadcasting";
-                          detail = "Start the ride and this will confirm your updates are reaching followers.";
+                          detail = "Start the " + RW.ride + " and this will confirm your updates are reaching followers.";
                         } else if (!bikeConnected) {
                           tone = "#B3001B"; title = "⚠ No connection";
-                          detail = "Out of mobile coverage. Your ride is still being recorded and everything queued will send automatically when signal returns.";
+                          detail = "Out of mobile coverage. Your " + RW.ride + " is still being recorded and everything queued will send automatically when signal returns.";
                         } else if (bikeFailAt && (!bikeAckAt || bikeFailAt > bikeAckAt)) {
                           // The most recent attempt was rejected — don't let a slightly
                           // older success make this look healthy.
@@ -19920,9 +19920,9 @@ Start a new race anyway?`)) return;
                           {/* Metrics */}
                           <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
                             {metricTile("Distance", fmtDist(bikeWatchLive?.dst), "#8A5A00")}
-                            {metricTile("Speed", fmtSpeed(bikeWatchLive?.spd), "#04613F")}
-                            {metricTile("Power", bikeWatchLive?.pwr != null ? bikeWatchLive.pwr + " W" : "—", "#04613F")}
-                            {metricTile("Cadence", bikeWatchLive?.cad != null ? bikeWatchLive.cad + " rpm" : "—", "#0B3FCC")}
+                            {metricTile(isRun ? "Pace" : "Speed", fmtSpeed(bikeWatchLive?.spd), "#04613F")}
+                            {!isRun && metricTile("Power", bikeWatchLive?.pwr != null ? bikeWatchLive.pwr + " W" : "—", "#04613F")}
+                            {metricTile("Cadence", bikeWatchLive?.cad != null ? bikeWatchLive.cad + (isRun ? " spm" : " rpm") : "—", "#0B3FCC")}
                             {metricTile("Heart", bikeWatchLive?.hr != null ? bikeWatchLive.hr + " bpm" : "—", "#B3001B")}
                             {metricTile("Elapsed", fmtRideClock(bikeWatchLive?.el), "#0B0D10")}
                           </div>
