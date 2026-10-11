@@ -646,6 +646,8 @@
         if (!a || !a.started || a.finished) return null;
         const nx = a.splits.findIndex(x => x == null);
         if (nx === slotOf("bike") && course && ["trainer", "distance"].includes(course.bikeType)) return null;
+        // A leg set to "Splits only" has no counter — no stray 0 to tap on race day.
+        if (course && [0, 2, 4].includes(nx) && !legLapPlan(course, nx)) return null;
         return [0, 2, 4].includes(nx) ? nx : null;
       }
       // ── Lap splits ───────────────────────────────────────────────────────────
@@ -6979,7 +6981,7 @@ ${html}</body></html>`);
         // Watching a live race: check in every 30 s so the host can see who's watching.
         useEffect(() => {
           const code = liveRace && liveRace.code;
-          if (view !== "watch" || !code || liveRace.status !== "live" || !auth.currentUser) return;
+          if ((view !== "watch" && view !== "lapcount") || !code || liveRace.status !== "live" || !auth.currentUser) return;   // counting laps is watching too
           const uid = auth.currentUser.uid;
           const ref = rtdb.ref(`liveRaces/${code}/athletes/0/gps/viewers/${uid}`);
           const name = [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(" ") || userProfile?.displayName || "";
@@ -6987,7 +6989,7 @@ ${html}</body></html>`);
           beat();
           const id = setInterval(beat, 30000);
           return () => { clearInterval(id); ref.remove().catch(() => {}); };
-        }, [view, liveRace?.code, liveRace?.status, currentUser?.uid, userProfile?.firstName, userProfile?.lastName]);
+        }, [view === "watch" || view === "lapcount", liveRace?.code, liveRace?.status, currentUser?.uid, userProfile?.firstName, userProfile?.lastName]);
 
         function watchRace(code) {
           if (!code.trim()) { setLiveRaceError("Enter a race code."); return; }
@@ -12495,7 +12497,9 @@ Start a new race anyway?`)) return;
                   if (!a.started) return "Counter shows up when they're sent off";
                   if (a.finished) return "Finished";
                   const nextSeg = a.splits.findIndex(s => s == null);
-                  if (nextSeg === 1 || nextSeg === 3) return `In ${SEGMENTS[nextSeg]} — the ${kindAt(nextSeg + 1)} counter comes up next`;
+                  if (nextSeg === 1 || nextSeg === 3) return course && !legLapPlan(course, nextSeg + 1)
+                    ? `In ${SEGMENTS[nextSeg]} — the ${kindAt(nextSeg + 1)} isn't counted by laps`
+                    : `In ${SEGMENTS[nextSeg]} — the ${kindAt(nextSeg + 1)} counter comes up next`;
                   return `${SEGMENTS[nextSeg] || "Race"} — not counted by laps`;
                 };
                 return (
