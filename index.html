@@ -18362,7 +18362,7 @@ Start a new race anyway?`)) return;
                                       return (
                                         <button key={h.heatNum} onClick={() => { setSwimActiveEvent(ev.eventNum); setSwimActiveHeat(h.heatNum); }}
                                           style={{ ...btnStyle(TM.ink, done), minHeight: 44, padding: "0 14px", fontSize: 15 }}>
-                                          {done ? "✓ " : "▶ "}Heat {h.heatNum} · {n} swimmer{n === 1 ? "" : "s"}
+                                          {done ? "✓ " : "▶ "}Heat {h.heatNum} · {n} {isRelayEv(ev) ? "relay" : "swimmer"}{n === 1 ? "" : "s"}
                                         </button>
                                       );
                                     })}
