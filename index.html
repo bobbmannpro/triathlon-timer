@@ -5469,7 +5469,16 @@ ${html}</body></html>`);
         const [swimDayOpen, setSwimDayOpen] = useState(null);   // null | "swimmers" | "relays" | "combine"
         const [swimDayTeam, setSwimDayTeam] = useState("");
         const [swimDayOpenEntry, setSwimDayOpenEntry] = useState(null);
-        const swimHold = () => (swimActiveEvent && swimActiveHeat ? { eventNum: swimActiveEvent, heatNum: swimActiveHeat } : null);
+        // The heat on the blocks is only frozen once its start has gone.
+        const swimHold = () => (swimActiveEvent && swimActiveHeat && swimClockStarted ? { eventNum: swimActiveEvent, heatNum: swimActiveHeat } : null);
+        // A re-seed or combine can renumber the open event's heats: follow it.
+        useEffect(() => {
+          if (!swimActiveEvent) return;
+          const ev = (swimMeet.events || []).find(e => e.eventNum === swimActiveEvent);
+          if (!ev) return;
+          if (ev.mergedInto) { setSwimActiveEvent(ev.mergedInto); setSwimActiveHeat(1); return; }
+          if (swimActiveHeat && !(ev.heats || []).some(h => h.heatNum === swimActiveHeat) && (ev.heats || []).length) setSwimActiveHeat(ev.heats[0].heatNum);
+        }, [swimMeet.events, swimActiveEvent, swimActiveHeat]);
         function meetDay(fn) { const hold = swimHold(); setSwimMeet(m => applyRosterChanges(fn(m), hold)); }
         function renderSwimDay() {
           const m = swimMeet;
