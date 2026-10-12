@@ -166,7 +166,7 @@
     "hostAccess": {
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3'))",
-        ".write": "auth != null && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || (auth.uid === $uid && newData.child('via').val() === 'promo' && root.child('promoCodes').child(newData.child('code').val()).exists() && !data.exists()))"
+        ".write": "auth != null && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || (auth.uid === $uid && newData.child('via').val() === 'promo' && root.child('promoCodes').child(newData.child('code').val() + '').exists() && (!data.exists() || (data.child('until').exists() && data.child('until').val() < now)) && (root.child('promoCodes').child(newData.child('code').val() + '').child('days').exists() ? (newData.child('until').isNumber() && newData.child('until').val() <= now + root.child('promoCodes').child(newData.child('code').val() + '').child('days').val() * 86400000 + 300000) : !newData.child('until').exists())))"
       }
     },
     "promoCodes": {
@@ -177,7 +177,8 @@
           "$uid": {
             ".write": "auth != null && auth.uid === $uid && root.child('hostAccess').child($uid).child('code').val() === $code"
           }
-        }
+        },
+        ".read": "auth != null"
       }
     },
     "hostPending": {

@@ -11234,9 +11234,13 @@ ${html}</body></html>`);
           if (!code) return;
           setPromoMsg({ busy: true });
           try {
-            await rtdb.ref("hostAccess/" + currentUser.uid).set({ via: "promo", code, at: Date.now(), email: currentUser.email || "" });
-            rtdb.ref("promoCodes/" + code + "/redeemed/" + currentUser.uid).set({ email: currentUser.email || "", at: Date.now() }).catch(() => {});
-            setPromoMsg({ ok: true, text: "You're in — welcome, host!" });
+            // A code can give hosting for a set number of days, or for good.
+            const pc = (await rtdb.ref("promoCodes/" + code).once("value")).val();
+            if (!pc) throw new Error("no code");
+            const until = pc.days > 0 ? Date.now() + pc.days * 86400000 : null;
+            await rtdb.ref("hostAccess/" + currentUser.uid).set({ via: "promo", code, at: Date.now(), email: currentUser.email || "", ...(until ? { until } : {}) });
+            rtdb.ref("promoCodes/" + code + "/redeemed/" + currentUser.uid).set({ email: currentUser.email || "", at: Date.now(), ...(until ? { until } : {}) }).catch(() => {});
+            setPromoMsg({ ok: true, text: until ? `You're in until ${new Date(until).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} — welcome, host!` : "You're in — welcome, host!" });
           } catch (e) {
             setPromoMsg({ ok: false, text: "That code didn't work. Check it with whoever gave it to you." });
           }
@@ -11244,6 +11248,9 @@ ${html}</body></html>`);
         // Owner: make and list promo codes
         const [promoList, setPromoList] = useState(null);
         const [newPromo, setNewPromo] = useState("");
+        const [newPromoDays, setNewPromoDays] = useState(0);   // 0 = no end date
+        const PROMO_LENGTHS = [[0, "Forever"], [7, "1 week"], [30, "1 month"], [90, "3 months"], [182, "6 months"], [365, "1 year"]];
+        const promoLengthLabel = d => (PROMO_LENGTHS.find(x => x[0] === (d || 0)) || [0, `${d} days`])[1];
         useEffect(() => {
           if (!isOwner) return;
           const ref = rtdb.ref("promoCodes");
@@ -14551,11 +14558,15 @@ Start a new race anyway?`)) return;
                           ))}
                         </div>
                       )}
-                      <div style={{ ...TM_CAPTION, marginBottom: 10 }}>Anyone who enters one of these codes can host races for free.</div>
-                      <div style={{ display: "flex", gap: 8 }}>
+                      <div style={{ ...TM_CAPTION, marginBottom: 10 }}>Anyone who enters one of these codes can host races for free, for as long as the code allows (counted from when they enter it).</div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <input value={newPromo} onChange={e => setNewPromo(normCode(e.target.value))} placeholder="New code, e.g. COACHJEN" autoCapitalize="characters"
                           style={{ flex: 1, minWidth: 0, minHeight: 44, fontSize: 16, fontWeight: 800, letterSpacing: 1.5, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6 }} />
-                        <button disabled={newPromo.length < 4} onClick={() => { rtdb.ref("promoCodes/" + newPromo).set({ createdBy: currentUser.uid, at: Date.now() }).catch(e => alert("Couldn't save the code — publish the database rules first.")); setNewPromo(""); }}
+                        <select value={newPromoDays} onChange={e => setNewPromoDays(+e.target.value)} aria-label="How long the code gives hosting"
+                          style={{ minHeight: 44, fontSize: 15, fontWeight: 700, border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 6px" }}>
+                          {PROMO_LENGTHS.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
+                        </select>
+                        <button disabled={newPromo.length < 4} onClick={() => { rtdb.ref("promoCodes/" + newPromo).set({ createdBy: currentUser.uid, at: Date.now(), ...(newPromoDays ? { days: newPromoDays } : {}) }).catch(e => alert("Couldn't save the code: " + (e && e.message))); setNewPromo(""); }}
                           style={{ ...btnStyle(TM.swim), minHeight: 44, opacity: newPromo.length < 4 ? 0.5 : 1 }}>Add</button>
                       </div>
                       {promoList && Object.keys(promoList).length > 0 && (
@@ -14563,7 +14574,7 @@ Start a new race anyway?`)) return;
                           {Object.entries(promoList).map(([code, v]) => (
                             <div key={code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15 }}>
                               <span style={{ fontWeight: 900, letterSpacing: 1.5, flex: 1 }}>{code}</span>
-                              <span style={TM_CAPTION}>{Object.keys((v && v.redeemed) || {}).length} used</span>
+                              <span style={TM_CAPTION}>{promoLengthLabel(v && v.days)} · {Object.keys((v && v.redeemed) || {}).length} used</span>
                               <button onClick={() => rtdb.ref("promoCodes/" + code).remove().catch(() => {})} style={{ background: "none", border: "none", color: TM.live, fontWeight: 700, cursor: "pointer" }}>Delete</button>
                             </div>
                           ))}
@@ -14666,6 +14677,11 @@ Start a new race anyway?`)) return;
                     Sign Out
                   </button>
 
+                  {hostAccess && hostAccess.until && (
+                    <div style={{ ...rowStyle(TM.swim), marginTop: 20, fontSize: 15 }}>
+                      <strong>Hosting access</strong> from code {hostAccess.code || ""} runs until {new Date(hostAccess.until).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}.
+                    </div>
+                  )}
                   {/* Privacy: confirm the email, take a copy of your data, or delete the account. */}
                   <div style={{ ...rowStyle(), marginTop: 20 }}>
                     <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: TM.inkMuted, marginBottom: 8 }}>Your data & privacy</div>
