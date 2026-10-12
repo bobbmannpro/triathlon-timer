@@ -4608,7 +4608,7 @@ ${html}</body></html>`);
             <div style={{ ...rowStyle(), marginTop: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ ...TM_LABEL, flex: 1, margin: 0 }}>Waves: {waves.length}</div>
-                <button onClick={() => set("waves", [...waves, {}])} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>+ Wave</button>
+                <button onClick={() => set("waves", [...waves.map((x, i) => ({ ...x, n: i + 1 })), { n: waves.length + 1 }])} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>+ Wave</button>
                 {waves.length > 1 && !waves[waves.length - 1].startAt && <button onClick={() => set("waves", waves.slice(0, -1))} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>− Wave</button>}
               </div>
             </div>
