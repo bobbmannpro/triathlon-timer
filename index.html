@@ -5017,6 +5017,11 @@ ${html}</body></html>`);
         }, [joinRace?.code, joinAthIdx]);
 
         const [joinedRaces, setJoinedRaces] = useState({});
+        // Races this account watched (spectators/parents), with the kids they marked as theirs.
+        const [watchedRaces, setWatchedRaces] = useState({});
+        const [myKids, setMyKids] = useState({});
+        const [kidPickerOpen, setKidPickerOpen] = useState(false);            // normalised name → name, remembered across races
+        const [racePhotoCodes, setRacePhotoCodes] = useState({}); // race code → photo album code (or "" if none)
         const [registrationStep, setRegistrationStep] = useState("code");
         const [regProfile, setRegProfile] = useState({ firstName: "", lastName: "", gender: "Male", ageGroup: "", dob: "" });
         const [claimPick, setClaimPick] = useState(null);   // roster index tapped before "This is me"
@@ -6498,6 +6503,9 @@ ${html}</body></html>`);
                   try { const c = localStorage.getItem("tri-archive"); if (c) { const ar = JSON.parse(c); if (ar.length > 0) { setSavedArchive(ar); rtdb.ref("users/" + user.uid + "/archive").set(ar).catch(console.error); } } } catch(_) {}
                 }
 
+                if (data.watchedRaces && typeof data.watchedRaces === "object") setWatchedRaces(data.watchedRaces);
+                if (data.myKids && typeof data.myKids === "object") setMyKids(data.myKids);
+
                 // Joined races: RTDB → localStorage fallback
                 if (data.joinedRaces && Object.keys(data.joinedRaces).length > 0) {
                   setJoinedRaces(data.joinedRaces); localStorage.setItem("tri-joined-races", JSON.stringify(data.joinedRaces));
@@ -7007,6 +7015,40 @@ ${html}</body></html>`);
           const id = setInterval(beat, 30000);
           return () => { clearInterval(id); ref.remove().catch(() => {}); };
         }, [view === "watch" || view === "lapcount", liveRace?.code, liveRace?.status, currentUser?.uid, userProfile?.firstName, userProfile?.lastName]);
+
+        // Remember races this account watched, so parents find them (and their photos) later.
+        const normKid = n => String(n || "").trim().toLowerCase().replace(/\s+/g, " ");
+        useEffect(() => {
+          const code = liveRace && liveRace.code;
+          if (view !== "watch" || !code || !currentUser || isHost) return;
+          const prev = watchedRaces[code] || {};
+          const entry = { ...prev, code, raceName: liveRace.raceName || prev.raceName || "Race", hostName: liveRace.publisherName || prev.hostName || "", at: Date.now() };
+          // First time here: the kids this parent marked in earlier races are picked out by name.
+          if (!prev.kids) {
+            const names = asList(liveRace.athletes).filter(Boolean).map(a => a.name).filter(n => myKids[normKid(n)]);
+            if (names.length) entry.kids = names;
+          }
+          setWatchedRaces(w => ({ ...w, [code]: entry }));
+          rtdb.ref("users/" + currentUser.uid + "/watchedRaces/" + code).set(entry).catch(() => {});
+        }, [view, liveRace && liveRace.code, currentUser && currentUser.uid]);
+        function saveMyKids(code, names) {
+          if (!currentUser || !code) return;
+          const entry = { ...(watchedRaces[code] || { code, at: Date.now() }), kids: names };
+          setWatchedRaces(w => ({ ...w, [code]: entry }));
+          rtdb.ref("users/" + currentUser.uid + "/watchedRaces/" + code).set(entry).catch(() => {});
+          const nextKids = { ...myKids };
+          names.forEach(n => { nextKids[normKid(n)] = n; });
+          setMyKids(nextKids);
+          rtdb.ref("users/" + currentUser.uid + "/myKids").set(nextKids).catch(() => {});
+        }
+        // Photo albums attached to the races this account was part of.
+        useEffect(() => {
+          const codes = [...Object.keys(watchedRaces || {}), ...Object.keys(joinedRaces || {})].filter(c => c && racePhotoCodes[c] === undefined);
+          if (!codes.length || !currentUser) return;
+          codes.forEach(c => rtdb.ref("liveRaces/" + c + "/photoCode").once("value")
+            .then(sn => setRacePhotoCodes(m => ({ ...m, [c]: sn.val() || "" })))
+            .catch(() => setRacePhotoCodes(m => ({ ...m, [c]: "" }))));
+        }, [Object.keys(watchedRaces || {}).join(","), Object.keys(joinedRaces || {}).join(","), currentUser && currentUser.uid]);
 
         function watchRace(code) {
           if (!code.trim()) { setLiveRaceError("Enter a race code."); return; }
@@ -7680,12 +7722,29 @@ ${html}</body></html>`);
         }
         const [linkingRace, setLinkingRace] = useState(null);   // My Races: saved race id choosing its past results
         // One photo album per race: the race and its results all carry the album's code.
+        // The race itself carries the album code, so everyone connected to the race
+        // (athletes, parents, spectators who watched) sees the photos without a code.
+        function stampRacePhotoCode(race, code) {
+          [race && race.code, race && race.plannedCode].filter((c, i, a) => c && a.indexOf(c) === i).forEach(c => {
+            rtdb.ref("liveRaces/" + c + "/publishedBy").once("value").then(sn => {
+              if (sn.val() === (currentUser && currentUser.uid)) rtdb.ref("liveRaces/" + c + "/photoCode").set(code || null).catch(() => {});
+            }).catch(() => {});
+          });
+        }
         function attachAlbumToRace(race, code) {
+          stampRacePhotoCode(race, code);
           persistRaces(savedRaces.map(r => r.id === race.id ? { ...r, photoCode: code || null } : r));
           const ids = resultsForRace(race).map(a => a.id);
           if (ids.length) persistArchiveUpdate(savedArchive.map(a => ids.includes(a.id) ? { ...a, photoCode: code || null } : a));
         }
         const [detachAlbumFor, setDetachAlbumFor] = useState(null);
+        // Races that already had an album before races carried their photo code: stamp them once.
+        const stampedPhotoRef = useRef(false);
+        useEffect(() => {
+          if (view !== "myraces" || !currentUser || stampedPhotoRef.current || !savedRaces.length) return;
+          stampedPhotoRef.current = true;
+          savedRaces.forEach(r => { const pc = photoCodeForRace(r); if (pc) stampRacePhotoCode(r, pc); });
+        }, [view, currentUser && currentUser.uid, savedRaces.length, savedArchive.length]);
 
         function persistArchiveUpdate(updated) {
           setSavedArchive(updated);
@@ -7791,7 +7850,7 @@ ${html}</body></html>`);
             await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).set(entry);
             setHostAlbums(a => { const n = { ...a }; if (d.editing && d.editing !== code) delete n[d.editing]; n[code] = entry; return n; });
             if (d.raceId) persistArchiveUpdate(savedArchive.map(r => r.id === d.raceId ? { ...r, photoCode: code } : r));
-            if (d.savedRaceId) persistRaces(savedRaces.map(r => r.id === d.savedRaceId ? { ...r, photoCode: code } : r));
+            if (d.savedRaceId) { persistRaces(savedRaces.map(r => r.id === d.savedRaceId ? { ...r, photoCode: code } : r)); stampRacePhotoCode(savedRaces.find(r => r.id === d.savedRaceId), code); }
             setAlbumDraft(null);
             setAlbumMsg({ ok: true, text: count == null
               ? `Saved “${name}” — share code ${code}. Parents who type it get a button to open the photos in Google Drive. Make sure the folder is shared “Anyone with the link · Viewer”.`
@@ -7820,7 +7879,7 @@ ${html}</body></html>`);
           await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).set(entry);
           setHostAlbums(a => { const n = { ...a }; if (d.editing && d.editing !== code) delete n[d.editing]; n[code] = entry; return n; });
           if (d.raceId) persistArchiveUpdate(savedArchive.map(r => r.id === d.raceId ? { ...r, photoCode: code } : r));
-            if (d.savedRaceId) persistRaces(savedRaces.map(r => r.id === d.savedRaceId ? { ...r, photoCode: code } : r));
+            if (d.savedRaceId) { persistRaces(savedRaces.map(r => r.id === d.savedRaceId ? { ...r, photoCode: code } : r)); stampRacePhotoCode(savedRaces.find(r => r.id === d.savedRaceId), code); }
           setAlbumDraft(null);
           setAlbumMsg({ ok: true, text: count
             ? `Saved “${name}” — share code ${code}.`
@@ -11506,7 +11565,14 @@ ${html}</body></html>`);
         }, [lapCode]);
         useEffect(() => {
           if (!lapCode) return;
-          try { setLapMine(JSON.parse(localStorage.getItem("lap-mine-" + lapCode) || "{}")); } catch(_) { setLapMine({}); }
+          let saved = {};
+          try { saved = JSON.parse(localStorage.getItem("lap-mine-" + lapCode) || "{}"); } catch(_) {}
+          // Nothing picked on this phone yet: start with the kids this parent marked as theirs.
+          if (!Object.values(saved).some(Boolean) && !isHost && lapCode && watchedRaces[lapCode] && (watchedRaces[lapCode].kids || []).length && liveRace && liveRace.code === lapCode) {
+            const mine = new Set(watchedRaces[lapCode].kids.map(n => String(n || "").trim().toLowerCase().replace(/\s+/g, " ")));
+            asList(liveRace.athletes).forEach((a, i) => { if (a && mine.has(String(a.name || "").trim().toLowerCase().replace(/\s+/g, " "))) saved[i] = true; });
+          }
+          setLapMine(saved);
         }, [lapCode]);
         function saveLapMine(next) {
           setLapMine(next);
@@ -12757,6 +12823,27 @@ Start a new race anyway?`)) return;
                 <div>
                   <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>Watch a race</h1>
                   {renderTodayRaces("watch")}
+                  {/* Races this account watched — with each race's photos, no code needed. */}
+                  {signedIn && Object.keys(watchedRaces || {}).length > 0 && (
+                    <div style={{ marginTop: 24 }}>
+                      <h2 style={{ ...TM_H2, marginBottom: 10 }}>My races</h2>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {Object.values(watchedRaces).filter(w => w && w.code).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 12).map(w => (
+                          <div key={w.code} style={{ ...rowStyle(TM.run) }}>
+                            <div style={{ fontSize: 17, fontWeight: 800, overflowWrap: "anywhere" }}>{w.raceName || "Race"}</div>
+                            <div style={TM_CAPTION}>{w.hostName ? `${w.hostName} · ` : ""}Code {w.code}{w.at ? ` · ${new Date(w.at).toLocaleDateString()}` : ""}</div>
+                            {(w.kids || []).length > 0 && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>⭐ {w.kids.join(", ")}</div>}
+                            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                              <button onClick={() => openRaceAsViewer("triathlon", w.code)} style={{ ...btnStyle(TM.ink), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>Results →</button>
+                              {racePhotoCodes[w.code] ? (
+                                <button onClick={() => loadPhotosByCode(racePhotoCodes[w.code])} style={{ ...btnStyle(TM.swim, true), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>📷 Photos</button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <h2 style={{ ...TM_H2, marginTop: 28 }}>Have a code?</h2>
                   <div style={{ fontSize: 16, fontWeight: 600, color: TM.inkMuted, marginTop: 6 }}>
                     Type the code from the start sheet or email. Works for triathlons, swim meets and bike rides.
@@ -13563,6 +13650,7 @@ Start a new race anyway?`)) return;
                                 </>
                               ) : (
                                 <>
+                                  {racePhotoCodes[jr.code] ? <button onClick={() => loadPhotosByCode(racePhotoCodes[jr.code])} style={{ ...btnStyle(TM.swim, true), padding: "6px 10px", fontSize: 14 }}>📷 Photos</button> : null}
                                   <button onClick={() => rejoinRace(jr.code)} style={{ ...btnStyle("#04613F"), padding: "6px 14px", fontSize: 14 }}>Rejoin</button>
                                   <button onClick={() => setDeleteJoinedConfirm(jr.code)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>&times;</button>
                                 </>
@@ -14556,6 +14644,44 @@ Start a new race anyway?`)) return;
                     {liveRace && liveRace.photoCode && (
                       <button onClick={() => loadPhotosByCode(liveRace.photoCode)} style={{ ...btnStyle(TM.swim, true), width: "100%", marginBottom: 10 }}>📷 Race photos</button>
                     )}
+                    {/* A parent marks which athletes are theirs: starred here, picked for lap
+                        counting, and remembered by name for the next race. */}
+                    {liveRace && currentUser && !isHost && (() => {
+                      const mine = (watchedRaces[liveRace.code] && watchedRaces[liveRace.code].kids) || [];
+                      const mineSet = new Set(mine.map(normKid));
+                      const kidRows = rankedWatchAthletes.filter(a => mineSet.has(normKid(a.name)));
+                      return (
+                        <div style={{ ...rowStyle(TM.bike), marginBottom: 12 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, fontSize: 16, fontWeight: 800 }}>⭐ {mine.length ? (mine.length > 1 ? "My kids" : "My kid") : "Is your kid racing?"}</div>
+                            <button onClick={() => setKidPickerOpen(o => !o)} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>
+                              {kidPickerOpen ? "Done" : mine.length ? "Change" : "Pick them"}</button>
+                          </div>
+                          {!kidPickerOpen && kidRows.map(a => (
+                            <div key={a.name} style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: 15 }}>
+                              <span style={{ fontWeight: 700 }}>{a.name}</span>
+                              <span style={{ fontWeight: 800, color: a.dnf ? TM.live : a.finished ? TM.run : TM.ink, whiteSpace: "nowrap" }}>
+                                {a.dnf ? "DNF" : a.finished ? formatElapsed(a.finishMs) : a.started ? (a.curSeg != null ? SEGMENTS[a.curSeg] : "Racing") : "Not started"}
+                              </span>
+                            </div>
+                          ))}
+                          {!kidPickerOpen && !mine.length && <div style={{ ...TM_CAPTION, marginTop: 4 }}>Mark your athletes to follow them here, count their laps, and see their race photos later.</div>}
+                          {kidPickerOpen && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                              {asList(liveRace.athletes).filter(Boolean).map(a => {
+                                const on = mineSet.has(normKid(a.name));
+                                return (
+                                  <label key={a.name} style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 40, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>
+                                    <input type="checkbox" checked={on} onChange={e => saveMyKids(liveRace.code, e.target.checked ? [...mine, a.name] : mine.filter(n => normKid(n) !== normKid(a.name)))} />
+                                    {a.raceNumber != null ? `#${a.raceNumber} ` : ""}{a.name}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {liveRace && liveRace.status === "live" && (
                       <>
                         <button onClick={() => startSpectatorCount(liveRace)} disabled={lapGeo.busy}
