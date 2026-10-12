@@ -4351,6 +4351,31 @@ ${html}</body></html>`);
         }
         return groups[groups.length - 1] || "Open";
       }
+      // Live when the host says so, or automatically from `liveAt` (the first
+      // wave's start minus the lead time) once sign-ups are open.
+      function ttIsLive(race, now) {
+        if (!race) return false;
+        if (race.status === "live") return true;
+        return race.status === "signup" && !!race.liveAt && now >= race.liveAt;
+      }
+      function ttLiveAt(race, patch) {
+        const r = { ...race, ...patch };
+        const w0 = ttList(r.waves)[0] || {};
+        if (!r.date || !w0.time) return null;
+        const t = new Date(r.date + "T" + w0.time + ":00").getTime();
+        return isNaN(t) ? null : t - (r.liveLeadMin == null ? 30 : +r.liveLeadMin) * 60000;
+      }
+      function ttTimeLabel(t) {
+        if (!t) return "";
+        const [h, m] = String(t).split(":").map(Number);
+        return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+      }
+      // Lowest free machine number in a wave (1..count), or "" when all are taken.
+      function ttFreeMachine(race, wave, field, count, exceptId) {
+        const taken = new Set(Object.entries(race.athletes || {}).filter(([id, a]) => a && id !== exceptId && (a.wave || 0) === wave).map(([, a]) => String(a[field] || "")));
+        for (let n = 1; n <= (+count || 0); n++) if (!taken.has(String(n))) return String(n);
+        return "";
+      }
       function ttTotal(a) { return TT_SCORED.reduce((s, k) => s + (+(a.dist && a.dist[k]) || 0), 0); }
 
       // ── Bluetooth: bikes (FTMS Indoor Bike Data), treadmills (FTMS Treadmill Data), foot pods (RSC) ──
@@ -4389,7 +4414,7 @@ ${html}</body></html>`);
         d.last = { ...r, t: now }; d.seen = now;
         if (TT_BT.onChange) TT_BT.onChange();
         const race = TT_BT.race, code = TT_BT.code;
-        if (!race || !code || race.status !== "live") return;
+        if (!race || !code || !ttIsLive(race, now + (TT_BT.offset || 0))) return;
         const leg = kind === "bike" ? "bike" : "run";
         const label = String(d.label || "").trim().toLowerCase();
         if (!label) return;
@@ -4410,6 +4435,9 @@ ${html}</body></html>`);
           let acc = TT_BT.acc[key];
           const stored = +(a.dist && a.dist[leg]) || 0;
           if (!acc) acc = TT_BT.acc[key] = { base: r.total != null ? r.total - stored : null, dist: stored, t: now };
+          // A machine switched off and on starts counting from zero again: carry on from where it was.
+          if (r.total != null && acc.lastTotal != null && r.total < acc.lastTotal - 5) acc.base = r.total - acc.dist;
+          if (r.total != null) acc.lastTotal = r.total;
           if (r.total != null && acc.base != null) acc.dist = Math.max(acc.dist, r.total - acc.base);
           else if (r.kmh != null) acc.dist += (r.kmh / 3.6) * Math.min(5, (now - acc.t) / 1000);
           acc.t = now;
@@ -4457,6 +4485,8 @@ ${html}</body></html>`);
         const [newAth, setNewAth] = React.useState({ name: "", gender: "", age: "", wave: 0 });
         const [entry, setEntry] = React.useState({});
         const [board, setBoard] = React.useState("overall");
+        const [station, setStation] = React.useState(null);   // null | "bike" | "tread": big screen for the laptop by the machines
+        const [signup, setSignup] = React.useState(null);
         const ref = React.useMemo(() => rtdb.ref("timedRaces/" + code), [code]);
         const isHost = !viewer && race && currentUser && race.hostUid === currentUser.uid;
         React.useEffect(() => {
@@ -4479,6 +4509,12 @@ ${html}</body></html>`);
         const set = (path, val) => ref.child(path).set(val).catch(e => setMsg("Couldn't save: " + e.message));
         const upd = obj => ref.update(obj).catch(e => setMsg("Couldn't save: " + e.message));
         const mine = athletes.filter(a => currentUser && a.uid === currentUser.uid);
+        const live = ttIsLive(race, now);
+        const cap = Math.min(...[race.bikes, race.treads].map(n => +n || Infinity));
+        const waveCount = w => athletes.filter(a => (a.wave || 0) === w).length;
+        const waveFull = w => isFinite(cap) && waveCount(w) >= cap;
+        const waveLabel = w => `Wave ${w + 1}${waves[w] && waves[w].time ? " · " + ttTimeLabel(waves[w].time) : ""}`;
+        const setSched = patch => upd({ ...Object.fromEntries(Object.entries(patch)), liveAt: ttLiveAt(race, patch) });
         const inputS = { minHeight: 44, fontSize: 16, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF" };
         const parseDist = (txt, unit) => {
           const v = parseFloat(String(txt).replace(/[^0-9.]/g, "")); if (isNaN(v) || v < 0) return null;
@@ -4535,7 +4571,8 @@ ${html}</body></html>`);
           const legsToEnter = TT_SCORED.filter(k => k === "swim" || !(k === "bike" ? a.bike : a.tread));
           return (
             <div key={a.id} style={{ ...rowStyle(TM.swim), marginBottom: 12 }}>
-              <div style={{ fontSize: 18, fontWeight: 900 }}>{a.name} · Wave {(a.wave || 0) + 1}</div>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>{a.name} · {waveLabel(a.wave || 0)}</div>
+              {(a.bike || a.tread) && <div style={{ fontSize: 16, fontWeight: 800 }}>{a.bike ? `🚲 Bike ${a.bike}` : ""}{a.bike && a.tread ? "   " : ""}{a.tread ? `🏃 Treadmill ${a.tread}` : ""}</div>}
               <div style={{ fontSize: 28, fontWeight: 900, color: s.started && !s.done ? TT_COL[s.leg] : TM.ink }}>{stateText(a.wave || 0)}</div>
               {legsToEnter.map(k => {
                 const win = ttLegWindow(race, a.wave || 0, k);
@@ -4543,7 +4580,7 @@ ${html}</body></html>`);
                 return (
                   <div key={k} style={{ marginTop: 10 }}>
                     <div style={{ fontWeight: 800 }}>{TT_LEG[k]} distance {k === "swim" ? "(from your watch)" : "(from the machine)"}: {ttDist(a.dist && a.dist[k], unitFor(k))}</div>
-                    {open && race.status === "live" && (
+                    {open && live && (
                       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                         <input inputMode="decimal" value={entry[a.id + k] ?? ""} onChange={e => setEntry(x => ({ ...x, [a.id + k]: e.target.value }))}
                           placeholder={`e.g. ${k === "swim" ? (unitFor(k) === "yd" ? "450" : "400") : "3.1"} ${unitFor(k)}`} style={{ ...inputS, flex: 1, minWidth: 0 }} />
@@ -4565,6 +4602,42 @@ ${html}</body></html>`);
               <h1 style={{ ...TM_DISPLAY, marginTop: 10, fontSize: 34 }}>{race.name || "Timed Tri"}</h1>
               <div style={TM_CAPTION}>Timed Tri · code {code} · {legs.map(l => `${TT_LEG[l.k]} ${l.min}′`).join(" → ")}</div>
               {currentUser && mine.map(myCard)}
+              {currentUser && mine.length === 0 && (race.status === "signup" || race.status === "live") && (() => {
+                const f = signup || { name: [userProfile && userProfile.firstName, userProfile && userProfile.lastName].filter(Boolean).join(" "), gender: (userProfile && userProfile.gender) || "",
+                  age: userProfile && userProfile.birthday ? String(Math.floor((Date.now() - new Date(userProfile.birthday + "T12:00:00")) / 31557600000)) : "", wave: null };
+                const ok = f.name.trim() && f.gender && f.age !== "" && f.wave != null && !waveFull(f.wave);
+                return (
+                  <div style={{ ...rowStyle(TM.run), marginTop: 12 }}>
+                    <div style={{ fontWeight: 900, fontSize: 18 }}>Sign up</div>
+                    {race.date && <div style={TM_CAPTION}>{new Date(race.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</div>}
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                      <input value={f.name} onChange={e => setSignup({ ...f, name: e.target.value })} placeholder="Your name" style={{ ...inputS, flex: "2 1 160px" }} />
+                      <select value={f.gender} onChange={e => setSignup({ ...f, gender: e.target.value })} style={{ ...inputS, flex: "1 1 100px" }}><option value="">Gender…</option><option>Male</option><option>Female</option><option>Non-binary</option></select>
+                      <input value={f.age} onChange={e => setSignup({ ...f, age: e.target.value.replace(/\D/g, "") })} placeholder="Age" inputMode="numeric" style={{ ...inputS, width: 70 }} />
+                    </div>
+                    <div style={{ ...TM_LABEL, marginTop: 10 }}>Pick your start time</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {waves.map((wv, w) => {
+                        const full = waveFull(w), on = f.wave === w, left = isFinite(cap) ? cap - waveCount(w) : null;
+                        return (
+                          <button key={w} disabled={full} onClick={() => setSignup({ ...f, wave: w })} aria-pressed={on}
+                            style={{ ...btnStyle(TM.ink, !on), justifyContent: "space-between", minHeight: 48, opacity: full ? 0.45 : 1 }}>
+                            <span>{waveLabel(w)}</span><span style={{ fontSize: 14 }}>{full ? "Full" : left != null ? `${left} spot${left === 1 ? "" : "s"} left` : ""}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button disabled={!ok} onClick={async () => {
+                      const id = "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+                      const a = { name: f.name.trim(), gender: f.gender, age: +f.age, wave: f.wave, uid: currentUser.uid, selfSignup: true, at: Date.now(),
+                        bike: ttFreeMachine(race, f.wave, "bike", race.bikes), tread: ttFreeMachine(race, f.wave, "tread", race.treads) };
+                      try { await ref.child("athletes/" + id).set(a); setSignup(null); }
+                      catch (e) { setMsg("Couldn't sign you up: " + e.message); }
+                    }} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 10, opacity: ok ? 1 : 0.5 }}>Sign up →</button>
+                    {msg && <div style={{ fontWeight: 700, marginTop: 6 }}>{msg}</div>}
+                  </div>
+                );
+              })()}
               {currentUser && mine.length === 0 && athletes.some(a => !a.uid) && (
                 <div style={{ ...rowStyle(), marginTop: 12 }}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>Racing? Tap your name to enter your swim distance during T1.</div>
@@ -4605,6 +4678,24 @@ ${html}</body></html>`);
             <label style={TM_LABEL}>Race name</label>
             <input defaultValue={race.name} onBlur={e => set("name", e.target.value.trim())} style={{ ...inputS, width: "100%" }} />
             <div style={{ ...TM_CAPTION, margin: "6px 0 14px" }}>Code <b>{code}</b> — athletes and spectators open it with this code (timeathon.com/?timed={code}).</div>
+            <div style={{ ...rowStyle(), marginBottom: 12 }}>
+              <div style={TM_LABEL}>Date & start times</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <input type="date" defaultValue={race.date || ""} onChange={e => setSched({ date: e.target.value })} style={inputS} />
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>Live
+                  <input type="number" min={0} defaultValue={race.liveLeadMin == null ? 30 : race.liveLeadMin} onChange={e => setSched({ liveLeadMin: Math.max(0, +e.target.value || 0) })} style={{ ...inputS, width: 70 }} />
+                  min before the first wave</label>
+              </div>
+              <div style={{ ...TM_CAPTION, marginTop: 6 }}>{race.liveAt ? `Goes live ${new Date(race.liveAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} (once sign-ups are open).` : "Set the date and Wave 1's start time below to go live by itself."}</div>
+            </div>
+            <div style={{ ...rowStyle(), marginBottom: 12 }}>
+              <div style={TM_LABEL}>Machines per wave</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>🚲 Bikes <input type="number" min={0} defaultValue={race.bikes || ""} onChange={e => set("bikes", Math.max(0, +e.target.value || 0))} style={{ ...inputS, width: 70 }} /></label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>🏃 Treadmills <input type="number" min={0} defaultValue={race.treads || ""} onChange={e => set("treads", Math.max(0, +e.target.value || 0))} style={{ ...inputS, width: 70 }} /></label>
+              </div>
+              <div style={TM_CAPTION}>Each wave holds this many athletes. Everyone gets the next free bike and treadmill number in their wave when they sign up or you add them.</div>
+            </div>
             {legEditor}
             <div style={{ ...rowStyle(), marginTop: 12 }}>
               <div style={TM_LABEL}>Age groups</div>
@@ -4617,6 +4708,13 @@ ${html}</body></html>`);
                 <button onClick={() => set("waves", [...waves.map((x, i) => ({ ...x, n: i + 1 })), { n: waves.length + 1 }])} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>+ Wave</button>
                 {waves.length > 1 && !waves[waves.length - 1].startAt && <button onClick={() => set("waves", waves.slice(0, -1))} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>− Wave</button>}
               </div>
+              {waves.map((wv, w) => (
+                <div key={w} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  <span style={{ width: 70, fontWeight: 800 }}>Wave {w + 1}</span>
+                  <input type="time" defaultValue={wv.time || ""} onChange={e => { const t = e.target.value; const nw = waves.map((x, i) => i === w ? { ...x, n: i + 1, time: t } : { ...x, n: i + 1 }); setSched({ waves: nw }); }} style={inputS} />
+                  <span style={TM_CAPTION}>{waveCount(w)}{isFinite(cap) ? ` / ${cap}` : ""} athletes</span>
+                </div>
+              ))}
             </div>
             <div style={{ ...rowStyle(), marginTop: 12 }}>
               <div style={TM_LABEL}>Athletes ({athletes.length})</div>
@@ -4624,32 +4722,36 @@ ${html}</body></html>`);
                 <input value={newAth.name} onChange={e => setNewAth(x => ({ ...x, name: e.target.value }))} placeholder="Name" style={{ ...inputS, flex: "2 1 140px" }} />
                 <select value={newAth.gender} onChange={e => setNewAth(x => ({ ...x, gender: e.target.value }))} style={{ ...inputS, flex: "1 1 90px", color: newAth.gender ? TM.ink : TM.inkMuted }}><option value="">Gender…</option><option>Male</option><option>Female</option><option>Non-binary</option></select>
                 <input value={newAth.age} onChange={e => setNewAth(x => ({ ...x, age: e.target.value.replace(/\D/g, "") }))} placeholder="Age" inputMode="numeric" style={{ ...inputS, width: 70 }} />
-                <select value={newAth.wave} onChange={e => setNewAth(x => ({ ...x, wave: +e.target.value }))} style={{ ...inputS, width: 100 }}>{waves.map((_, w) => <option key={w} value={w}>Wave {w + 1}</option>)}</select>
-                <button disabled={!newAth.name.trim() || !newAth.gender} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: athletes.length + 1 }); setNewAth(x => ({ ...x, name: "", age: "", gender: "" })); }}
+                <select value={newAth.wave} onChange={e => setNewAth(x => ({ ...x, wave: +e.target.value }))} style={{ ...inputS, width: 100 }}>{waves.map((_, w) => <option key={w} value={w} disabled={waveFull(w)}>{waveLabel(w)}{waveFull(w) ? " (full)" : ""}</option>)}</select>
+                <button disabled={!newAth.name.trim() || !newAth.gender} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: athletes.length + 1,
+                  bike: ttFreeMachine(race, newAth.wave, "bike", race.bikes), tread: ttFreeMachine(race, newAth.wave, "tread", race.treads) }); setNewAth(x => ({ ...x, name: "", age: "", gender: "" })); }}
                   style={{ ...btnStyle(TM.ink), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Add</button>
               </div>
               <div style={{ marginTop: 10 }}>
                 {athletes.map(a => (
                   <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", borderTop: `2px solid ${TM.line}`, flexWrap: "wrap" }}>
                     <span style={{ flex: "1 1 120px", fontWeight: 800 }}>{a.name}<span style={TM_CAPTION}> · {a.gender} {a.age}{a.uid ? " · ✓ claimed" : ""}</span></span>
-                    <select value={a.wave || 0} onChange={e => set(`athletes/${a.id}/wave`, +e.target.value)} style={{ ...inputS, minHeight: 36, width: 112, padding: "0 4px" }}>{waves.map((_, w) => <option key={w} value={w}>Wave {w + 1}</option>)}</select>
-                    <input defaultValue={a.bike || ""} onBlur={e => set(`athletes/${a.id}/bike`, e.target.value.trim())} placeholder="Bike #" style={{ ...inputS, minHeight: 36, width: 70 }} />
-                    <input defaultValue={a.tread || ""} onBlur={e => set(`athletes/${a.id}/tread`, e.target.value.trim())} placeholder="Tread #" style={{ ...inputS, minHeight: 36, width: 76 }} />
+                    <select value={a.wave || 0} onChange={e => { const w = +e.target.value; upd({ [`athletes/${a.id}/wave`]: w, [`athletes/${a.id}/bike`]: ttFreeMachine(race, w, "bike", race.bikes, a.id) || a.bike || "", [`athletes/${a.id}/tread`]: ttFreeMachine(race, w, "tread", race.treads, a.id) || a.tread || "" }); }} style={{ ...inputS, minHeight: 36, width: 150, padding: "0 4px" }}>{waves.map((_, w) => <option key={w} value={w}>{waveLabel(w)}</option>)}</select>
+                    <input key={"b" + a.wave + a.bike} defaultValue={a.bike || ""} onBlur={e => set(`athletes/${a.id}/bike`, e.target.value.trim())} placeholder="Bike #" style={{ ...inputS, minHeight: 36, width: 70 }} />
+                    <input key={"t" + a.wave + a.tread} defaultValue={a.tread || ""} onBlur={e => set(`athletes/${a.id}/tread`, e.target.value.trim())} placeholder="Tread #" style={{ ...inputS, minHeight: 36, width: 76 }} />
                     <button onClick={() => { if (confirm(`Remove ${a.name}?`)) set(`athletes/${a.id}`, null); }} style={{ background: "none", border: "none", color: TM.live, fontWeight: 900, fontSize: 18, cursor: "pointer" }}>×</button>
                   </div>
                 ))}
               </div>
               <div style={TM_CAPTION}>Bike # and Tread # match the numbers you give the machines on the Devices tab. Leave blank if that athlete's distance will be typed in.</div>
             </div>
-            <button onClick={() => set("status", race.status === "live" ? "setup" : "live")}
-              style={{ ...btnStyle(race.status === "live" ? TM.live : TM.ink), width: "100%", marginTop: 16 }}>
-              {race.status === "live" ? "Take race offline" : "Open race (go live)"}</button>
-            <div style={TM_CAPTION}>Going live lets athletes claim their names and spectators follow. Waves still start only when you tap Start on the Race tab.</div>
+            <div style={{ ...TM_LABEL, marginTop: 16 }}>Race status</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["setup", "Hidden"], ["signup", "Sign-ups open"], ["live", "Live now"]].map(([k, l]) => (
+                <button key={k} onClick={() => set("status", k)} aria-pressed={race.status === k}
+                  style={{ ...btnStyle(k === "live" ? TM.live : TM.ink, race.status !== k), minHeight: 46, padding: "0 8px", fontSize: 15, flex: 1 }}>{l}</button>))}
+            </div>
+            <div style={TM_CAPTION}>Sign-ups open: athletes sign up and pick a start time; the race goes live by itself {race.liveLeadMin == null ? 30 : race.liveLeadMin} minutes before Wave 1. Live now: live straight away. Waves still start when you tap Start on the Race tab.</div>
           </div>
         );
         const raceTab = (
           <div>
-            {race.status !== "live" && <div style={{ ...rowStyle(TM.warn), marginBottom: 10 }}>The race isn't live yet — open it on the Setup tab first.</div>}
+            {!live && <div style={{ ...rowStyle(TM.warn), marginBottom: 10 }}>The race isn't live yet{race.liveAt && race.status === "signup" ? ` — it goes live ${new Date(race.liveAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : " — set it to Live now on the Setup tab"}.</div>}
             {waves.map((wv, w) => {
               const s = ttWaveState(race, w, now);
               const list = athletes.filter(a => (a.wave || 0) === w);
@@ -4657,13 +4759,13 @@ ${html}</body></html>`);
                 <div key={w} style={{ ...rowStyle(s.started && !s.done ? TT_COL[s.leg] : TM.line), marginBottom: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 900, fontSize: 18 }}>Wave {w + 1} · {list.length} athletes</div>
+                      <div style={{ fontWeight: 900, fontSize: 18 }}>{waveLabel(w)} · {list.length} athletes</div>
                       <div style={{ fontSize: 26, fontWeight: 900, color: s.started && !s.done ? TT_COL[s.leg] : TM.ink }}>{stateText(w)}</div>
                       {s.started && !s.done && s.idx + 1 < legs.length && <div style={TM_CAPTION}>Then {TT_LEG[legs[s.idx + 1].k]}</div>}
                     </div>
                     {!s.started
-                      ? <button disabled={race.status !== "live"} onClick={() => set(`waves/${w}/startAt`, firebase.database.ServerValue.TIMESTAMP)}
-                          style={{ ...btnStyle(TM.ink), minHeight: 56, padding: "0 20px", opacity: race.status === "live" ? 1 : 0.5 }}>▶ Start</button>
+                      ? <button disabled={!live} onClick={() => set(`waves/${w}/startAt`, firebase.database.ServerValue.TIMESTAMP)}
+                          style={{ ...btnStyle(TM.ink), minHeight: 56, padding: "0 20px", opacity: live ? 1 : 0.5 }}>▶ Start</button>
                       : <button onClick={() => { if (confirm(`Reset wave ${w + 1}? Its clock and distances clear.`)) { const o = { [`waves/${w}/startAt`]: null }; list.forEach(a => { o[`athletes/${a.id}/dist`] = null; o[`athletes/${a.id}/live`] = null; o[`athletes/${a.id}/manual`] = null; Object.keys(TT_BT.acc).filter(k => k.startsWith(a.id + "|")).forEach(k => delete TT_BT.acc[k]); }); upd(o); } }}
                           style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 14 }}>Reset</button>}
                   </div>
@@ -4699,6 +4801,53 @@ ${html}</body></html>`);
           </div>
         );
         const devList = [...TT_BT.devices.entries()];
+        // Which wave is (or is next) on the machines: in that leg now, else the next one whose leg hasn't run.
+        const stationWave = kind => {
+          const leg = kind === "bike" ? "bike" : "run";
+          let next = null;
+          for (let w = 0; w < waves.length; w++) {
+            const win = ttLegWindow(race, w, leg);
+            if (win && now >= win[0] && now <= win[1]) return { w, on: true, ends: win[1] };
+            if ((!win || now < win[0]) && next == null) next = { w, on: false, starts: win ? win[0] : null };
+          }
+          return next;
+        };
+        const stationScreen = kind => {
+          const field = kind === "bike" ? "bike" : "tread", leg = kind === "bike" ? "bike" : "run";
+          const sw = stationWave(kind);
+          const count = +(kind === "bike" ? race.bikes : race.treads) || Math.max(0, ...athletes.map(a => +a[field] || 0));
+          const devByLabel = {}; devList.forEach(([id, d]) => { if (d.kind === kind && d.label) devByLabel[String(d.label).trim()] = d; });
+          return (
+            <div style={{ position: "fixed", inset: 0, zIndex: 4000, background: TM.ink, color: "#FFFFFF", overflowY: "auto", padding: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 34, fontWeight: 900 }}>{kind === "bike" ? "🚲 BIKES" : "🏃 TREADMILLS"} · {sw ? waveLabel(sw.w) : "All waves done"}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: sw && sw.on ? "#2FC27A" : "#B8B3A9" }}>
+                    {!sw ? "" : sw.on ? `${TT_LEG[leg]} · ${ttClock(sw.ends - now)} left` : sw.starts ? `Up next — starts in ${ttClock(sw.starts - now)}` : "Up next — waiting for the wave to start"}</div>
+                </div>
+                <button onClick={() => setStation(null)} style={{ ...btnStyle("#FFFFFF", true), color: "#FFFFFF", borderColor: "#FFFFFF", minHeight: 48 }}>Close</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, marginTop: 14 }}>
+                {Array.from({ length: count }, (_, i) => String(i + 1)).map(n => {
+                  const a = sw && athletes.find(x => (x.wave || 0) === sw.w && String(x[field] || "") === n);
+                  const d = devByLabel[n]; const fresh = d && d.seen && Date.now() - d.seen < 5000; const l = (d && d.last) || {};
+                  return (
+                    <div key={n} style={{ background: "#1A1D22", border: `3px solid ${fresh ? "#2FC27A" : d && d.connected ? "#5B6068" : "#B3001B"}`, borderRadius: 10, padding: 12 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                        <span style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>{n}</span>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: fresh ? "#2FC27A" : "#FF6B6B" }}>{!d ? "not connected" : !d.connected ? "reconnecting…" : fresh ? "● reading" : "connected · idle"}</span>
+                      </div>
+                      <div style={{ fontSize: 22, fontWeight: 900, marginTop: 6, minHeight: 28 }}>{a ? a.name : "—"}</div>
+                      {a && <div style={{ fontSize: 30, fontWeight: 900, color: "#2FC27A" }}>{ttDist(a.dist && a.dist[leg], units.dist)}</div>}
+                      {fresh && <div style={{ fontSize: 14, color: "#B8B3A9" }}>{kind === "bike" ? `${l.w ?? "–"} W · ${l.rpm ?? "–"} rpm${l.res != null ? " · R" + l.res : ""}` : `${l.kmh != null ? (units.dist === "km" ? l.kmh.toFixed(1) + " km/h" : (l.kmh / 1.609).toFixed(1) + " mph") : ""}`}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 14, color: "#B8B3A9", marginTop: 14 }}>Leave this laptop here with this screen open. Each athlete's distance only counts during their own {TT_LEG[leg].toLowerCase()} leg, from whatever the machine read when it began — no need to reset the machines between waves.</div>
+            </div>
+          );
+        };
         const devicesTab = (
           <div>
             {!navigator.bluetooth && <div style={{ ...rowStyle(TM.live), marginBottom: 10 }}>This browser can't use Bluetooth. Use Chrome on a laptop (Windows or Mac) or an Android phone.</div>}
@@ -4733,14 +4882,19 @@ ${html}</body></html>`);
                 );
               })}
             </div>
-            <div style={TM_CAPTION}>Keep this tab open on the laptop during the race — it's the one sending bike and treadmill distances.</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <button onClick={() => setStation("bike")} style={{ ...btnStyle(TM.bike), flex: 1 }}>🚲 Bike station screen</button>
+              <button onClick={() => setStation("tread")} style={{ ...btnStyle(TM.ink), flex: 1 }}>🏃 Treadmill station screen</button>
+            </div>
+            <div style={TM_CAPTION}>Use one laptop by the bikes and one by the treadmills: sign in as host, open this race, connect that area's machines, number them, then open its station screen and leave it. They switch to each wave by themselves.</div>
+            {station && stationScreen(station)}
           </div>
         );
         return (
           <div style={{ padding: "0 16px 60px" }}>
             <button onClick={onBack} style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>← My races</button>
             <h1 style={{ ...TM_DISPLAY, marginTop: 10, fontSize: 34 }}>{race.name || "Timed Tri"}</h1>
-            <div style={TM_CAPTION}>Timed Tri · code {code} · {race.status === "live" ? "● live" : "not live"}</div>
+            <div style={TM_CAPTION}>Timed Tri · code {code} · {live ? "● live" : race.status === "signup" ? "sign-ups open" : "hidden"}{race.date ? ` · ${new Date(race.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</div>
             <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
               {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ ...btnStyle(TM.ink, tab !== k), minHeight: 42, padding: "0 6px", fontSize: 14, flex: 1 }}>{l}</button>)}
             </div>

@@ -200,12 +200,14 @@
         ".write": "auth != null && (!data.exists() ? (newData.child('hostUid').val() === auth.uid && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || auth.uid === 'zaZlSgcfROeSKUwgFz2Qwsu0WVg2' || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))) : data.child('hostUid').val() === auth.uid)",
         "athletes": {
           "$id": {
+            ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid && (root.child('timedRaces').child($code).child('status').val() === 'live' || root.child('timedRaces').child($code).child('status').val() === 'signup')",
+            ".validate": "!newData.exists() || newData.child('name').isString()",
             "uid": {
-              ".write": "auth != null && root.child('timedRaces').child($code).child('status').val() === 'live' && !data.exists() && newData.val() === auth.uid"
+              ".write": "auth != null && (root.child('timedRaces').child($code).child('status').val() === 'live' || root.child('timedRaces').child($code).child('status').val() === 'signup') && !data.exists() && newData.val() === auth.uid"
             },
             "dist": {
               "$leg": {
-                ".write": "auth != null && root.child('timedRaces').child($code).child('status').val() === 'live' && root.child('timedRaces').child($code).child('athletes').child($id).child('uid').val() === auth.uid",
+                ".write": "auth != null && (root.child('timedRaces').child($code).child('status').val() === 'live' || (root.child('timedRaces').child($code).child('status').val() === 'signup' && root.child('timedRaces').child($code).child('liveAt').isNumber() && now >= root.child('timedRaces').child($code).child('liveAt').val())) && root.child('timedRaces').child($code).child('athletes').child($id).child('uid').val() === auth.uid",
                 ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 200000"
               }
             }
