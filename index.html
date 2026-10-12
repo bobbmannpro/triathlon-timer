@@ -4345,16 +4345,105 @@ ${html}</body></html>`);
         for (const l of legs) { const end = t + (+l.min || 0) * 60000; if (l.k === k) return [t, end]; t = end; }
         return null;
       }
+      // ── Age groups, shared by every race kind ──
+      // A group is a label: "9-10", "8 and under", "60 and over".
+      const AGE_GROUP_PRESETS = [
+        ["Kids", ["8 and under", "9-10", "11-12", "13-14", "15 and over"]],
+        ["Adults (10 yr)", ["19 and under", "20-29", "30-39", "40-49", "50-59", "60 and over"]],
+        ["Adults (5 yr)", ["19 and under", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54", "55-59", "60 and over"]],
+        ["Full race day", ["10 and under", "11-14", "15-19", "20-29", "30-39", "40-49", "50 and over"]],
+        ["9 & under / 10 & up", ["9 and under", "10 and over"]],
+      ];
+      function agRange(label) {
+        const s = (label || "").toLowerCase().replace(/\s+/g, " ").trim();
+        let m = s.match(/^(\d+)\s*[-–]\s*(\d+)$/); if (m) return { min: +m[1], max: +m[2] };
+        m = s.match(/^(\d+)\s*(?:\+|and\s+(?:over|up)|&\s+(?:over|up)|over|up)/); if (m) return { min: +m[1], max: 999 };
+        m = s.match(/^(\d+)\s*(?:and\s+under|&\s+under|and\s+below|below)/); if (m) return { min: 0, max: +m[1] };
+        m = s.match(/(?:under|below)\s*(\d+)/); if (m) return { min: 0, max: +m[1] - 1 };
+        return null;
+      }
+      function agList(v) {
+        if (Array.isArray(v)) return v.filter(Boolean);
+        if (v && typeof v === "object") return Object.values(v).filter(Boolean);
+        return String(v || "").split(",").map(x => x.trim()).filter(Boolean);   // older Timed Tris kept "a, b, c"
+      }
+      function AgeGroupEditor({ groups, onChange, uid, colour = TM.swim }) {
+        const [saved, setSaved] = React.useState({});
+        React.useEffect(() => {
+          if (!uid) return;
+          const r = rtdb.ref("users/" + uid + "/ageGroupSets");
+          const fn = sn => setSaved(sn.val() || {});
+          r.on("value", fn, () => {});
+          return () => r.off("value", fn);
+        }, [uid]);
+        const struct = label => {
+          const r = agRange(label);
+          if (!r) return { type: "range", a: 0, b: 10 };
+          if (r.min === 0) return { type: "under", a: r.max, b: 0 };
+          if (r.max === 999) return { type: "over", a: r.min, b: 0 };
+          return { type: "range", a: r.min, b: r.max };
+        };
+        const label = (type, a, b) => type === "under" ? `${a} and under` : type === "over" ? `${a} and over` : `${a}-${b}`;
+        const same = set => JSON.stringify(set) === JSON.stringify(groups);
+        const savedSets = Object.entries(saved).map(([id, v]) => [id, v && v.name, agList(v && v.groups)]).filter(([, n, g]) => n && g.length);
+        const num = { minHeight: 40, fontSize: 16, padding: "0 6px", border: `2px solid ${TM.line}`, borderRadius: 6, width: 60, textAlign: "center", background: "#FFFFFF", color: TM.ink };
+        const chip = on => ({ ...btnStyle(TM.ink, !on), padding: "0 12px", minHeight: 40, fontSize: 14 });
+        return (
+          <div>
+            <div style={{ ...TM_LABEL, marginBottom: 6 }}>Start from a set</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {AGE_GROUP_PRESETS.map(([n, set]) => <button key={n} onClick={() => onChange(set)} style={chip(same(set))}>{n}</button>)}
+            </div>
+            {savedSets.length > 0 && (<>
+              <div style={{ ...TM_LABEL, margin: "12px 0 6px" }}>Your sets</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {savedSets.map(([id, n, set]) => (
+                  <span key={id} style={{ display: "inline-flex", alignItems: "stretch" }}>
+                    <button onClick={() => onChange(set)} style={{ ...chip(same(set)), borderTopRightRadius: 0, borderBottomRightRadius: 0 }}>{n}</button>
+                    <button aria-label={`Delete set ${n}`} onClick={() => { if (confirm(`Delete your "${n}" age-group set?`)) rtdb.ref(`users/${uid}/ageGroupSets/${id}`).remove().catch(() => {}); }}
+                      style={{ ...chip(false), borderLeft: "none", borderTopLeftRadius: 0, borderBottomLeftRadius: 0, padding: "0 10px" }}>×</button>
+                  </span>
+                ))}
+              </div>
+            </>)}
+            <div style={{ ...TM_LABEL, margin: "14px 0 6px" }}>Groups ({groups.length})</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {groups.map((g, i) => {
+                const st = struct(g);
+                const put = (type, a, b) => { const nl = label(type, a, b); onChange(groups.map((x, j) => j === i ? nl : x), [g, nl]); };
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "6px 10px" }}>
+                    <select value={st.type} onChange={e => put(e.target.value, st.a, st.b || st.a + 5)}
+                      style={{ minHeight: 40, fontSize: 15, border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF", color: colour, fontWeight: 700 }}>
+                      <option value="range">Age range</option><option value="under">And under</option><option value="over">And over</option>
+                    </select>
+                    <NumInput type="number" value={st.a} min={0} onChange={e => put(st.type, Math.max(0, +e.target.value || 0), st.b)} style={num} />
+                    {st.type === "range"
+                      ? <><span>–</span><NumInput type="number" value={st.b} min={0} onChange={e => put(st.type, st.a, Math.max(st.a + 1, +e.target.value || 0))} style={num} /></>
+                      : <span style={{ fontSize: 15 }}>{st.type === "under" ? "and under" : "and over"}</span>}
+                    <span style={{ flex: 1 }} />
+                    {groups.length > 1 && <button aria-label={`Remove ${g}`} onClick={() => onChange(groups.filter((_, j) => j !== i))}
+                      style={{ background: "none", border: "none", fontSize: 22, color: TM.live, cursor: "pointer", padding: "0 4px" }}>×</button>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <button onClick={() => { const last = agRange(groups[groups.length - 1]); const a = last && last.max < 999 ? last.max + 1 : 0; onChange([...groups, `${a}-${a + 4}`]); }}
+                style={{ ...btnStyle(TM.run, true), minHeight: 44 }}>+ Group</button>
+              {uid && <button onClick={() => {
+                const n = (prompt("Name this set of age groups (it'll be ready in every race you set up):", "") || "").trim();
+                if (n) rtdb.ref(`users/${uid}/ageGroupSets`).push({ name: n.slice(0, 40), groups, at: Date.now() }).catch(e => alert("Couldn't save: " + e.message));
+              }} style={{ ...btnStyle(TM.ink, true), minHeight: 44 }}>☆ Save as my set</button>}
+            </div>
+          </div>
+        );
+      }
       function ttAgeGroup(race, age) {
-        const groups = String(race.ageGroups || "").split(",").map(s => s.trim()).filter(Boolean);
+        const groups = agList(race.ageGroups);
         if (age == null || age === "") return groups[0] || "Open";
-        for (const g of groups) {
-          let m;
-          if ((m = g.match(/^(\d+)\s*-\s*(\d+)/))) { if (age >= +m[1] && age <= +m[2]) return g; }
-          else if ((m = g.match(/^(\d+)\s*\+/)) || (m = g.match(/^(\d+)\s*(and|&)\s*(over|up)/i))) { if (age >= +m[1]) return g; }
-          else if ((m = g.match(/(under|&\s*under|and\s*under)\s*(\d+)?/i))) { const n = +(g.match(/\d+/) || [0])[0]; if (/^under/i.test(g) ? age < n : age <= n) return g; }
-        }
-        return groups[groups.length - 1] || "Open";
+        const hit = groups.find(g => { const r = agRange(g); return r && age >= r.min && age <= r.max; });
+        return hit || groups[groups.length - 1] || "Open";
       }
       // Live when the host says so, or automatically from `liveAt` (the first
       // wave's start minus the lead time) once sign-ups are open.
@@ -4705,7 +4794,16 @@ ${html}</body></html>`);
         }
 
         // ── HOST ──
-        const tabs = [["setup", "Setup"], ["race", "Race"], ["devices", "Devices"], ["standings", "Standings"]];
+        const tabs = [["setup", "Setup"], ["ages", "Ages"], ["race", "Race"], ["devices", "Devices"], ["standings", "Standings"]];
+        const ageGroupsNow = agList(race.ageGroups);
+        const agesTab = (
+          <div>
+            <div style={TM_CAPTION}>Standings split by gender and these age groups. Athletes land in their group by the age they give.</div>
+            <div style={{ marginTop: 10 }}>
+              <AgeGroupEditor groups={ageGroupsNow.length ? ageGroupsNow : AGE_GROUP_PRESETS[1][1]} uid={currentUser && currentUser.uid} onChange={g => set("ageGroups", g)} />
+            </div>
+          </div>
+        );
         const legEditor = (
           <div style={rowStyle()}>
             <div style={TM_LABEL}>Legs (minutes)</div>
@@ -4749,10 +4847,12 @@ ${html}</body></html>`);
               <div style={TM_CAPTION}>Each wave holds this many athletes. Everyone gets the next free bike and treadmill number in their wave when they sign up or you add them.</div>
             </div>
             {legEditor}
-            <div style={{ ...rowStyle(), marginTop: 12 }}>
-              <div style={TM_LABEL}>Age groups</div>
-              <input defaultValue={race.ageGroups || "Under 20, 20-29, 30-39, 40-49, 50-59, 60+"} onBlur={e => set("ageGroups", e.target.value)} style={{ ...inputS, width: "100%" }} />
-              <div style={TM_CAPTION}>Comma separated, e.g. "Under 20, 20-29, 30-39, 40+". Standings split by gender and age group.</div>
+            <div style={{ ...rowStyle(), marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={TM_LABEL}>Age groups</div>
+                <div style={{ fontSize: 15 }}>{ageGroupsNow.join(" · ") || "Not set"}</div>
+              </div>
+              <button onClick={() => setTab("ages")} style={{ ...btnStyle(TM.ink, true), minHeight: 44 }}>Edit</button>
             </div>
             <div style={{ ...rowStyle(), marginTop: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -4961,6 +5061,7 @@ ${html}</body></html>`);
               {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ ...btnStyle(TM.ink, tab !== k), minHeight: 42, padding: "0 6px", fontSize: 14, flex: 1 }}>{l}</button>)}
             </div>
             {tab === "setup" && setupTab}
+            {tab === "ages" && agesTab}
             {tab === "race" && raceTab}
             {tab === "devices" && devicesTab}
             {tab === "standings" && standings}
@@ -12819,7 +12920,7 @@ Start a new race anyway?`)) return;
           }
           if (kind === "timed") {
             const data = { hostUid: currentUser.uid, name: nm || "Timed Tri", status: "setup", createdAt: Date.now(),
-              legs: TT_DEFAULT_LEGS, units: { swim: "yd", dist: "mi" }, ageGroups: "Under 20, 20-29, 30-39, 40-49, 50-59, 60+", waves: [{ n: 1 }] };
+              legs: TT_DEFAULT_LEGS, units: { swim: "yd", dist: "mi" }, ageGroups: AGE_GROUP_PRESETS[1][1], waves: [{ n: 1 }] };
             rtdb.ref("timedRaces/" + cd).set(data).then(() => {
               rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + cd).set({ name: data.name, at: Date.now() }).catch(() => {});
               setTimedCode(cd); setTimedViewer(false); setView("timed");
@@ -16607,62 +16708,9 @@ Start a new race anyway?`)) return;
                     open={setupStep === 2}
                     summary={ageGroups.length === 0 ? "No age groups — everyone scores together"
                       : `${ageGroups.length} group${ageGroups.length !== 1 ? "s" : ""}: ${ageGroups.join(", ")}`}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 10 }}>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={addAgeGroupItem} style={{ ...btnStyle("#04613F", true), padding: "3px 8px", fontSize: 14 }}>+ Group</button>
-                      </div>
-                    </div>
-                    <div style={{ ...TM_CAPTION, marginBottom: 8 }}>Start from a set, then adjust. Add birthdays in the next step and each athlete lands in their group by themselves.</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-                      {[["Kids", ["8 and under","9-10","11-12","13-14","15 and over"]],
-                        ["Adults", ["19 and under","20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"]],
-                        ["Full race day", ["10 and under","11-14","15-19","20-29","30-39","40-49","50 and over"]],
-                        ["9 & under / 10 & up", ["9 and under","10 and over"]]].map(([lbl, set]) => (
-                        <button key={lbl} onClick={() => setAgeGroupsRefit(set)}
-                          style={{ ...btnStyle("#3D434B", JSON.stringify(set) !== JSON.stringify(ageGroups)), padding: "0 12px", minHeight: 40, fontSize: 14 }}>{lbl}</button>
-                      ))}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {ageGroups.map((ag, agIdx) => {
-                        const s = parseAgeGroupStruct(ag);
-                        function update(type, a, b) {
-                          const newLabel = ageGroupLabel(type, a, b);
-                          renameAgeGroup(ag, newLabel);
-                        }
-                        return (
-                          <div key={agIdx} style={{ display: "flex", alignItems: "center", gap: 6, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "6px 10px" }}>
-                            <select value={s.type} onChange={e => update(e.target.value, s.a, s.b)}
-                              style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 8px", color: "#0B3FCC", fontSize: 14, outline: "none", cursor: "pointer" }}>
-                              <option value="range">Age Range</option>
-                              <option value="under">And Under</option>
-                              <option value="over">And Over</option>
-                            </select>
-                            {s.type === "range" ? (
-                              <>
-                                <NumInput type="number" value={s.a} min={0} max={s.b - 1}
-                                  onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
-                                  style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
-                                <span style={{ color: "#3D434B", fontSize: 14 }}>–</span>
-                                <NumInput type="number" value={s.b} min={s.a + 1} max={199}
-                                  onChange={e => update(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
-                                  style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
-                              </>
-                            ) : (
-                              <>
-                                <NumInput type="number" value={s.a} min={0} max={199}
-                                  onChange={e => update(s.type, Math.max(0, +e.target.value), s.b)}
-                                  style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
-                                <span style={{ fontSize: 14, color: "#3D434B" }}>{s.type === "under" ? "and under" : "and over"}</span>
-                              </>
-                            )}
-                            <div style={{ flex: 1, textAlign: "right", fontSize: 14, color: "#3D434B", fontStyle: "italic", whiteSpace: "nowrap" }}>{ag}</div>
-                            {ageGroups.length > 1 && (
-                              <button onClick={() => removeAgeGroupItem(ag)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 16, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>&times;</button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <div style={{ ...TM_CAPTION, marginBottom: 8 }}>Add birthdays in the next step and each athlete lands in their group by themselves. Sets you save here show up in every race you set up — Timed Tri too.</div>
+                    <AgeGroupEditor groups={ageGroups} uid={currentUser && currentUser.uid}
+                      onChange={(g, renamed) => renamed ? renameAgeGroup(renamed[0], renamed[1]) : setAgeGroupsRefit(g)} />
                   </SetupSection>
 
                   {/* ── Certificate & Event Config ── */}
