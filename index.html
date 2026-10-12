@@ -4454,7 +4454,7 @@ ${html}</body></html>`);
         const [tab, setTab] = React.useState(viewer ? "standings" : "setup");
         const [, tick] = React.useState(0);
         const [msg, setMsg] = React.useState("");
-        const [newAth, setNewAth] = React.useState({ name: "", gender: "Male", age: "", wave: 0 });
+        const [newAth, setNewAth] = React.useState({ name: "", gender: "", age: "", wave: 0 });
         const [entry, setEntry] = React.useState({});
         const [board, setBoard] = React.useState("overall");
         const ref = React.useMemo(() => rtdb.ref("timedRaces/" + code), [code]);
@@ -4622,17 +4622,17 @@ ${html}</body></html>`);
               <div style={TM_LABEL}>Athletes ({athletes.length})</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <input value={newAth.name} onChange={e => setNewAth(x => ({ ...x, name: e.target.value }))} placeholder="Name" style={{ ...inputS, flex: "2 1 140px" }} />
-                <select value={newAth.gender} onChange={e => setNewAth(x => ({ ...x, gender: e.target.value }))} style={{ ...inputS, flex: "1 1 90px" }}><option>Male</option><option>Female</option><option>Non-binary</option></select>
+                <select value={newAth.gender} onChange={e => setNewAth(x => ({ ...x, gender: e.target.value }))} style={{ ...inputS, flex: "1 1 90px", color: newAth.gender ? TM.ink : TM.inkMuted }}><option value="">Gender…</option><option>Male</option><option>Female</option><option>Non-binary</option></select>
                 <input value={newAth.age} onChange={e => setNewAth(x => ({ ...x, age: e.target.value.replace(/\D/g, "") }))} placeholder="Age" inputMode="numeric" style={{ ...inputS, width: 70 }} />
                 <select value={newAth.wave} onChange={e => setNewAth(x => ({ ...x, wave: +e.target.value }))} style={{ ...inputS, width: 100 }}>{waves.map((_, w) => <option key={w} value={w}>Wave {w + 1}</option>)}</select>
-                <button disabled={!newAth.name.trim()} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: athletes.length + 1 }); setNewAth(x => ({ ...x, name: "", age: "" })); }}
+                <button disabled={!newAth.name.trim() || !newAth.gender} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: athletes.length + 1 }); setNewAth(x => ({ ...x, name: "", age: "", gender: "" })); }}
                   style={{ ...btnStyle(TM.ink), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Add</button>
               </div>
               <div style={{ marginTop: 10 }}>
                 {athletes.map(a => (
                   <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", borderTop: `2px solid ${TM.line}`, flexWrap: "wrap" }}>
                     <span style={{ flex: "1 1 120px", fontWeight: 800 }}>{a.name}<span style={TM_CAPTION}> · {a.gender} {a.age}{a.uid ? " · ✓ claimed" : ""}</span></span>
-                    <select value={a.wave || 0} onChange={e => set(`athletes/${a.id}/wave`, +e.target.value)} style={{ ...inputS, minHeight: 36, width: 90 }}>{waves.map((_, w) => <option key={w} value={w}>Wave {w + 1}</option>)}</select>
+                    <select value={a.wave || 0} onChange={e => set(`athletes/${a.id}/wave`, +e.target.value)} style={{ ...inputS, minHeight: 36, width: 112, padding: "0 4px" }}>{waves.map((_, w) => <option key={w} value={w}>Wave {w + 1}</option>)}</select>
                     <input defaultValue={a.bike || ""} onBlur={e => set(`athletes/${a.id}/bike`, e.target.value.trim())} placeholder="Bike #" style={{ ...inputS, minHeight: 36, width: 70 }} />
                     <input defaultValue={a.tread || ""} onBlur={e => set(`athletes/${a.id}/tread`, e.target.value.trim())} placeholder="Tread #" style={{ ...inputS, minHeight: 36, width: 76 }} />
                     <button onClick={() => { if (confirm(`Remove ${a.name}?`)) set(`athletes/${a.id}`, null); }} style={{ background: "none", border: "none", color: TM.live, fontWeight: 900, fontSize: 18, cursor: "pointer" }}>×</button>
