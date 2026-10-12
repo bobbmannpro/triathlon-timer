@@ -7725,7 +7725,9 @@ ${html}</body></html>`);
         // The race itself carries the album code, so everyone connected to the race
         // (athletes, parents, spectators who watched) sees the photos without a code.
         function stampRacePhotoCode(race, code) {
-          [race && race.code, race && race.plannedCode].filter((c, i, a) => c && a.indexOf(c) === i).forEach(c => {
+          // Every code this race went by: its own, its planned one, and whatever its saved results were recorded under.
+          const resCodes = race ? resultsForRace(race).map(r => r.code || (String(r.id).match(/^race_([A-Z0-9]+)_/) || [])[1]) : [];
+          [race && race.code, race && race.plannedCode, ...(race && race.oldCodes || []), ...resCodes].filter((c, i, a) => c && typeof c === "string" && a.indexOf(c) === i).forEach(c => {
             rtdb.ref("liveRaces/" + c + "/publishedBy").once("value").then(sn => {
               if (sn.val() === (currentUser && currentUser.uid)) rtdb.ref("liveRaces/" + c + "/photoCode").set(code || null).catch(() => {});
             }).catch(() => {});
