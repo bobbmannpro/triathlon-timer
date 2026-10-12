@@ -4513,6 +4513,7 @@ ${html}</body></html>`);
         const cap = Math.min(...[race.bikes, race.treads].map(n => +n || Infinity));
         const waveCount = w => athletes.filter(a => (a.wave || 0) === w).length;
         const waveFull = w => isFinite(cap) && waveCount(w) >= cap;
+        const waveShort = w => `W${w + 1}${waves[w] && waves[w].time ? " · " + ttTimeLabel(waves[w].time) : ""}`;
         const waveLabel = w => `Wave ${w + 1}${waves[w] && waves[w].time ? " · " + ttTimeLabel(waves[w].time) : ""}`;
         const setSched = patch => upd({ ...Object.fromEntries(Object.entries(patch)), liveAt: ttLiveAt(race, patch) });
         const inputS = { minHeight: 44, fontSize: 16, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF" };
@@ -4664,7 +4665,7 @@ ${html}</body></html>`);
                 <span style={TM_CAPTION}>min</span>
               </div>
             ))}
-            <div style={{ ...TM_CAPTION, marginTop: 6 }}>Total {legs.reduce((s, l) => s + (+l.min || 0), 0)} minutes per wave.</div>
+            <div style={{ ...TM_CAPTION, marginTop: 6 }}>Total {Math.round(legs.reduce((s, l) => s + (+l.min || 0), 0) * 100) / 100} minutes per wave.</div>
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6 }}>Swim in
                 <select value={units.swim} onChange={e => set("units/swim", e.target.value)} style={inputS}><option value="yd">yards</option><option value="m">metres</option></select></label>
@@ -4722,7 +4723,7 @@ ${html}</body></html>`);
                 <input value={newAth.name} onChange={e => setNewAth(x => ({ ...x, name: e.target.value }))} placeholder="Name" style={{ ...inputS, flex: "2 1 140px" }} />
                 <select value={newAth.gender} onChange={e => setNewAth(x => ({ ...x, gender: e.target.value }))} style={{ ...inputS, flex: "1 1 90px", color: newAth.gender ? TM.ink : TM.inkMuted }}><option value="">Gender…</option><option>Male</option><option>Female</option><option>Non-binary</option></select>
                 <input value={newAth.age} onChange={e => setNewAth(x => ({ ...x, age: e.target.value.replace(/\D/g, "") }))} placeholder="Age" inputMode="numeric" style={{ ...inputS, width: 70 }} />
-                <select value={newAth.wave} onChange={e => setNewAth(x => ({ ...x, wave: +e.target.value }))} style={{ ...inputS, width: 100 }}>{waves.map((_, w) => <option key={w} value={w} disabled={waveFull(w)}>{waveLabel(w)}{waveFull(w) ? " (full)" : ""}</option>)}</select>
+                <select value={newAth.wave} onChange={e => setNewAth(x => ({ ...x, wave: +e.target.value }))} style={{ ...inputS, width: 100 }}>{waves.map((_, w) => <option key={w} value={w} disabled={waveFull(w)}>{waveShort(w)}{waveFull(w) ? " (full)" : ""}</option>)}</select>
                 <button disabled={!newAth.name.trim() || !newAth.gender} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: athletes.length + 1,
                   bike: ttFreeMachine(race, newAth.wave, "bike", race.bikes), tread: ttFreeMachine(race, newAth.wave, "tread", race.treads) }); setNewAth(x => ({ ...x, name: "", age: "", gender: "" })); }}
                   style={{ ...btnStyle(TM.ink), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Add</button>
@@ -4731,13 +4732,23 @@ ${html}</body></html>`);
                 {athletes.map(a => (
                   <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", borderTop: `2px solid ${TM.line}`, flexWrap: "wrap" }}>
                     <span style={{ flex: "1 1 120px", fontWeight: 800 }}>{a.name}<span style={TM_CAPTION}> · {a.gender} {a.age}{a.uid ? " · ✓ claimed" : ""}</span></span>
-                    <select value={a.wave || 0} onChange={e => { const w = +e.target.value; upd({ [`athletes/${a.id}/wave`]: w, [`athletes/${a.id}/bike`]: ttFreeMachine(race, w, "bike", race.bikes, a.id) || a.bike || "", [`athletes/${a.id}/tread`]: ttFreeMachine(race, w, "tread", race.treads, a.id) || a.tread || "" }); }} style={{ ...inputS, minHeight: 36, width: 150, padding: "0 4px" }}>{waves.map((_, w) => <option key={w} value={w}>{waveLabel(w)}</option>)}</select>
+                    <select value={a.wave || 0} onChange={e => { const w = +e.target.value; upd({ [`athletes/${a.id}/wave`]: w, [`athletes/${a.id}/bike`]: ttFreeMachine(race, w, "bike", race.bikes, a.id) || a.bike || "", [`athletes/${a.id}/tread`]: ttFreeMachine(race, w, "tread", race.treads, a.id) || a.tread || "" }); }} style={{ ...inputS, minHeight: 36, width: 150, padding: "0 4px" }}>{waves.map((_, w) => <option key={w} value={w}>{waveShort(w)}</option>)}</select>
                     <input key={"b" + a.wave + a.bike} defaultValue={a.bike || ""} onBlur={e => set(`athletes/${a.id}/bike`, e.target.value.trim())} placeholder="Bike #" style={{ ...inputS, minHeight: 36, width: 70 }} />
                     <input key={"t" + a.wave + a.tread} defaultValue={a.tread || ""} onBlur={e => set(`athletes/${a.id}/tread`, e.target.value.trim())} placeholder="Tread #" style={{ ...inputS, minHeight: 36, width: 76 }} />
                     <button onClick={() => { if (confirm(`Remove ${a.name}?`)) set(`athletes/${a.id}`, null); }} style={{ background: "none", border: "none", color: TM.live, fontWeight: 900, fontSize: 18, cursor: "pointer" }}>×</button>
                   </div>
                 ))}
               </div>
+              {(+race.bikes || +race.treads) > 0 && athletes.some(a => (+race.bikes && !a.bike) || (+race.treads && !a.tread)) && (
+                <button onClick={() => {
+                  const r = JSON.parse(JSON.stringify(race)); const patch = {};
+                  athletes.forEach(a => ["bike", "tread"].forEach(f => {
+                    const n = f === "bike" ? race.bikes : race.treads;
+                    if (+n && !a[f]) { const m = ttFreeMachine(r, a.wave || 0, f, n, a.id); if (m) { r.athletes[a.id][f] = m; patch[`athletes/${a.id}/${f}`] = m; } }
+                  }));
+                  upd(patch);
+                }} style={{ ...btnStyle(TM.ink, true), minHeight: 44, marginTop: 10 }}>Number the blank bikes & treadmills</button>
+              )}
               <div style={TM_CAPTION}>Bike # and Tread # match the numbers you give the machines on the Devices tab. Leave blank if that athlete's distance will be typed in.</div>
             </div>
             <div style={{ ...TM_LABEL, marginTop: 16 }}>Race status</div>
