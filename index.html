@@ -4309,7 +4309,7 @@ ${html}</body></html>`);
       const ttList = o => Array.isArray(o) ? o.filter(Boolean) : Object.values(o || {}).filter(Boolean);
       function ttDist(m, unit) {
         if (m == null || isNaN(m)) return "—";
-        if (unit === "yd") return Math.round(m / 0.9144) + " yd";
+        if (unit === "yd") return Math.round(m / 0.9144 + 1e-6) + " yd";
         if (unit === "m") return Math.round(m) + " m";
         if (unit === "km") return (m / 1000).toFixed(2) + " km";
         return (m / 1609.344).toFixed(2) + " mi";
@@ -4541,7 +4541,7 @@ ${html}</body></html>`);
                       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                         <input inputMode="decimal" value={entry[a.id + k] ?? ""} onChange={e => setEntry(x => ({ ...x, [a.id + k]: e.target.value }))}
                           placeholder={`e.g. ${k === "swim" ? (unitFor(k) === "yd" ? "450" : "400") : "3.1"} ${unitFor(k)}`} style={{ ...inputS, flex: 1, minWidth: 0 }} />
-                        <button onClick={() => { const m = parseDist(entry[a.id + k], unitFor(k)); if (m == null) return; set(`athletes/${a.id}/dist/${k}`, Math.round(m)); setEntry(x => ({ ...x, [a.id + k]: "" })); }}
+                        <button onClick={() => { const m = parseDist(entry[a.id + k], unitFor(k)); if (m == null) return; set(`athletes/${a.id}/dist/${k}`, Math.round(m * 10) / 10); setEntry(x => ({ ...x, [a.id + k]: "" })); }}
                           style={{ ...btnStyle(TM.ink), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Save</button>
                       </div>
                     )}
@@ -4677,8 +4677,8 @@ ${html}</body></html>`);
                               <div style={{ fontWeight: 900 }}>{ttDist(a.dist && a.dist[k], unitFor(k))}</div>
                               {fresh && k === "bike" && <div style={{ fontSize: 11 }}>{live.w ?? "–"} W · {live.rpm ?? "–"} rpm{live.res != null ? ` · R${live.res}` : ""}</div>}
                               {fresh && k === "run" && <div style={{ fontSize: 11 }}>{live.kmh != null ? (units.dist === "km" ? live.kmh.toFixed(1) + " km/h" : (live.kmh / 1.609).toFixed(1) + " mph") : ""}</div>}
-                              <input key={(a.dist && a.dist[k]) || 0} placeholder="fix" inputMode="decimal" onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                                onBlur={e => { const m = parseDist(e.target.value, unitFor(k)); if (m == null || e.target.value === "") return; upd({ [`athletes/${a.id}/dist/${k}`]: Math.round(m), [`athletes/${a.id}/manual/${k}`]: true }); e.target.value = ""; }}
+                              <input key={k} placeholder="fix" inputMode="decimal" onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                onBlur={e => { const m = parseDist(e.target.value, unitFor(k)); if (m == null || e.target.value === "") return; upd({ [`athletes/${a.id}/dist/${k}`]: Math.round(m * 10) / 10, [`athletes/${a.id}/manual/${k}`]: true }); e.target.value = ""; }}
                                 style={{ width: 70, fontSize: 12, border: `1px solid ${TM.line}`, borderRadius: 4, padding: "2px 4px", marginTop: 2 }} />
                             </div>
                           );
