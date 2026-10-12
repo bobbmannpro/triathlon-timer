@@ -7724,10 +7724,14 @@ ${html}</body></html>`);
         // One photo album per race: the race and its results all carry the album's code.
         // The race itself carries the album code, so everyone connected to the race
         // (athletes, parents, spectators who watched) sees the photos without a code.
-        function stampRacePhotoCode(race, code) {
+        const stampedPhotoRef = useRef(new Set());   // "CODE|album" already checked this session
+        function stampRacePhotoCode(race, code, once) {
           // Every code this race went by: its own, its planned one, and whatever its saved results were recorded under.
           const resCodes = race ? resultsForRace(race).map(r => r.code || (String(r.id).match(/^race_([A-Z0-9]+)_/) || [])[1]) : [];
           [race && race.code, race && race.plannedCode, ...(race && race.oldCodes || []), ...resCodes].filter((c, i, a) => c && typeof c === "string" && a.indexOf(c) === i).forEach(c => {
+            const key = c + "|" + (code || "");
+            if (once && stampedPhotoRef.current.has(key)) return;
+            stampedPhotoRef.current.add(key);
             rtdb.ref("liveRaces/" + c + "/publishedBy").once("value").then(sn => {
               if (sn.val() === (currentUser && currentUser.uid)) rtdb.ref("liveRaces/" + c + "/photoCode").set(code || null).catch(() => {});
             }).catch(() => {});
@@ -7741,11 +7745,9 @@ ${html}</body></html>`);
         }
         const [detachAlbumFor, setDetachAlbumFor] = useState(null);
         // Races that already had an album before races carried their photo code: stamp them once.
-        const stampedPhotoRef = useRef(false);
         useEffect(() => {
-          if (view !== "myraces" || !currentUser || stampedPhotoRef.current || !savedRaces.length) return;
-          stampedPhotoRef.current = true;
-          savedRaces.forEach(r => { const pc = photoCodeForRace(r); if (pc) stampRacePhotoCode(r, pc); });
+          if (view !== "myraces" || !currentUser || !savedRaces.length) return;
+          savedRaces.forEach(r => { const pc = photoCodeForRace(r); if (pc) stampRacePhotoCode(r, pc, true); });
         }, [view, currentUser && currentUser.uid, savedRaces.length, savedArchive.length]);
 
         function persistArchiveUpdate(updated) {
