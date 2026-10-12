@@ -3147,6 +3147,11 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
                   </div>
                 );
               })()}
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Meet date &amp; first start</div>
+                <EventWhen date={meet.date} time={meet.startTime} lead={meet.liveLeadMin}
+                  onChange={p => setMeet(m => ({ ...m, ...(p.date !== undefined ? { date: p.date || null } : {}), ...(p.time !== undefined ? { startTime: p.time } : {}), ...(p.lead !== undefined ? { liveLeadMin: p.lead } : {}) }))} />
+              </div>
               <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 15, fontWeight: 700 }}>Ages as of</span>
                 <input type="date" value={ageDate} onChange={e => setMeet(m => syncEventEntries({ ...m, ageUpDate: e.target.value }))} style={{ ...input, width: "auto" }} />
@@ -4376,6 +4381,40 @@ ${html}</body></html>`);
         for (let n = 1; n <= (+count || 0); n++) if (!taken.has(String(n))) return String(n);
         return "";
       }
+      // Every event has a date and start time. Listings say "Starts 8:00 AM" until
+      // `liveAt` (the start minus the host's lead time, 30 min by default).
+      function eventStartsAt(date, time) {
+        if (!date) return null;
+        const t = new Date(date + "T" + (time || "00:00") + ":00").getTime();
+        return isNaN(t) ? null : t;
+      }
+      function eventWhen(date, time, lead) {
+        const startsAt = eventStartsAt(date, time);
+        return { startsAt, liveAt: startsAt == null ? null : startsAt - (lead == null || lead === "" ? 30 : +lead) * 60000 };
+      }
+      function eventWhenLabel(startsAt, withTime = true) {
+        if (!startsAt) return "";
+        const d = new Date(startsAt);
+        return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+          + (withTime && (d.getHours() || d.getMinutes()) ? " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "");
+      }
+      function EventWhen({ date, time, lead, onChange, inputStyle, showTime = true }) {
+        const st = { minHeight: 44, fontSize: 16, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF", color: TM.ink, ...(inputStyle || {}) };
+        const w = eventWhen(date, time, lead);
+        return (
+          <div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 14, fontWeight: 700 }}>Date
+                <input type="date" value={date || ""} onChange={e => onChange({ date: e.target.value })} style={st} /></label>
+              {showTime && <label style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 14, fontWeight: 700 }}>Start time
+                <input type="time" value={time || ""} onChange={e => onChange({ time: e.target.value })} style={st} /></label>}
+              <label style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 14, fontWeight: 700 }}>Shows live (min before)
+                <input type="number" min={0} value={lead == null ? 30 : lead} onChange={e => onChange({ lead: Math.max(0, +e.target.value || 0) })} style={{ ...st, width: 90 }} /></label>
+            </div>
+            <div style={{ ...TM_CAPTION, marginTop: 4 }}>{w.startsAt ? `Starts ${eventWhenLabel(w.startsAt)} — shows as live in Today's races from ${new Date(w.liveAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.` : "Set the date and start time so people can find it in Today's races."}</div>
+          </div>
+        );
+      }
       function ttTotal(a) { return TT_SCORED.reduce((s, k) => s + (+(a.dist && a.dist[k]) || 0), 0); }
 
       // ── Bluetooth: bikes (FTMS Indoor Bike Data), treadmills (FTMS Treadmill Data), foot pods (RSC) ──
@@ -4497,6 +4536,18 @@ ${html}</body></html>`);
           TT_BT.onChange = () => tick(x => x + 1);
           return () => { ref.off("value", fn); clearInterval(iv); };
         }, [code]);
+        // Listed in Today's races while sign-ups are open or it's live.
+        const firstWave = (race && ttList(race.waves)[0]) || {};
+        const dirKey = viewer || !race ? "" : [race.status, race.name, race.date, firstWave.time, race.liveLeadMin, race.listed].join("|");
+        React.useEffect(() => {
+          if (viewer || !race || !currentUser || race.hostUid !== currentUser.uid) return;
+          if ((race.status === "signup" || race.status === "live") && race.listed !== false) {
+            const w = eventWhen(race.date, firstWave.time, race.liveLeadMin);
+            rtdb.ref("raceDirectory/" + code).set({ kind: "timed", hostUid: currentUser.uid, name: race.name || "Timed Tri",
+              hostName: (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || "",
+              status: race.status === "live" ? "live" : "registration", updatedAt: Date.now(), startsAt: w.startsAt, liveAt: w.liveAt }).catch(() => {});
+          } else rtdb.ref("raceDirectory/" + code).once("value").then(sn => { if (sn.exists()) sn.ref.remove().catch(() => {}); }).catch(() => {});
+        }, [dirKey]);
         if (race === undefined) return <div style={{ padding: 20 }}>Loading…</div>;
         if (!race) return <div style={{ padding: 20 }}><button onClick={onBack} style={btnStyle(TM.ink, true)}>← Back</button><div style={{ marginTop: 16 }}>No Timed Tri found with code {code}.</div></div>;
 
@@ -10528,7 +10579,7 @@ ${html}</body></html>`);
         function publishBikeMeta(feed, ridersOverride) {
           if (!feed?.code) return Promise.resolve();
           const r = bikeRiderFor(feed, ridersOverride);
-          if (feed.listed !== false) listRace(feed.code, "bike", { name: feed.eventName || (r?.name ? `${r.name}'s ${feed.sport === "run" ? "run" : "ride"}` : (feed.sport === "run" ? "Run" : "Bike ride")), status: "live", sport: feed.sport || "bike" });
+          if (feed.listed !== false) listRace(feed.code, "bike", { name: feed.eventName || (r?.name ? `${r.name}'s ${feed.sport === "run" ? "run" : "ride"}` : (feed.sport === "run" ? "Run" : "Bike ride")), status: "live", sport: feed.sport || "bike", ...eventWhen(feed.date, feed.time, feed.liveLeadMin) });
           else unlistRace(feed.code);
           return rtdb.ref(`bikeFeeds/${feed.code}/meta`).set({
             // Ownership marker the database rules check: only the creator may edit
@@ -12409,7 +12460,7 @@ ${html}</body></html>`);
           const prev = listedCodeRef.current;
           if (prev && prev !== code) unlistRace(prev);
           if (code && raceListed) {
-            listRace(code, "triathlon", { name: raceTitle, status: liveRaceCode ? "live" : "registration" });
+            listRace(code, "triathlon", { name: raceTitle, status: liveRaceCode ? "live" : "registration", ...eventWhen(certConfig.eventDate, certConfig.eventTime, certConfig.liveLeadMin) });
             listedCodeRef.current = code;
           } else {
             if (code) unlistRace(code);
@@ -12490,13 +12541,15 @@ ${html}</body></html>`);
             const now = Date.now(), H = 3600e3;
             const list = Object.entries(sn.val() || {})
               .map(([code, r]) => ({ code, ...(r || {}) }))
-              .filter(r => r.kind && (r.status === "live" ? now - (r.updatedAt || 0) < 36 * H
-                                    : r.status === "registration" ? now - (r.updatedAt || 0) < 21 * 24 * H : false))
-              .sort((a, b) => ((a.status === "live" ? 0 : 1) - (b.status === "live" ? 0 : 1)) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
+              .filter(r => r.kind && (r.startsAt && r.startsAt > now - 12 * H && r.startsAt < now + 60 * 24 * H
+                                    || (r.status === "live" ? now - (r.updatedAt || 0) < 36 * H
+                                    : r.status === "registration" ? now - (r.updatedAt || 0) < 21 * 24 * H : false)))
+              .map(r => ({ ...r, liveNow: r.status === "live" && !(r.liveAt && now < r.liveAt) }))
+              .sort((a, b) => ((a.liveNow ? 0 : 1) - (b.liveNow ? 0 : 1)) || ((a.startsAt || 9e15) - (b.startsAt || 9e15)) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
             // A bike ride is only "live" while a rider is actually sending: a saved
             // ride gets re-listed whenever its owner opens the app, so the listing
             // alone isn't proof. Keep rides heard from in the last 15 minutes.
-            return Promise.all(list.map(r => r.kind !== "bike" ? Promise.resolve(true)
+            return Promise.all(list.map(r => r.kind !== "bike" || (r.startsAt && r.startsAt > now) ? Promise.resolve(true)
               : rtdb.ref(`bikeFeeds/${r.code}/live/t`).once("value").then(x => now - (x.val() || 0) < 15 * 60e3).catch(() => false)))
               .then(keep => { if (live) setTodayRaces(list.filter((_, i) => keep[i])); });
           }).catch(() => { if (live) setTodayRaces([]); });
@@ -12507,7 +12560,7 @@ ${html}</body></html>`);
 
         async function pickTodayRace(r, mode) {
           setTodayBusy(r.code);
-          if (mode === "join") { setJoinCode(r.code); await joinRaceByCode(r.code); setTodayBusy(null); return; }
+          if (mode === "join" && r.kind !== "timed") { setJoinCode(r.code); await joinRaceByCode(r.code); setTodayBusy(null); return; }
           setSpectateCode(r.code); setSpectateError("");
           const authed = await ensureViewerAuth();
           setTodayBusy(null);
@@ -12541,11 +12594,12 @@ ${html}</body></html>`);
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                             <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: k.colour }}>{k.label}</span>
-                            {r.status === "live"
+                            {r.liveNow
                               ? <span style={{ background: TM.live, color: "#FFFFFF", fontSize: 14, fontWeight: 900, letterSpacing: 1.2, padding: "1px 8px", borderRadius: 4 }}>● LIVE</span>
-                              : <span style={{ border: `2px solid ${TM.ink}`, fontSize: 14, fontWeight: 800, letterSpacing: 0.4, padding: "0 8px", borderRadius: 4 }}>SIGN-UPS OPEN</span>}
+                              : <span style={{ border: `2px solid ${TM.ink}`, fontSize: 14, fontWeight: 800, letterSpacing: 0.4, padding: "0 8px", borderRadius: 4 }}>{r.status === "registration" ? "SIGN-UPS OPEN" : "UPCOMING"}</span>}
                           </span>
                           <span style={{ display: "block", fontSize: 19, fontWeight: 900, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || "Race"}</span>
+                          {r.startsAt && <span style={{ display: "block", fontSize: 15, fontWeight: 800 }}>{r.liveNow && r.startsAt < Date.now() ? "Started " : "Starts "}{eventWhenLabel(r.startsAt)}</span>}
                           {r.hostName && <span style={{ display: "block", ...TM_CAPTION }}>Hosted by {r.hostName}</span>}
                         </span>
                         {todayBusy === r.code ? <span style={{ fontWeight: 800 }}>…</span> : <ArrowIcon />}
@@ -16156,6 +16210,13 @@ Start a new race anyway?`)) return;
                     </div>
                   )}
 
+                  <SetupSection title="Date &amp; Start Time" color="#04613F"
+                    open={setupStep === 3}
+                    summary={eventWhenLabel(eventStartsAt(certConfig.eventDate, certConfig.eventTime)) || "When is the race?"}>
+                    <EventWhen date={certConfig.eventDate} time={certConfig.eventTime} lead={certConfig.liveLeadMin}
+                      onChange={p => setCertConfig(cfg => ({ ...cfg, ...(p.date !== undefined ? { eventDate: p.date } : {}), ...(p.time !== undefined ? { eventTime: p.time } : {}), ...(p.lead !== undefined ? { liveLeadMin: p.lead } : {}) }))} />
+                  </SetupSection>
+
                   <SetupSection title="Athletes" color="#04613F"
                     open={setupStep === 3}
                     summary={athletes.length === 0 ? "Nobody added yet"
@@ -18146,7 +18207,7 @@ Start a new race anyway?`)) return;
                   setSwimMeet(m => ({ ...m, meetName: name, _id: id }));
                   setSwimShowSaveBefore(false);
                   setSwimSaveBeforeName("");
-                  if (swimMeet.listed !== false) listRace(code, "swim", { name: swimMeet.meetName || "Swim meet", status: "live" }); else unlistRace(code);
+                  if (swimMeet.listed !== false) listRace(code, "swim", { name: swimMeet.meetName || "Swim meet", status: "live", ...eventWhen(swimMeet.date, swimMeet.startTime, swimMeet.liveLeadMin) }); else unlistRace(code);
                   rtdb.ref(`swimLive/${code}`).set({
                     hostUid: currentUser ? currentUser.uid : null,
                     meetName: name, pool: swimMeet.pool,
@@ -19099,7 +19160,7 @@ Start a new race anyway?`)) return;
                                   const free = await codeIsFree(code);
                                   if (!free) { alert(`The code ${code} is already in use by another race. Pick a different code in step 1 of setup.`); return; }
                                   persistSwimMeets(swimSavedMeets.map(m => m.id === swimMeet._id ? { ...m, code, live: true } : m));
-                                  if (swimMeet.listed !== false) listRace(code, "swim", { name: swimMeet.meetName || "Swim meet", status: "live" }); else unlistRace(code);
+                                  if (swimMeet.listed !== false) listRace(code, "swim", { name: swimMeet.meetName || "Swim meet", status: "live", ...eventWhen(swimMeet.date, swimMeet.startTime, swimMeet.liveLeadMin) }); else unlistRace(code);
                                   rtdb.ref(`swimLive/${code}`).set({
                                     hostUid: currentUser ? currentUser.uid : null,
                                     meetName: swimMeet.meetName || "Unnamed Meet",
@@ -20484,6 +20545,8 @@ Start a new race anyway?`)) return;
                         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                           <input value={bikeDraft.eventName} onChange={e => setBikeDraft(d => ({ ...d, eventName: e.target.value }))}
                             placeholder={isRun ? "Run / event name (e.g. Turkey Trot 5K)" : "Ride / event name (e.g. Hill Country 100)"} style={S.input} />
+                          <EventWhen date={bikeDraft.date} time={bikeDraft.time} lead={bikeDraft.liveLeadMin}
+                            onChange={p => setBikeDraft(d => ({ ...d, ...(p.date !== undefined ? { date: p.date } : {}), ...(p.time !== undefined ? { time: p.time } : {}), ...(p.lead !== undefined ? { liveLeadMin: p.lead } : {}) }))} />
                           <div style={S.row}>
                             <span style={{ fontSize:14, color:"#3D434B" }}>Units</span>
                             {["mi","km"].map(u => (
