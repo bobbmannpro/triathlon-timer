@@ -4399,8 +4399,14 @@ ${html}</body></html>`);
           if (!a || String(a[field] || "").trim().toLowerCase() !== label) return;
           if (a.manual && a.manual[leg]) return;
           const win = ttLegWindow(race, a.wave || 0, leg);
-          if (!win || serverNow < win[0] || serverNow > win[1]) return;
           const key = aid + "|" + leg;
+          if (win && serverNow > win[1]) {
+            // Leg just ended: save the last few metres since the previous write, once.
+            const done = TT_BT.acc[key];
+            if (done && !done.final) { done.final = true; rtdb.ref(`timedRaces/${code}/athletes/${aid}/dist/${leg}`).set(Math.round(done.dist * 10) / 10).catch(() => {}); }
+            return;
+          }
+          if (!win || serverNow < win[0]) return;
           let acc = TT_BT.acc[key];
           const stored = +(a.dist && a.dist[leg]) || 0;
           if (!acc) acc = TT_BT.acc[key] = { base: r.total != null ? r.total - stored : null, dist: stored, t: now };
@@ -4411,7 +4417,7 @@ ${html}</body></html>`);
             TT_BT.lastWrite[key] = now;
             const live = leg === "bike" ? { w: r.w ?? null, rpm: r.rpm ?? null, res: r.res ?? null, kmh: r.kmh ?? null, t: serverNow }
               : { kmh: r.kmh ?? null, incline: r.incline ?? null, spm: r.spm ?? null, t: serverNow };
-            rtdb.ref(`timedRaces/${code}/athletes/${aid}`).update({ [`dist/${leg}`]: Math.round(acc.dist), [`live/${leg}`]: live }).catch(() => {});
+            rtdb.ref(`timedRaces/${code}/athletes/${aid}`).update({ [`dist/${leg}`]: Math.round(acc.dist * 10) / 10, [`live/${leg}`]: live }).catch(() => {});
           }
         });
       }
