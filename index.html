@@ -2532,7 +2532,7 @@
       function computeTeamScores(events) {
         const scores = {};
         const pts = [6, 4, 3, 2, 1];
-        for (const ev of events) {
+        for (const ev of resultEvents(events)) {
           const allSwimmers = ev.heats.flatMap(h => h.lanes);
           const finishers = allSwimmers
             .filter(s => s.finalMs != null && !s.dq && !s.scratch)
@@ -2716,7 +2716,7 @@
             age: sw.age || 0,
             seedTime: sw.seedMs ? formatSwimTime(sw.seedMs) : "NT",
             seedMs: sw.seedMs || null,
-            entryId: sw.id || null, legs: sw.legs || null,
+            entryId: sw.id || null, legs: sw.legs || null, fromEvent: sw.fromEvent || null,
             finalMs: null, dq: false, scratch: false
           })).sort((a, b) => a.lane - b.lane);
           heats.push({ heatNum: hi + 1, lanes });
@@ -2810,14 +2810,23 @@
       function newId(p) { return p + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
       function isRelayEv(ev) { return !!(ev.relay || /relay/i.test(ev.stroke || "")); }
 
-      // What 🌱 Seed puts in an event: entered swimmers, or relay teams.
+      // What 🌱 Seed puts in an event: entered swimmers, or relay teams. No-shows
+      // are left out. An event that another was combined into swims both lists,
+      // each swimmer tagged with the event they're scored in (fromEvent).
       function swimEntriesForEvent(meet, ev) {
+        if (ev.mergedInto) return [];
+        const own = swimEntriesOwn(meet, ev);
+        const extra = (meet.events || []).filter(o => o.mergedInto === ev.eventNum)
+          .flatMap(o => swimEntriesOwn(meet, o).map(e => ({ ...e, fromEvent: o.eventNum })));
+        return extra.length ? [...own.map(e => ({ ...e, fromEvent: ev.eventNum })), ...extra] : own;
+      }
+      function swimEntriesOwn(meet, ev) {
         if (isRelayEv(ev)) {
           return (meet.relays || []).filter(r => r.eventNum === ev.eventNum).map(r => ({
             id: r.id, name: `${r.team} ${r.letter}`, firstName: r.team, lastName: r.letter, team: r.team, age: 0,
             legs: r.legs || [], seedMs: r.seedMs || null, seedTime: r.seedMs ? formatSwimTime(r.seedMs) : "NT" }));
         }
-        return (meet.meetEntries || []).filter(s => (s.events || []).some(e => e.eventNum === ev.eventNum)).map(s => {
+        return (meet.meetEntries || []).filter(s => !s.noShow && (s.events || []).some(e => e.eventNum === ev.eventNum)).map(s => {
           const e = s.events.find(x => x.eventNum === ev.eventNum);
           return { id: s.id, name: s.name, firstName: s.firstName || "", lastName: s.lastName || "", team: s.team || "",
             age: swimAgeOn(s, meetAgeDate(meet)) || s.age || 0, seedMs: e.seedMs || null, seedTime: e.seedMs ? formatSwimTime(e.seedMs) : "NT" };
@@ -2825,6 +2834,87 @@
       }
       function syncEventEntries(meet) {
         return { ...meet, events: meet.events.map(ev => ({ ...ev, entries: swimEntriesForEvent(meet, ev) })) };
+      }
+
+      // ── Meet-day changes: no-shows, scratches, added events, relay swaps, combined events ──
+      const laneSwum = l => l.finalMs != null || !!l.dq;
+      function swimEventStarted(ev) { return (ev.heats || []).some(h => (h.lanes || []).some(laneSwum)); }
+      // After any roster change: events nobody has swum yet are re-seeded from the
+      // new entries (only if their swimmers actually changed). Events already under
+      // way keep their swum heats — leavers come out of the heats still to swim and
+      // newcomers fill an empty lane or a new heat. Relay legs and names are
+      // refreshed everywhere, so results always carry the swimmers who swam.
+      // `hold` = { eventNum, heatNum } the host has open: that heat is never moved.
+      function applyRosterChanges(meet, hold) {
+        const m = syncEventEntries(meet);
+        const numLanes = m.lanes || 8, order = getLaneOrder(numLanes);
+        const events = m.events.map(ev => {
+          if (ev.mergedInto) return { ...ev, heats: [] };
+          const want = ev.entries || [];
+          const wantIds = new Set(want.map(e => e.id).filter(Boolean));
+          const laneIds = (ev.heats || []).flatMap(h => h.lanes || []).map(l => l.entryId).filter(Boolean);
+          const haveIds = new Set(laneIds);
+          const same = wantIds.size === haveIds.size && [...wantIds].every(id => haveIds.has(id));
+          const isHeld = h => !!hold && hold.eventNum === ev.eventNum && hold.heatNum === h.heatNum;
+          let heats = ev.heats || [];
+          if (!same && (want.length || laneIds.length)) {
+            if (!swimEventStarted(ev) && !(hold && hold.eventNum === ev.eventNum)) {
+              heats = want.length ? autoSeedEvent({ ...ev, entries: want }, numLanes) : [{ heatNum: 1, lanes: [] }];
+            } else {
+              heats = heats.map(h => (h.lanes || []).some(laneSwum) || isHeld(h) ? h
+                : { ...h, lanes: h.lanes.filter(l => !l.entryId || wantIds.has(l.entryId)) });
+              want.filter(e => !haveIds.has(e.id)).forEach(e => {
+                let hi = heats.findIndex(h => !(h.lanes || []).some(laneSwum) && !isHeld(h) && (h.lanes || []).length < numLanes);
+                if (hi < 0) { heats = [...heats, { heatNum: heats.reduce((n, h) => Math.max(n, h.heatNum), 0) + 1, lanes: [] }]; hi = heats.length - 1; }
+                const taken = new Set(heats[hi].lanes.map(l => l.lane));
+                const lane = order.find(n => !taken.has(n));
+                const nl = { lane, name: e.name, firstName: e.firstName || "", lastName: e.lastName || "", team: e.team || "", age: e.age || 0,
+                  seedTime: e.seedMs ? formatSwimTime(e.seedMs) : "NT", seedMs: e.seedMs || null, entryId: e.id, legs: e.legs || null,
+                  fromEvent: e.fromEvent || null, finalMs: null, dq: false, scratch: false };
+                heats = heats.map((h, i) => i !== hi ? h : { ...h, lanes: [...h.lanes, nl].sort((a, b) => a.lane - b.lane) });
+              });
+            }
+          }
+          const byId = new Map(want.map(e => [e.id, e]));
+          heats = heats.map(h => ({ ...h, lanes: (h.lanes || []).map(l => {
+            const e = l.entryId && byId.get(l.entryId);
+            return e ? { ...l, name: e.name, team: e.team || l.team, legs: e.legs || l.legs || null, fromEvent: e.fromEvent || null } : l;
+          }) }));
+          return { ...ev, heats };
+        });
+        return { ...m, events };
+      }
+      // Two (or more) small events swum together. The lower-numbered one hosts the
+      // heats; each swimmer still places and scores in their own event.
+      function combineSwimEvents(meet, aNum, bNum, hold) {
+        const host = Math.min(aNum, bNum), guest = Math.max(aNum, bNum);
+        return applyRosterChanges({ ...meet, events: meet.events.map(ev =>
+          ev.eventNum === guest ? { ...ev, mergedInto: host, heats: [] }
+          : ev.mergedInto === guest ? { ...ev, mergedInto: host }
+          : ev.eventNum === host ? { ...ev, heats: [] } : ev) }, hold);
+      }
+      function splitSwimEvent(meet, hostNum, hold) {
+        const freed = new Set(meet.events.filter(ev => ev.mergedInto === hostNum).map(ev => ev.eventNum));
+        const events = meet.events.map(ev => freed.has(ev.eventNum) ? { ...ev, mergedInto: null, heats: [] }
+          : ev.eventNum === hostNum ? { ...ev, heats: [] } : ev);
+        return applyRosterChanges({ ...meet, events }, hold);
+      }
+      function combinedLabel(meet, ev) {
+        const guests = (meet.events || []).filter(o => o.mergedInto === ev.eventNum);
+        return guests.length ? [ev, ...guests].map(evLabel).join(" & ") : evLabel(ev);
+      }
+      // Results and scores, event by event: a combined heat's swimmers go back to
+      // the event they entered, so places and points stay per age group.
+      function resultEvents(events) {
+        const list = events || [];
+        return list.map(ev => {
+          if (ev.mergedInto) {
+            const host = list.find(o => o.eventNum === ev.mergedInto);
+            return { ...ev, heats: ((host && host.heats) || []).map(h => ({ ...h, lanes: (h.lanes || []).filter(l => l.fromEvent === ev.eventNum) })) };
+          }
+          if (!list.some(o => o.mergedInto === ev.eventNum)) return ev;
+          return { ...ev, heats: (ev.heats || []).map(h => ({ ...h, lanes: (h.lanes || []).filter(l => !l.fromEvent || l.fromEvent === ev.eventNum) })) };
+        });
       }
       function seedWholeMeet(meet) {
         const m = syncEventEntries(meet);
@@ -3446,7 +3536,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
       // A meet's finished swims, ready for profiles or a results file.
       function meetSwims(meet) {
         const out = [];
-        meet.events.forEach(ev => {
+        resultEvents(meet.events).forEach(ev => {
           if (isRelayEv(ev)) return;
           const all = ev.heats.flatMap(h => h.lanes.filter(l => l.name && (l.finalMs != null || l.dq)).map(l => ({ l, h })));
           const ranked = all.filter(x => !x.l.dq && x.l.finalMs != null).sort((a, b) => a.l.finalMs - b.l.finalMs);
@@ -3675,7 +3765,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:4px 6px;
       // a relay (the relay's place and time, with the relay letter).
       function ribbonRows(meet, { team, maxPlace, sort }) {
         const rows = meetSwims(meet).filter(s => !s.dq && s.timeMs != null).map(s => ({ ...s, ev: meet.events.find(ev => evLabel(ev) === s.eventLabel) || {} }));
-        meet.events.filter(isRelayEv).forEach(ev => {
+        resultEvents(meet.events).filter(isRelayEv).forEach(ev => {
           const done = ev.heats.flatMap(h => h.lanes.filter(l => l.name && l.finalMs != null && !l.dq)).sort((x, y) => x.finalMs - y.finalMs);
           done.forEach((l, i) => (l.legs || []).filter(Boolean).forEach(leg => {
             const parts = String(leg.name || "").split(/\s+/);
@@ -5361,6 +5451,219 @@ ${html}</body></html>`);
 
         // Live session state (host side)
         const [swimLiveCode, setSwimLiveCode] = useState(null);
+        // Every change to the meet (no-shows, scratches, combined events, relay
+        // swaps, re-seeds) goes out to the lane timers and watchers within a second.
+        const swimPushRef = useRef("");
+        useEffect(() => {
+          if (!swimLiveCode) { swimPushRef.current = ""; return; }
+          const t = setTimeout(() => {
+            const evs = JSON.parse(JSON.stringify((swimMeet.events || []).map(({ entries, ...rest }) => rest)));
+            const key = JSON.stringify(evs);
+            if (key === swimPushRef.current) return;
+            swimPushRef.current = key;
+            rtdb.ref(`swimLive/${swimLiveCode}/events`).set(evs).catch(console.error);
+          }, 700);
+          return () => clearTimeout(t);
+        }, [swimLiveCode, swimMeet.events]);
+        // ── Meet-day changes panel ──
+        const [swimDayOpen, setSwimDayOpen] = useState(null);   // null | "swimmers" | "relays" | "combine"
+        const [swimDayTeam, setSwimDayTeam] = useState("");
+        const [swimDayOpenEntry, setSwimDayOpenEntry] = useState(null);
+        const swimHold = () => (swimActiveEvent && swimActiveHeat ? { eventNum: swimActiveEvent, heatNum: swimActiveHeat } : null);
+        function meetDay(fn) { const hold = swimHold(); setSwimMeet(m => applyRosterChanges(fn(m), hold)); }
+        function renderSwimDay() {
+          const m = swimMeet;
+          const ageDate = meetAgeDate(m);
+          const teams = (m.teams && m.teams.length ? m.teams.map(t => t.code)
+            : [...new Set((m.meetEntries || []).map(e => e.team).filter(Boolean))]);
+          const team = teams.includes(swimDayTeam) ? swimDayTeam : (teams[0] || "");
+          const evById = new Map((m.events || []).map(ev => [ev.eventNum, ev]));
+          const evText = ev => `${evLabel(ev)} · ${ev.gender} ${ev.ageGroup} ${ev.distance} ${ev.stroke}`;
+          const hostOf = ev => ev.mergedInto ? evById.get(ev.mergedInto) || ev : ev;
+          const swum = ev => swimEventStarted(hostOf(ev));
+          const anyAge = !!m.anyAge;
+          const roster = (m.meetEntries || []).filter(e => sameTeam(e.team, team)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+          const tabBtn = (k, label) => (
+            <button key={k} onClick={() => setSwimDayOpen(k)} aria-pressed={swimDayOpen === k}
+              style={{ ...btnStyle(TM.ink, swimDayOpen !== k), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 0" }}>{label}</button>
+          );
+          const teamPick = (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+              <span style={{ ...TM_LABEL, margin: 0 }}>Team</span>
+              <select value={team} onChange={e => { setSwimDayTeam(e.target.value); setSwimDayOpenEntry(null); }}
+                style={{ minHeight: 42, fontSize: 16, fontWeight: 700, flex: 1, border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 8px" }}>
+                {teams.map(t => <option key={t} value={t}>{swimTeamName(m, t)}{swimTeamName(m, t) !== t ? ` (${t})` : ""}</option>)}
+              </select>
+            </label>
+          );
+          const anyAgeToggle = (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 15, fontWeight: 700 }}>
+              <input type="checkbox" checked={anyAge} onChange={e => setSwimMeet(mm => ({ ...mm, anyAge: e.target.checked }))} />
+              Fun meet: let swimmers enter any age group
+            </label>
+          );
+          const setEntry = (id, fn) => meetDay(mm => ({ ...mm, meetEntries: (mm.meetEntries || []).map(e => e.id === id ? fn(e) : e) }));
+
+          let body = null;
+          if (swimDayOpen === "swimmers") {
+            const noShows = roster.filter(e => e.noShow).length;
+            body = (
+              <div>
+                {teamPick}{anyAgeToggle}
+                <div style={{ ...TM_CAPTION, marginTop: 8 }}>
+                  Tap <strong>No show</strong> to take a swimmer out of every event they haven't swum yet. Heats re-seed and the lane timers update by themselves.
+                  {noShows ? ` ${noShows} no-show${noShows > 1 ? "s" : ""} on this team.` : ""}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                  {roster.length === 0 && <div style={TM_CAPTION}>No swimmers entered for this team.</div>}
+                  {roster.map(e => {
+                    const open = swimDayOpenEntry === e.id;
+                    const age = swimAgeOn(e, ageDate);
+                    const evs = (e.events || []).map(x => evById.get(x.eventNum)).filter(Boolean);
+                    const canAdd = (m.events || []).filter(ev => !isRelayEv(ev) && !(e.events || []).some(x => x.eventNum === ev.eventNum)
+                      && !swum(ev) && (anyAge || swimQualifies(e, ev, ageDate, false)));
+                    return (
+                      <div key={e.id} style={{ border: `2px solid ${e.noShow ? TM.live : TM.line}`, borderRadius: 6, padding: "8px 10px", background: e.noShow ? "#FBEDEE" : "#FFFFFF" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <button onClick={() => setSwimDayOpenEntry(open ? null : e.id)} aria-expanded={open}
+                            style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", color: TM.ink }}>
+                            <div style={{ fontSize: 16, fontWeight: 800, textDecoration: e.noShow ? "line-through" : "none" }}>{e.name}</div>
+                            <div style={TM_CAPTION}>{e.gender}{age != null ? ` · ${age}` : ""} · {evs.length} event{evs.length === 1 ? "" : "s"} {open ? "▲" : "▼"}</div>
+                          </button>
+                          <button onClick={() => setEntry(e.id, x => ({ ...x, noShow: !x.noShow }))}
+                            style={{ ...btnStyle(TM.live, !e.noShow), minHeight: 40, padding: "0 12px", fontSize: 14, flexShrink: 0 }}>
+                            {e.noShow ? "No show ✓ (undo)" : "No show"}</button>
+                        </div>
+                        {open && (
+                          <div style={{ marginTop: 8, borderTop: `2px solid ${TM.line}`, paddingTop: 8 }}>
+                            {evs.length === 0 && <div style={TM_CAPTION}>Not entered in any events.</div>}
+                            {evs.map(ev => (
+                              <div key={ev.eventNum} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, minHeight: 40 }}>
+                                <span style={{ flex: 1, minWidth: 0 }}>{evText(ev)}{ev.mergedInto ? ` (swims with ${evLabel(evById.get(ev.mergedInto) || {})})` : ""}</span>
+                                {swum(ev) ? <span style={TM_CAPTION}>swum</span>
+                                  : <button onClick={() => setEntry(e.id, x => ({ ...x, events: (x.events || []).filter(y => y.eventNum !== ev.eventNum) }))}
+                                      style={{ ...btnStyle(TM.live, true), minHeight: 36, padding: "0 10px", fontSize: 13 }}>Scratch</button>}
+                              </div>
+                            ))}
+                            {canAdd.length > 0 && !e.noShow && (
+                              <select value="" onChange={x => { const n = +x.target.value; if (n) setEntry(e.id, y => ({ ...y, events: [...(y.events || []), { eventNum: n, seedMs: null, seedTime: "NT" }] })); }}
+                                style={{ marginTop: 6, minHeight: 40, fontSize: 15, maxWidth: "100%", border: `2px solid ${TM.swim}`, borderRadius: 6, padding: "0 8px" }}>
+                                <option value="">+ Add an event…</option>
+                                {canAdd.map(ev => <option key={ev.eventNum} value={ev.eventNum}>{evText(ev)}</option>)}
+                              </select>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          } else if (swimDayOpen === "relays") {
+            const relayEvents = (m.events || []).filter(ev => isRelayEv(ev) && (anyAge || (ev.gender || "").toLowerCase().startsWith("mix") || roster.some(e => swimQualifies(e, ev, ageDate, true))));
+            const setRelays = fn => meetDay(mm => ({ ...mm, relays: fn(mm.relays || []) }));
+            body = (
+              <div>
+                {teamPick}{anyAgeToggle}
+                <div style={{ ...TM_CAPTION, marginTop: 8 }}>Swap swimmers on a relay any time — even after it's swum — and the heat sheet, lane timers and results use the new names.</div>
+                {relayEvents.length === 0 && <div style={{ ...TM_CAPTION, marginTop: 10 }}>No relay events for this team.</div>}
+                {relayEvents.map(ev => {
+                  const rs = (m.relays || []).filter(r => r.eventNum === ev.eventNum && sameTeam(r.team, team));
+                  const pool = roster.filter(e => !e.noShow && (anyAge || swimQualifies(e, ev, ageDate, true)));
+                  return (
+                    <div key={ev.eventNum} style={{ ...rowStyle(TM.swim), marginTop: 10 }}>
+                      <div style={{ fontSize: 15, fontWeight: 800 }}>{evText(ev)}</div>
+                      {rs.map(r => {
+                        const used = new Set(rs.flatMap(o => (o.legs || []).filter(Boolean).map(l => l.id)));
+                        return (
+                          <div key={r.id} style={{ marginTop: 8 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <strong style={{ flex: 1 }}>{team} {r.letter}</strong>
+                              {!swum(ev) && <button onClick={() => setRelays(list => list.filter(x => x.id !== r.id))}
+                                style={{ background: "none", border: "none", color: TM.live, fontWeight: 800, cursor: "pointer", fontSize: 14 }}>Remove relay</button>}
+                            </div>
+                            {[0, 1, 2, 3].map(i => {
+                              const leg = (r.legs || [])[i];
+                              const legEntry = leg && (m.meetEntries || []).find(e => e.id === leg.id);
+                              const gone = legEntry && legEntry.noShow;
+                              return (
+                                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                                  <span style={{ width: 54, fontSize: 14, fontWeight: 700 }}>Leg {i + 1}</span>
+                                  <select value={leg ? leg.id : ""} onChange={x => {
+                                    const e = (m.meetEntries || []).find(y => y.id === x.target.value);
+                                    setRelays(list => list.map(rr => rr.id !== r.id ? rr : { ...rr, legs: [0, 1, 2, 3].map(k => k === i ? (e ? { id: e.id, name: e.name, age: swimAgeOn(e, ageDate) } : null) : ((rr.legs || [])[k] || null)) }));
+                                  }} style={{ flex: 1, minWidth: 0, minHeight: 40, fontSize: 15, border: `2px solid ${gone ? TM.live : TM.line}`, borderRadius: 6, padding: "0 6px" }}>
+                                    <option value="">— pick a swimmer —</option>
+                                    {leg && !pool.some(e => e.id === leg.id) && <option value={leg.id}>{leg.name}{gone ? " (no show)" : ""}</option>}
+                                    {pool.filter(e => e.id === (leg && leg.id) || !used.has(e.id)).map(e => <option key={e.id} value={e.id}>{e.name} ({swimAgeOn(e, ageDate) ?? "?"})</option>)}
+                                  </select>
+                                  {gone && <span style={{ color: TM.live, fontWeight: 800, fontSize: 13 }}>⚠ no show</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                      {!swum(ev) && (
+                        <button onClick={() => setRelays(list => [...list, { id: newId("rl"), eventNum: ev.eventNum, team, letter: String.fromCharCode(65 + rs.length), legs: [null, null, null, null], seedMs: null, seedTime: "NT" }])}
+                          style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 12px", fontSize: 14, marginTop: 8 }}>+ Add {team} relay</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          } else if (swimDayOpen === "combine") {
+            const visible = (m.events || []).filter(ev => !ev.mergedInto);
+            const count = ev => swimEntriesForEvent(m, ev).length;
+            body = (
+              <div>
+                <div style={{ ...TM_CAPTION, marginTop: 10 }}>Put small events in the same heat — say Boys 6-7 and Boys 8-9 25 Free with two swimmers each. Each swimmer still places and scores in their own age group. You can combine right up to the start of the heat.</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+                  {visible.map(ev => {
+                    const guests = (m.events || []).filter(o => o.mergedInto === ev.eventNum);
+                    const started = swimEventStarted(ev);
+                    const partners = visible.filter(o => o.eventNum !== ev.eventNum && isRelayEv(o) === isRelayEv(ev) && !swimEventStarted(o));
+                    return (
+                      <div key={ev.eventNum} style={{ ...rowStyle(guests.length ? TM.run : TM.line) }}>
+                        <div style={{ fontSize: 15, fontWeight: 800 }}>{guests.length ? `Events ${combinedLabel(m, ev)}` : evText(ev)}</div>
+                        <div style={TM_CAPTION}>{count(ev)} swimmer{count(ev) === 1 ? "" : "s"}{guests.length ? ` · ${[ev, ...guests].map(x => `${x.gender} ${x.ageGroup}`).join(" + ")}` : ""}{started ? " · under way" : ""}</div>
+                        {!started && (
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                            {guests.length > 0 && <button onClick={() => { const hold = swimHold(); setSwimMeet(mm => splitSwimEvent(mm, ev.eventNum, hold)); }}
+                              style={{ ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 12px", fontSize: 14 }}>Split apart</button>}
+                            {partners.length > 0 && (
+                              <select value="" onChange={x => { const n = +x.target.value; if (!n) return; const hold = swimHold(); setSwimMeet(mm => combineSwimEvents(mm, ev.eventNum, n, hold)); }}
+                                style={{ minHeight: 38, fontSize: 14, maxWidth: "100%", border: `2px solid ${TM.swim}`, borderRadius: 6, padding: "0 8px" }}>
+                                <option value="">Combine with…</option>
+                                {partners.map(o => <option key={o.eventNum} value={o.eventNum}>{evText(o)} ({count(o)})</option>)}
+                              </select>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div role="dialog" aria-label="Meet-day changes" style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(11,13,16,0.55)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflowY: "auto", padding: "16px 0" }}>
+              <div style={{ background: TM.bg, width: "min(640px, 100%)", minHeight: "60vh", borderRadius: 10, padding: "16px", margin: "0 8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <h2 style={{ ...TM_H2, margin: 0, flex: 1 }}>Meet-day changes</h2>
+                  <button onClick={() => setSwimDayOpen(null)} style={{ ...btnStyle(TM.ink), minHeight: 42, padding: "0 16px", fontSize: 15 }}>Done</button>
+                </div>
+                <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+                  {tabBtn("swimmers", "Swimmers")}{tabBtn("relays", "Relays")}{tabBtn("combine", "Combine events")}
+                </div>
+                {body}
+              </div>
+            </div>
+          );
+        }
         const swimLiveRef = useRef(null);
         const [swimTimersLive, setSwimTimersLive] = useState({});   // { lane: { at, name } } from the lane phones
         useEffect(() => {
@@ -7242,10 +7545,10 @@ ${html}</body></html>`);
               if (a.finalMs != null && b.finalMs != null) return a.finalMs - b.finalMs;
               if (a.finalMs != null) return -1; return 1;
             });
-            const rows = sorted.map(sw => `<tr><td style="text-align:center">${sw.lane}</td><td>${sw.name||''}</td><td style="text-align:center">${sw.age||''}</td><td>${sw.team||''}</td><td>${sw.seedTime||'NT'}</td><td style="font-weight:700;color:${sw.dq?'#c00':sw.finalMs!=null?'#0B3FCC':'#999'}">${sw.dq?'DQ':sw.scratch?'SCR':sw.finalMs!=null?formatSwimTime(sw.finalMs):'--'}</td></tr>`).join('');
+            const rows = sorted.map(sw => `<tr><td style="text-align:center">${sw.lane}</td><td>${sw.name||''}${(sw.legs||[]).some(Boolean)?`<div style="font-size:12px;color:#555">${sw.legs.map((l,k)=>l?`${k+1}. ${l.name}`:'').filter(Boolean).join(', ')}</div>`:''}</td><td style="text-align:center">${sw.age||''}</td><td>${sw.team||''}</td><td>${sw.seedTime||'NT'}</td><td style="font-weight:700;color:${sw.dq?'#c00':sw.finalMs!=null?'#0B3FCC':'#999'}">${sw.dq?'DQ':sw.scratch?'SCR':sw.finalMs!=null?formatSwimTime(sw.finalMs):'--'}</td></tr>`).join('');
             return `<h4 style="margin:16px 0 6px;color:#333">Heat ${ht.heatNum}</h4><table><thead><tr><th>Ln</th><th>Name</th><th>Age</th><th>Team</th><th>Seed</th><th>Final</th></tr></thead><tbody>${rows}</tbody></table>`;
           }).join('');
-          const standingRows = finishers.map((sw, i) => `<tr><td style="text-align:center;font-weight:700">${i+1}</td><td>${sw.name||''}</td><td style="text-align:center">${sw.age||''}</td><td>${sw.team||''}</td><td>${sw.seedTime||'NT'}</td><td style="font-weight:700;color:#0B3FCC">${formatSwimTime(sw.finalMs)}</td><td style="text-align:center;font-weight:700">${i<pts.length?pts[i]:''}</td></tr>`).join('') +
+          const standingRows = finishers.map((sw, i) => `<tr><td style="text-align:center;font-weight:700">${i+1}</td><td>${sw.name||''}${(sw.legs||[]).some(Boolean)?`<div style="font-size:12px;color:#555">${sw.legs.map((l,k)=>l?`${k+1}. ${l.name}`:'').filter(Boolean).join(', ')}</div>`:''}</td><td style="text-align:center">${sw.age||''}</td><td>${sw.team||''}</td><td>${sw.seedTime||'NT'}</td><td style="font-weight:700;color:#0B3FCC">${formatSwimTime(sw.finalMs)}</td><td style="text-align:center;font-weight:700">${i<pts.length?pts[i]:''}</td></tr>`).join('') +
             dqs.map(sw => `<tr><td style="text-align:center;color:#c00">DQ</td><td colspan="5" style="color:#c00">${sw.name} — ${sw.team}</td><td></td></tr>`).join('');
           const win = window.open("","_blank");
           win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${meetName||'Meet Results'}</title><style>body{font-family:Arial,sans-serif;font-size:14px;color:#111;padding:20px}h1{font-size:16px;margin:0 0 4px}h2{font-size:14px;color:#555;font-weight:400;margin:0 0 16px}h3{font-size:14px;margin:20px 0 6px;border-bottom:2px solid #0B3FCC;padding-bottom:4px;color:#0B3FCC}h4{font-size:14px;margin:12px 0 4px;color:#333}table{width:100%;border-collapse:collapse;margin-bottom:8px}th,td{padding:5px 8px;border-bottom:2px solid #ddd;text-align:left}th{background:#f0f0f0;font-weight:700;font-size:14px;text-transform:uppercase;letter-spacing:0.5px}@media print{button{display:none}}</style></head><body><h1>${meetName||'Meet Results'}</h1><h2>${ev.gender} ${ev.ageGroup} ${ev.distance} ${ev.stroke} — ${ev.course}</h2><h3>Heat-by-Heat Results</h3>${heatRows}<h3>Overall Event Standings</h3><table><thead><tr><th>Pl</th><th>Name</th><th>Age</th><th>Team</th><th>Seed</th><th>Final</th><th>Pts</th></tr></thead><tbody>${standingRows}</tbody></table><button onclick="window.print()" style="margin-top:16px;padding:8px 20px;cursor:pointer">Print</button><script>window.onload=()=>{window.print();}<\/script></body></html>`);
@@ -12288,7 +12591,7 @@ Start a new race anyway?`)) return;
                 const openSwim = (meet) => {
                   selectMode("swim");
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode(),
-                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null });
+                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null, anyAge: !!meet.anyAge });
                   setSwimLiveCode(null); setSwimHomeSection(null); setSwimSetupStep(0);
                   setView("swim"); setSwimView("setup");
                 };
@@ -17144,7 +17447,7 @@ Start a new race anyway?`)) return;
                     lanes: swimMeet.lanes || 8,
                     meetEntries: swimMeet.meetEntries || [],
                     date: swimMeet.date || null, facility: swimMeet.facility || null,
-                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null,
+                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null, anyAge: !!swimMeet.anyAge,
                     // A code parents already have (the meet went live) never changes;
                     // before that, the one chosen in step 1 is kept.
                     code: (existing?.live && existing.code) || swimMeet.code || existing?.code,
@@ -17164,7 +17467,7 @@ Start a new race anyway?`)) return;
                   const id = swimMeet._id || `meet_${Date.now()}`;
                   const entry = { id, meetName: name, pool: swimMeet.pool, lanes: swimMeet.lanes || 8, savedAt: new Date().toLocaleDateString(), events: swimMeet.events,
                     meetEntries: swimMeet.meetEntries || [], date: swimMeet.date || null, facility: swimMeet.facility || null,
-                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null, code };
+                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null, anyAge: !!swimMeet.anyAge, code };
                   if (existing) {
                     persistSwimMeets(swimSavedMeets.map(m => m.id === id ? entry : m));
                   } else {
@@ -17186,7 +17489,7 @@ Start a new race anyway?`)) return;
                 }
                 function loadSwimMeet(meet) {
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode(),
-                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null });
+                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null, anyAge: !!meet.anyAge });
                   setSwimLiveCode(null);
                   setSwimSetupStep(0);
                   setSwimView("setup");
@@ -18025,6 +18328,12 @@ Start a new race anyway?`)) return;
                     {/* ── RACE ── */}
                     {swimView === "race" && (
                       <div>
+                        {swimDayOpen && renderSwimDay()}
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                          <button onClick={() => setSwimDayOpen("swimmers")} style={{ ...btnStyle(TM.ink, true), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 140px" }}>👥 No-shows & events</button>
+                          <button onClick={() => setSwimDayOpen("relays")} style={{ ...btnStyle(TM.ink, true), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 100px" }}>Relays</button>
+                          <button onClick={() => setSwimDayOpen("combine")} style={{ ...btnStyle(TM.ink, true), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 140px" }}>⇄ Combine events</button>
+                        </div>
                         {!activeEv || !activeHt ? (
                           <div>
                             <h2 style={{ ...TM_H2, marginTop: 4 }}>Pick a heat to start</h2>
@@ -18032,9 +18341,11 @@ Start a new race anyway?`)) return;
                               <div style={{ ...rowStyle(), ...TM_CAPTION, marginTop: 10 }}>No events yet — add them in Setup.</div>
                             )}
                             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                              {swimMeet.events.map(ev => (
+                              {swimMeet.events.filter(ev => !ev.mergedInto).map(ev => (
                                 <div key={ev.eventNum} style={{ ...rowStyle(TM.swim) }}>
-                                  <div style={{ fontSize: 16, fontWeight: 900 }}>Event {evLabel(ev)} · {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</div>
+                                  <div style={{ fontSize: 16, fontWeight: 900 }}>{swimMeet.events.some(o => o.mergedInto === ev.eventNum)
+                                    ? <>Events {combinedLabel(swimMeet, ev)} · {[ev, ...swimMeet.events.filter(o => o.mergedInto === ev.eventNum)].map(x => `${x.gender} ${x.ageGroup}`).join(" + ")} {ev.distance} {ev.stroke} <span style={{ color: TM.run }}>· combined</span></>
+                                    : <>Event {evLabel(ev)} · {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</>}</div>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                                     {ev.heats.map(h => {
                                       const n = h.lanes.filter(l => l.name && !l.scratch).length;
@@ -18060,7 +18371,7 @@ Start a new race anyway?`)) return;
                             {/* Event / heat header */}
                             <div style={{ ...S.card, marginBottom:10 }}>
                               <div style={{ fontSize:14, color:"#3D434B", fontWeight:700, letterSpacing:1.2, textTransform:"uppercase" }}>
-                                Event {evLabel(activeEv)} &mdash; {activeEv.gender} {activeEv.ageGroup} {activeEv.distance} {activeEv.stroke}
+                                Event {combinedLabel(swimMeet, activeEv)} &mdash; {[activeEv, ...swimMeet.events.filter(o => o.mergedInto === activeEv.eventNum)].map(x => `${x.gender} ${x.ageGroup}`).join(" + ")} {activeEv.distance} {activeEv.stroke}
                               </div>
                               <div style={{ fontSize:14, color:"#04613F", marginTop:2 }}>
                                 Heat {heatIndex + 1} of {totalHeats}
@@ -18180,7 +18491,9 @@ Start a new race anyway?`)) return;
                                       <div style={{ fontSize:14, fontWeight:600, color: isDq ? "#B3001B" : "#0B0D10" }}>
                                         {sw.name || "(Empty Lane)"} {isDq && <span style={{ fontSize:14, color:"#B3001B" }}>DQ</span>}
                                       </div>
-                                      <div style={{ fontSize:14, color:"#3D434B" }}>{sw.team}{sw.age ? ` · Age ${sw.age}` : ""}{sw.seedTime && sw.seedTime !== "NT" ? ` · Seed: ${sw.seedTime}` : ""}</div>
+                                      <div style={{ fontSize:14, color:"#3D434B" }}>{sw.team}{sw.age ? ` · Age ${sw.age}` : ""}{sw.seedTime && sw.seedTime !== "NT" ? ` · Seed: ${sw.seedTime}` : ""}
+                                        {sw.fromEvent && swimMeet.events.some(o => o.mergedInto === activeEv.eventNum) && (() => { const fe = swimMeet.events.find(o => o.eventNum === sw.fromEvent); return fe ? <span style={{ fontWeight: 800, color: TM.swim }}> · Ev {evLabel(fe)} {fe.ageGroup}</span> : null; })()}</div>
+                                      {(sw.legs || []).some(Boolean) && <div style={{ fontSize: 13, color: "#3D434B" }}>{(sw.legs || []).map((l, i) => l ? `${i + 1}. ${l.name}` : `${i + 1}. —`).join("  ")}</div>}
                                     </div>
                                     {(() => {
                                       const assigned = swimHostClickers.find(c => c.lane === sw.lane);
@@ -18295,7 +18608,7 @@ Start a new race anyway?`)) return;
                             })()}
 
                             {swimResultsTab === "results" && (() => {
-                              const selEv = swimMeet.events.find(e => e.eventNum === swimResultsEvent);
+                              const selEv = resultEvents(swimMeet.events).find(e => e.eventNum === swimResultsEvent);
                               if (!selEv) return <div style={{ color:"#3D434B", textAlign:"center", padding:24 }}>Select an event above to view results.</div>;
 
                               const allSwimmers = selEv.heats.flatMap(h => h.lanes.map(sw => ({...sw, heatNum: h.heatNum})));
@@ -18359,7 +18672,7 @@ Start a new race anyway?`)) return;
                                         {finishers.map((sw, i) => (
                                           <tr key={`${sw.heatNum}-${sw.lane}`} style={{ background: i % 2 === 0 ? "transparent" : "#EFEDE8" }}>
                                             <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:700, color: i === 0 ? "#8A5A00" : i === 1 ? "#3D434B" : i === 2 ? "#B44A00" : "#0B0D10" }}>{i+1}</td>
-                                            <td style={{ padding:"5px 6px", color:"#0B0D10" }}>{sw.name}</td>
+                                            <td style={{ padding:"5px 6px", color:"#0B0D10" }}>{sw.name}{(sw.legs || []).some(Boolean) && <div style={{ fontSize: 12, color: "#3D434B" }}>{sw.legs.map((l, k) => l ? `${k + 1}. ${l.name}` : "").filter(Boolean).join(", ")}</div>}</td>
                                             <td style={{ textAlign:"center", padding:"5px 6px", color:"#3D434B" }}>{sw.age}</td>
                                             <td style={{ padding:"5px 6px", color:"#3D434B" }}>{sw.team}</td>
                                             <td style={{ padding:"5px 6px", color:"#3D434B" }}>{sw.seedTime || "NT"}</td>
@@ -18882,6 +19195,8 @@ Start a new race anyway?`)) return;
                         {mySwimmer ? (
                           <div>
                             <div style={{ fontSize:26, fontWeight:700, color:"#0B0D10", marginBottom:2 }}>{mySwimmer.name || "—"}</div>
+                            {mySwimmer.scratch && <div style={{ fontSize: 16, fontWeight: 900, color: "#B3001B" }}>Scratched — no swimmer in your lane this heat</div>}
+                            {(mySwimmer.legs || []).some(Boolean) && <div style={{ fontSize: 14, color: "#3D434B" }}>{mySwimmer.legs.map((l, i) => l ? `${i + 1}. ${l.name}` : `${i + 1}. —`).join("  ")}</div>}
                             <div style={{ fontSize:14, color:"#3D434B" }}>
                               {mySwimmer.team && <span style={{ color:"#04613F", fontWeight:700 }}>{mySwimmer.team}</span>}
                               {mySwimmer.team && mySwimmer.seedMs ? " · " : ""}
