@@ -19,7 +19,7 @@
 <body>
 <main>
   <h1>Timeathon Privacy</h1>
-  <p class="date">For the Timeathon race-timing web app (timeathon.com) and the Timeathon Garmin watch app. Last updated October 10, 2026.</p>
+  <p class="date">For the Timeathon race-timing web app (timeathon.com) and the Timeathon Garmin watch app. Last updated October 12, 2026. Timeathon is run by BobbMann Productions LLC.</p>
 
   <h2>Your account</h2>
   <p>When you create an account we keep your name, email address, date of birth, gender and the role you pick (host, athlete or spectator). Your password is handled by Google Firebase Authentication; Timeathon never sees it. Your date of birth is used to put you in the right age group.</p>
@@ -48,7 +48,10 @@
   <p>The watch reads back your race's start time and leg times so it can show the race clock. Nothing is sent before you pair. If you choose to record the activity, it is saved on your watch and syncs to Garmin Connect under Garmin's own privacy terms.</p>
 
   <h2>Race photos</h2>
-  <p>Race hosts can upload photos to a race album. Anyone with that album's photo code can view and download them. Ask the host if you'd like a photo removed.</p>
+  <p>Race hosts can upload photos to a race album. People connected to that race (athletes, parents who linked themselves to their kids, and spectators who watched it while signed in) can open the album from the race. Anyone else needs the album's photo code. Ask the host if you'd like a photo removed.</p>
+
+  <h2>Parents and the kids they follow</h2>
+  <p>A spectator can mark which athletes in a race are their kids. We save those names with the spectator's account so the app can star them, open lap counting for them, and recognise them in later races. Other people can't see who you marked.</p>
 
   <h2>Children</h2>
   <p>Youth races are usually entered by the race host or a parent. Accounts for children under 13 should be created and managed by a parent or guardian, who can ask for the child's data to be removed at any time.</p>
@@ -59,11 +62,21 @@
   <h2>Site analytics</h2>
   <p>We use Google Analytics to count visits and see which screens people use, so we can improve the app. It records things like pages viewed, device type and approximate region, not your name, email or race times. You can block it with your browser's privacy settings or an ad blocker.</p>
 
+  <h2>How we protect it</h2>
+  <ul>
+    <li>Everything travels over an encrypted (HTTPS) connection, and data is encrypted where Google stores it.</li>
+    <li>Database rules decide who can see and change what: only a race's host can run it, people can only edit their own account, and lap counts and watch data are accepted only while a race is live.</li>
+    <li>Google's App Check and reCAPTCHA confirm requests come from the real Timeathon app, to block bots and scripts.</li>
+    <li>The database is backed up daily so results can be restored after a mistake.</li>
+  </ul>
+
   <h2>What we don't do</h2>
   <p>Timeathon doesn't sell your data, doesn't share it with advertisers, doesn't show ads, and doesn't track you outside the races and rides you join.</p>
 
-  <h2>Questions or deletion</h2>
-  <p>To have your account or race data removed, ask the host of your race, or email <a href="mailto:bobbmannproductions@gmail.com">bobbmannproductions@gmail.com</a>.</p>
+  <h2>Your choices: copy, delete, questions</h2>
+  <p><strong>Download your data:</strong> in the app, open your profile and tap <em>Download my data</em> for a copy of everything saved with your account.</p>
+  <p><strong>Delete your account:</strong> in your profile, tap <em>Delete my account</em>. This removes your profile, saved races, results, athlete lists, the kids you marked and your race sign-ups. Results in races you took part in stay with that race for the other athletes and families, unless you ask the host or us to remove them.</p>
+  <p><strong>Can't sign in, or want something removed by hand?</strong> Email <a href="mailto:support@timeathon.com">support@timeathon.com</a> from the address on your account and we'll handle it within 30 days. Parents can ask the same for a child's data at any time.</p>
 </main>
 </body>
 </html>

@@ -3,7 +3,10 @@
     "watchTokens": {
       "$token": {
         ".read": true,
-        ".write": "auth != null"
+        ".write": "auth != null && (!data.exists() ? newData.child('createdBy').val() === auth.uid : (data.child('createdBy').val() === auth.uid || !data.child('createdBy').exists() || root.child('liveRaces').child(data.child('raceCode').val() + '').child('publishedBy').val() === auth.uid))",
+        "race": {
+          ".write": "auth != null && (root.child('watchTokens').child($token).child('createdBy').val() === auth.uid || root.child('liveRaces').child(root.child('watchTokens').child($token).child('raceCode').val() + '').child('publishedBy').val() === auth.uid)"
+        }
       }
     },
     "users": {
@@ -35,23 +38,23 @@
             },
             "splits": {
               "$seg": {
-                ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+                ".write": "auth != null && root.child('liveRaces').child($code).child('status').val() === 'live'"
               }
             },
             "startOffset": {
-              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+              ".write": "auth != null && root.child('liveRaces').child($code).child('status').val() === 'live'"
             },
             "started": {
-              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+              ".write": "auth != null && root.child('liveRaces').child($code).child('status').val() === 'live'"
             },
             "finished": {
-              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+              ".write": "auth != null && root.child('liveRaces').child($code).child('status').val() === 'live'"
             },
             "trainer": {
-              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+              ".write": "auth != null && root.child('liveRaces').child($code).child('status').val() === 'live'"
             },
             "hr": {
-              ".write": "root.child('liveRaces').child($code).child('status').val() === 'live'"
+              ".write": "auth != null && root.child('liveRaces').child($code).child('status').val() === 'live'"
             }
           }
         }
@@ -76,7 +79,22 @@
     "swimLive": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null"
+        ".write": "auth != null && (!data.exists() ? (newData.child('hostUid').val() === auth.uid && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || auth.uid === 'zaZlSgcfROeSKUwgFz2Qwsu0WVg2' || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))) : data.child('hostUid').val() === auth.uid)",
+        "results": {
+          "$lane": {
+            ".write": "auth != null && root.child('swimLive').child($code).exists()"
+          }
+        },
+        "timers": {
+          "$lane": {
+            ".write": "auth != null && root.child('swimLive').child($code).exists()"
+          }
+        },
+        "clock": {
+          "$k": {
+            ".write": "auth != null && root.child('swimLive').child($code).exists()"
+          }
+        }
       }
     },
     "photoAlbums": {
@@ -166,6 +184,13 @@
       ".read": "auth != null && (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3')",
       "$uid": {
         ".write": "auth != null && (auth.uid === $uid || (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3'))"
+      }
+    },
+    "crashReports": {
+      ".read": "auth != null && (auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3')",
+      "$id": {
+        ".write": "auth != null && !data.exists()",
+        ".validate": "newData.hasChildren(['at','msg'])"
       }
     }
   }

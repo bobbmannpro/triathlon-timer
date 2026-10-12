@@ -53,6 +53,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <!-- Pinned to 7.x on purpose: Babel 8's preset-react defaults to runtime:"automatic",
@@ -242,6 +243,13 @@
       // the app uses Esri maps and OpenStreetMap search instead.
       const GOOGLE_KEY = "";
       firebase.initializeApp(firebaseConfig);
+      // App Check: proves requests come from the real Timeathon site (reCAPTCHA
+      // Enterprise, invisible), so scripts holding the public config can't use
+      // the database and photo storage directly.
+      try {
+        if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+        firebase.appCheck().activate(new firebase.appCheck.ReCaptchaEnterpriseProvider("6Lc3nestAAAAAJ1jc_E4F8iJKu3Foaw7oEPkCCFG"), true);
+      } catch (e) { console.warn("App Check not started:", e && e.message); }
       var auth = firebase.auth();
       var rtdb = firebase.database();
       var storage = firebase.storage();
@@ -6650,6 +6658,8 @@ ${html}</body></html>`);
             const displayName = `${authFirstName.trim()} ${authLastName.trim()}`;
             const cred = await auth.createUserWithEmailAndPassword(authEmail, authPassword);
             await cred.user.updateProfile({ displayName });
+            // Confirms the address is really theirs (results, photo codes and resets go there).
+            cred.user.sendEmailVerification().catch(() => {});
             const profile = { firstName: authFirstName.trim(), lastName: authLastName.trim(), displayName, email: authEmail, birthday: authBirthday, gender: authGender, role: authRole, createdAt: new Date().toISOString() };
             await rtdb.ref("users/" + cred.user.uid + "/profile").set(profile);
             localStorage.setItem("tri-user-profile", JSON.stringify(profile));
@@ -6672,6 +6682,48 @@ ${html}</body></html>`);
           setJoinedRaces({}); setJoinRace(null); setJoinCode("");
           setRegistrationCode(null); setRegistrationOpen(false);
           localStorage.removeItem("tri-active-live"); localStorage.removeItem("tri-active-join");
+        }
+
+        // ── Your data: download a copy, or delete the account ──
+        const [privacyMsg, setPrivacyMsg] = useState("");
+        const [deletePw, setDeletePw] = useState("");
+        const [deleteStep, setDeleteStep] = useState(0);   // 0 closed, 1 confirm, 2 working
+        async function downloadMyData() {
+          if (!currentUser) return;
+          try {
+            const mine = (await rtdb.ref("users/" + currentUser.uid).once("value")).val() || {};
+            const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), account: { uid: currentUser.uid, email: currentUser.email, emailVerified: currentUser.emailVerified }, data: mine }, null, 2)], { type: "application/json" });
+            const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+            a.download = "timeathon-my-data-" + new Date().toISOString().slice(0, 10) + ".json"; a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+            setPrivacyMsg("Downloaded — it's in your Downloads folder.");
+          } catch (e) { setPrivacyMsg("Couldn't download right now. Try again in a moment."); }
+        }
+        async function deleteMyAccount() {
+          const u = auth.currentUser;
+          if (!u) return;
+          setDeleteStep(2); setPrivacyMsg("");
+          try {
+            // Firebase only deletes an account that signed in recently, so confirm the password first.
+            await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, deletePw));
+            const uid = u.uid;
+            const codes = Object.keys(joinedRaces || {});
+            // Their sign-ups and contact details on races they joined, then everything under their account.
+            await Promise.all(codes.flatMap(c => [
+              rtdb.ref(`liveRaces/${c}/registrations/${uid}`).remove().catch(() => {}),
+              rtdb.ref(`raceContacts/${c}/${uid}`).remove().catch(() => {}),
+            ]));
+            await rtdb.ref("users/" + uid).remove();
+            try { Object.keys(localStorage).filter(k => /^(tri-|tm-|lap-mine-|bike-)/.test(k)).forEach(k => localStorage.removeItem(k)); } catch (_) {}
+            await u.delete();
+            setDeleteStep(0); setDeletePw("");
+            authSignOut();
+            alert("Your Timeathon account and data have been deleted.");
+          } catch (e) {
+            setDeleteStep(1);
+            setPrivacyMsg(e && (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential" || e.code === "auth/invalid-login-credentials")
+              ? "That password isn't right." : "Couldn't delete the account: " + ((e && e.message) || "try again"));
+          }
         }
 
         function generateRaceCode() {
@@ -8633,6 +8685,7 @@ ${html}</body></html>`);
           const athleteName = ath ? (ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || "") : "";
           try {
             await rtdb.ref(`watchTokens/${token}`).set({
+              createdBy: currentUser ? currentUser.uid : null,
               raceCode: joinRace.code,
               athIdx: joinAthIdx,
               athleteName,
@@ -9925,6 +9978,7 @@ ${html}</body></html>`);
             });
             const t0 = serverNow();
             await rtdb.ref("watchTokens/" + token).set({
+              createdBy: currentUser ? currentUser.uid : null,
               raceCode: rcode, athIdx: 0, athleteName: name, expiresAt: Date.now() + 12 * 60 * 60 * 1000,
               race: { started: !!bikeRidingRef.current, finished: false, startAt: bikeRidingRef.current ? t0 : 0,
                       splits: bikeRidingRef.current ? [t0, t0, 0, 0, 0] : [0, 0, 0, 0, 0],
@@ -14611,6 +14665,37 @@ Start a new race anyway?`)) return;
                     style={{ width: "100%", background: "transparent", border: "2px solid #C9C5BC", borderRadius: 6, padding: "11px", fontSize: 14, fontWeight: 700, color: "#B3001B", cursor: "pointer" }}>
                     Sign Out
                   </button>
+
+                  {/* Privacy: confirm the email, take a copy of your data, or delete the account. */}
+                  <div style={{ ...rowStyle(), marginTop: 20 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: TM.inkMuted, marginBottom: 8 }}>Your data & privacy</div>
+                    {currentUser && !currentUser.emailVerified && (
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 15, fontWeight: 700 }}>Confirm your email ({currentUser.email})</div>
+                        <div style={TM_CAPTION}>We sent you a link. It keeps your account recoverable and makes sure results reach you.</div>
+                        <button onClick={() => currentUser.sendEmailVerification().then(() => setPrivacyMsg("Sent — check your inbox (and spam).")).catch(() => setPrivacyMsg("Please wait a few minutes before asking for another one."))}
+                          style={{ ...btnStyle(TM.ink, true), minHeight: 40, fontSize: 14, marginTop: 6 }}>Resend confirmation email</button>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={downloadMyData} style={{ ...btnStyle(TM.ink, true), minHeight: 44, fontSize: 14, flex: "1 1 160px" }}>⬇ Download my data</button>
+                      <button onClick={() => { setDeleteStep(1); setPrivacyMsg(""); }} style={{ ...btnStyle(TM.live, true), minHeight: 44, fontSize: 14, flex: "1 1 160px" }}>Delete my account</button>
+                    </div>
+                    {deleteStep > 0 && (
+                      <div role="alertdialog" aria-label="Delete account" style={{ marginTop: 12, borderLeft: `6px solid ${TM.live}`, paddingLeft: 12 }}>
+                        <div style={{ fontSize: 15, fontWeight: 800 }}>Delete your account for good?</div>
+                        <div style={TM_CAPTION}>This removes your profile, saved races, results, athlete list and sign-ups. Races you already hosted stay visible to their families. It can't be undone.</div>
+                        <input type="password" value={deletePw} onChange={e => setDeletePw(e.target.value)} placeholder="Your password" autoComplete="current-password"
+                          style={{ width: "100%", minHeight: 44, fontSize: 16, padding: "0 12px", border: "2px solid #C9C5BC", borderRadius: 6, marginTop: 8 }} />
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button disabled={!deletePw || deleteStep === 2} onClick={deleteMyAccount} style={{ ...btnStyle(TM.live), minHeight: 44, flex: 1, opacity: !deletePw || deleteStep === 2 ? 0.6 : 1 }}>{deleteStep === 2 ? "Deleting…" : "Yes, delete everything"}</button>
+                          <button onClick={() => { setDeleteStep(0); setDeletePw(""); }} style={{ ...btnStyle(TM.ink, true), minHeight: 44, flex: 1 }}>Keep my account</button>
+                        </div>
+                      </div>
+                    )}
+                    {privacyMsg && <div style={{ marginTop: 8, fontSize: 14, fontWeight: 700 }}>{privacyMsg}</div>}
+                    <div style={{ ...TM_CAPTION, marginTop: 10 }}><a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a> · Questions: support@timeathon.com</div>
+                  </div>
                 </div>
               )}
 
@@ -20425,7 +20510,7 @@ Start a new race anyway?`)) return;
                         comp: String(info && info.componentStack || "").slice(0, 800), ua: navigator.userAgent.slice(0, 200) };
           try { localStorage.setItem("tm-last-crash", JSON.stringify(rep)); } catch (_) {}
           // So the developer can see what broke on a real phone.
-          try { if (window.firebase && firebase.auth().currentUser) { firebase.database().ref("watchTokens/crash_" + rep.at).set(rep).catch(() => {}); firebase.database().ref("watchTokens/crash_latest").set(rep).catch(() => {}); } } catch (_) {}
+          try { if (window.firebase && firebase.auth().currentUser) { firebase.database().ref("crashReports/" + rep.at + "_" + firebase.auth().currentUser.uid.slice(0, 6)).set({ ...rep, uid: firebase.auth().currentUser.uid }).catch(() => {}); } } catch (_) {}
         }
         render() {
           if (!this.state.err) return this.props.children;
