@@ -5520,8 +5520,8 @@ ${html}</body></html>`);
               <div>
                 {teamPick}{anyAgeToggle}
                 <div style={{ ...TM_CAPTION, marginTop: 8 }}>
-                  Tap <strong>No show</strong> to take a swimmer out of every event they haven't swum yet. Heats re-seed and the lane timers update by themselves.
-                  {noShows ? ` ${noShows} no-show${noShows > 1 ? "s" : ""} on this team.` : ""}
+                  Tap <strong>Scratch swimmer</strong> to take a swimmer out of every event they haven't swum yet. Heats re-seed and the lane timers update by themselves.
+                  {noShows ? ` ${noShows} scratched on this team.` : ""}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
                   {roster.length === 0 && <div style={TM_CAPTION}>No swimmers entered for this team.</div>}
@@ -5541,7 +5541,7 @@ ${html}</body></html>`);
                           </button>
                           <button onClick={() => setEntry(e.id, x => ({ ...x, noShow: !x.noShow }))}
                             style={{ ...btnStyle(TM.live, !e.noShow), minHeight: 40, padding: "0 12px", fontSize: 14, flexShrink: 0 }}>
-                            {e.noShow ? "No show ✓ (undo)" : "No show"}</button>
+                            {e.noShow ? "Scratched ✓ (undo)" : "Scratch swimmer"}</button>
                         </div>
                         {open && (
                           <div style={{ marginTop: 8, borderTop: `2px solid ${TM.line}`, paddingTop: 8 }}>
@@ -5604,10 +5604,10 @@ ${html}</body></html>`);
                                     setRelays(list => list.map(rr => rr.id !== r.id ? rr : { ...rr, legs: [0, 1, 2, 3].map(k => k === i ? (e ? { id: e.id, name: e.name, age: swimAgeOn(e, ageDate) } : null) : ((rr.legs || [])[k] || null)) }));
                                   }} style={{ flex: 1, minWidth: 0, minHeight: 40, fontSize: 15, border: `2px solid ${gone ? TM.live : TM.line}`, borderRadius: 6, padding: "0 6px" }}>
                                     <option value="">— pick a swimmer —</option>
-                                    {leg && !pool.some(e => e.id === leg.id) && <option value={leg.id}>{leg.name}{gone ? " (no show)" : ""}</option>}
+                                    {leg && !pool.some(e => e.id === leg.id) && <option value={leg.id}>{leg.name}{gone ? " (scratched)" : ""}</option>}
                                     {pool.filter(e => e.id === (leg && leg.id) || !used.has(e.id)).map(e => <option key={e.id} value={e.id}>{e.name} ({swimAgeOn(e, ageDate) ?? "?"})</option>)}
                                   </select>
-                                  {gone && <span style={{ color: TM.live, fontWeight: 800, fontSize: 13 }}>⚠ no show</span>}
+                                  {gone && <span style={{ color: TM.live, fontWeight: 800, fontSize: 13 }}>⚠ scratched</span>}
                                 </div>
                               );
                             })}
@@ -18339,7 +18339,7 @@ Start a new race anyway?`)) return;
                       <div>
                         {swimDayOpen && renderSwimDay()}
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                          <button onClick={() => setSwimDayOpen("swimmers")} style={{ ...btnStyle(TM.ink, true), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 140px" }}>👥 No-shows & events</button>
+                          <button onClick={() => setSwimDayOpen("swimmers")} style={{ ...btnStyle(TM.ink, true), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 140px" }}>👥 Scratch swimmers & events</button>
                           <button onClick={() => setSwimDayOpen("relays")} style={{ ...btnStyle(TM.ink, true), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 100px" }}>Relays</button>
                           <button onClick={() => setSwimDayOpen("combine")} style={{ ...btnStyle(TM.ink, true), minHeight: 42, padding: "0 12px", fontSize: 15, flex: "1 1 140px" }}>⇄ Combine events</button>
                         </div>
