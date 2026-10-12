@@ -193,6 +193,25 @@
         ".write": "auth != null && !data.exists()",
         ".validate": "newData.hasChildren(['at','msg'])"
       }
+    },
+    "timedRaces": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() ? (newData.child('hostUid').val() === auth.uid && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || auth.uid === 'zaZlSgcfROeSKUwgFz2Qwsu0WVg2' || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))) : data.child('hostUid').val() === auth.uid)",
+        "athletes": {
+          "$id": {
+            "uid": {
+              ".write": "auth != null && root.child('timedRaces').child($code).child('status').val() === 'live' && !data.exists() && newData.val() === auth.uid"
+            },
+            "dist": {
+              "$leg": {
+                ".write": "auth != null && root.child('timedRaces').child($code).child('status').val() === 'live' && root.child('timedRaces').child($code).child('athletes').child($id).child('uid').val() === auth.uid",
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 200000"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

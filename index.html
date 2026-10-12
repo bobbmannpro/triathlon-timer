@@ -1217,6 +1217,7 @@
         triathlon: { label: "Triathlon", colour: TM.ink },
         swim:      { label: "Swim meet", colour: TM.swim },
         bike:      { label: "Bike / Run", colour: TM.bike },
+        timed:     { label: "Timed Tri", colour: TM.run },
       };
 
       // ── Setup wizard frame ───────────────────────────────────────────────────
@@ -1332,6 +1333,7 @@
           ["triathlon", TM.ink,  "Triathlon", "Swim, bike, run — splits, GPS, certificates"],
           ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
           ["bike",      TM.bike, "Bike / Run", "Live map of a ride or a run — one or many athletes"],
+          ["timed",     TM.run,  "Timed Tri", "Set time per leg — most distance wins. Waves, bikes & treadmills"],
         ];
         return (
           <div>
@@ -4290,6 +4292,460 @@ ${html}</body></html>`);
         );
       }
 
+      // ══ TIMED TRI ═══════════════════════════════════════════════════════════════
+      // A triathlon judged by distance: every leg runs for a set time and the
+      // athlete who covers the most ground wins. Waves start when the host taps
+      // Start; each wave's clock then moves through the legs by itself.
+      // Swim distance comes from the athlete's own watch (they type it in during
+      // T1, honor system). Bikes (Stages, any FTMS bike) and treadmills (FTMS) or
+      // foot pods (RSC) connect to the host's laptop over Bluetooth.
+      // Data: timedRaces/{code} = { hostUid, name, status, legs:[{k,min}], units,
+      //   ageGroups, waves:[{startAt}], athletes:{ id: { name, gender, age, wave,
+      //   bike, tread, uid, dist:{swim,bike,run} (metres), live:{bike,run}, manual } } }
+      const TT_LEG = { swim: "Swim", t1: "T1", bike: "Bike", t2: "T2", run: "Run" };
+      const TT_COL = { swim: "#0B3FCC", bike: "#B44A00", run: "#04613F", t1: "#3D434B", t2: "#3D434B" };
+      const TT_DEFAULT_LEGS = [{ k: "swim", min: 10 }, { k: "t1", min: 10 }, { k: "bike", min: 20 }, { k: "t2", min: 5 }, { k: "run", min: 10 }];
+      const TT_SCORED = ["swim", "bike", "run"];
+      const ttList = o => Array.isArray(o) ? o.filter(Boolean) : Object.values(o || {}).filter(Boolean);
+      function ttDist(m, unit) {
+        if (m == null || isNaN(m)) return "—";
+        if (unit === "yd") return Math.round(m / 0.9144) + " yd";
+        if (unit === "m") return Math.round(m) + " m";
+        if (unit === "km") return (m / 1000).toFixed(2) + " km";
+        return (m / 1609.344).toFixed(2) + " mi";
+      }
+      function ttClock(ms) {
+        ms = Math.max(0, Math.round(ms / 1000));
+        const h = Math.floor(ms / 3600), m = Math.floor((ms % 3600) / 60), s = ms % 60;
+        return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0");
+      }
+      // Where a wave is right now: { idx, leg, endsAt, done, started }
+      function ttWaveState(race, w, now) {
+        const legs = race.legs || TT_DEFAULT_LEGS;
+        const wave = ttList(race.waves)[w] || {};
+        if (!wave.startAt) return { started: false };
+        let t = wave.startAt;
+        for (let i = 0; i < legs.length; i++) {
+          const end = t + (+legs[i].min || 0) * 60000;
+          if (now < end) return { started: true, idx: i, leg: legs[i].k, startsAt: t, endsAt: end };
+          t = end;
+        }
+        return { started: true, done: true, endsAt: t };
+      }
+      function ttLegWindow(race, w, k) {
+        const legs = race.legs || TT_DEFAULT_LEGS;
+        const wave = ttList(race.waves)[w] || {};
+        if (!wave.startAt) return null;
+        let t = wave.startAt;
+        for (const l of legs) { const end = t + (+l.min || 0) * 60000; if (l.k === k) return [t, end]; t = end; }
+        return null;
+      }
+      function ttAgeGroup(race, age) {
+        const groups = String(race.ageGroups || "").split(",").map(s => s.trim()).filter(Boolean);
+        if (age == null || age === "") return groups[0] || "Open";
+        for (const g of groups) {
+          let m;
+          if ((m = g.match(/^(\d+)\s*-\s*(\d+)/))) { if (age >= +m[1] && age <= +m[2]) return g; }
+          else if ((m = g.match(/^(\d+)\s*\+/)) || (m = g.match(/^(\d+)\s*(and|&)\s*(over|up)/i))) { if (age >= +m[1]) return g; }
+          else if ((m = g.match(/(under|&\s*under|and\s*under)\s*(\d+)?/i))) { const n = +(g.match(/\d+/) || [0])[0]; if (/^under/i.test(g) ? age < n : age <= n) return g; }
+        }
+        return groups[groups.length - 1] || "Open";
+      }
+      function ttTotal(a) { return TT_SCORED.reduce((s, k) => s + (+(a.dist && a.dist[k]) || 0), 0); }
+
+      // ── Bluetooth: bikes (FTMS Indoor Bike Data), treadmills (FTMS Treadmill Data), foot pods (RSC) ──
+      // Kept outside React so connections survive moving between screens.
+      const TT_BT = { devices: new Map(), race: null, code: null, acc: {}, lastWrite: {}, onChange: null };
+      function ttLabels() { try { return JSON.parse(localStorage.getItem("tt-dev-labels") || "{}"); } catch (_) { return {}; } }
+      function ttSetLabel(id, label) { const l = ttLabels(); l[id] = label; try { localStorage.setItem("tt-dev-labels", JSON.stringify(l)); } catch (_) {} }
+      function ttParseBike(dv) {
+        const f = dv.getUint16(0, true); let o = 2; const r = {};
+        if (!(f & 1)) { r.kmh = dv.getUint16(o, true) / 100; o += 2; }
+        if (f & 2) o += 2;
+        if (f & 4) { r.rpm = dv.getUint16(o, true) / 2; o += 2; }
+        if (f & 8) o += 2;
+        if (f & 16) { r.total = dv.getUint16(o, true) + (dv.getUint8(o + 2) << 16); o += 3; }
+        if (f & 32) { r.res = dv.getInt16(o, true); o += 2; }
+        if (f & 64) { r.w = dv.getInt16(o, true); o += 2; }
+        return r;
+      }
+      function ttParseTread(dv) {
+        const f = dv.getUint16(0, true); let o = 2; const r = {};
+        if (!(f & 1)) { r.kmh = dv.getUint16(o, true) / 100; o += 2; }
+        if (f & 2) o += 2;
+        if (f & 4) { r.total = dv.getUint16(o, true) + (dv.getUint8(o + 2) << 16); o += 3; }
+        if (f & 8) { r.incline = dv.getInt16(o, true) / 10; o += 4; }
+        return r;
+      }
+      function ttParseRsc(dv) {
+        const f = dv.getUint8(0); const r = { kmh: dv.getUint16(1, true) / 256 * 3.6, spm: dv.getUint8(3) * 2 };
+        let o = 4; if (f & 1) o += 2;
+        if (f & 2) r.total = dv.getUint32(o, true) / 10;
+        return r;
+      }
+      function ttOnReading(id, kind, r) {
+        const d = TT_BT.devices.get(id); if (!d) return;
+        const now = Date.now();
+        d.last = { ...r, t: now }; d.seen = now;
+        if (TT_BT.onChange) TT_BT.onChange();
+        const race = TT_BT.race, code = TT_BT.code;
+        if (!race || !code || race.status !== "live") return;
+        const leg = kind === "bike" ? "bike" : "run";
+        const label = String(d.label || "").trim().toLowerCase();
+        if (!label) return;
+        const field = leg === "bike" ? "bike" : "tread";
+        const serverNow = now + (TT_BT.offset || 0);
+        Object.entries(race.athletes || {}).forEach(([aid, a]) => {
+          if (!a || String(a[field] || "").trim().toLowerCase() !== label) return;
+          if (a.manual && a.manual[leg]) return;
+          const win = ttLegWindow(race, a.wave || 0, leg);
+          if (!win || serverNow < win[0] || serverNow > win[1]) return;
+          const key = aid + "|" + leg;
+          let acc = TT_BT.acc[key];
+          const stored = +(a.dist && a.dist[leg]) || 0;
+          if (!acc) acc = TT_BT.acc[key] = { base: r.total != null ? r.total - stored : null, dist: stored, t: now };
+          if (r.total != null && acc.base != null) acc.dist = Math.max(acc.dist, r.total - acc.base);
+          else if (r.kmh != null) acc.dist += (r.kmh / 3.6) * Math.min(5, (now - acc.t) / 1000);
+          acc.t = now;
+          if (now - (TT_BT.lastWrite[key] || 0) > 2000) {
+            TT_BT.lastWrite[key] = now;
+            const live = leg === "bike" ? { w: r.w ?? null, rpm: r.rpm ?? null, res: r.res ?? null, kmh: r.kmh ?? null, t: serverNow }
+              : { kmh: r.kmh ?? null, incline: r.incline ?? null, spm: r.spm ?? null, t: serverNow };
+            rtdb.ref(`timedRaces/${code}/athletes/${aid}`).update({ [`dist/${leg}`]: Math.round(acc.dist), [`live/${leg}`]: live }).catch(() => {});
+          }
+        });
+      }
+      async function ttConnect(device) {
+        const server = await device.gatt.connect();
+        const svcs = await server.getPrimaryServices();
+        const uuids = svcs.map(s => s.uuid);
+        const has = u => uuids.some(x => x.startsWith("0000" + u));
+        let kind = null, charU = null, parse = null, svcU = null;
+        if (has("1826")) {
+          const s = await server.getPrimaryService(0x1826);
+          const chars = (await s.getCharacteristics()).map(c => c.uuid);
+          if (chars.some(c => c.startsWith("00002ad2"))) { kind = "bike"; svcU = 0x1826; charU = 0x2AD2; parse = ttParseBike; }
+          else if (chars.some(c => c.startsWith("00002acd"))) { kind = "tread"; svcU = 0x1826; charU = 0x2ACD; parse = ttParseTread; }
+        }
+        if (!kind && has("1814")) { kind = "tread"; svcU = 0x1814; charU = 0x2A53; parse = ttParseRsc; }
+        if (!kind) throw new Error("This device doesn't send bike or treadmill data (no FTMS or running sensor).");
+        const ch = await (await server.getPrimaryService(svcU)).getCharacteristic(charU);
+        await ch.startNotifications();
+        ch.addEventListener("characteristicvaluechanged", e => { try { ttOnReading(device.id, kind, parse(e.target.value)); } catch (_) {} });
+        const prev = TT_BT.devices.get(device.id) || {};
+        TT_BT.devices.set(device.id, { ...prev, device, kind, label: prev.label || ttLabels()[device.id] || "", name: device.name || "Device", connected: true });
+        device.addEventListener("gattserverdisconnected", () => {
+          const d = TT_BT.devices.get(device.id); if (d) d.connected = false;
+          if (TT_BT.onChange) TT_BT.onChange();
+          setTimeout(() => ttConnect(device).then(() => TT_BT.onChange && TT_BT.onChange()).catch(() => {}), 3000);   // keep trying
+        });
+        if (TT_BT.onChange) TT_BT.onChange();
+        return kind;
+      }
+
+      function TimedTri({ code, viewer, currentUser, userProfile, onBack }) {
+        const [race, setRace] = React.useState(undefined);
+        const [tab, setTab] = React.useState(viewer ? "standings" : "setup");
+        const [, tick] = React.useState(0);
+        const [msg, setMsg] = React.useState("");
+        const [newAth, setNewAth] = React.useState({ name: "", gender: "Male", age: "", wave: 0 });
+        const [entry, setEntry] = React.useState({});
+        const [board, setBoard] = React.useState("overall");
+        const ref = React.useMemo(() => rtdb.ref("timedRaces/" + code), [code]);
+        const isHost = !viewer && race && currentUser && race.hostUid === currentUser.uid;
+        React.useEffect(() => {
+          const fn = sn => { const v = sn.val(); setRace(v); if (!viewer) { TT_BT.race = v; TT_BT.code = code; } };
+          ref.on("value", fn, () => setRace(null));
+          rtdb.ref(".info/serverTimeOffset").once("value").then(s => { TT_BT.offset = s.val() || 0; }).catch(() => {});
+          const iv = setInterval(() => tick(x => x + 1), 1000);
+          TT_BT.onChange = () => tick(x => x + 1);
+          return () => { ref.off("value", fn); clearInterval(iv); };
+        }, [code]);
+        if (race === undefined) return <div style={{ padding: 20 }}>Loading…</div>;
+        if (!race) return <div style={{ padding: 20 }}><button onClick={onBack} style={btnStyle(TM.ink, true)}>← Back</button><div style={{ marginTop: 16 }}>No Timed Tri found with code {code}.</div></div>;
+
+        const now = Date.now() + (TT_BT.offset || 0);
+        const legs = race.legs || TT_DEFAULT_LEGS;
+        const waves = ttList(race.waves).length ? ttList(race.waves) : [{}];
+        const athletes = Object.entries(race.athletes || {}).map(([id, a]) => ({ ...a, id })).filter(a => a.name);
+        const units = race.units || { swim: "yd", dist: "mi" };
+        const unitFor = k => k === "swim" ? units.swim : units.dist;
+        const set = (path, val) => ref.child(path).set(val).catch(e => setMsg("Couldn't save: " + e.message));
+        const upd = obj => ref.update(obj).catch(e => setMsg("Couldn't save: " + e.message));
+        const mine = athletes.filter(a => currentUser && a.uid === currentUser.uid);
+        const inputS = { minHeight: 44, fontSize: 16, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF" };
+        const parseDist = (txt, unit) => {
+          const v = parseFloat(String(txt).replace(/[^0-9.]/g, "")); if (isNaN(v) || v < 0) return null;
+          return unit === "yd" ? v * 0.9144 : unit === "m" ? v : unit === "km" ? v * 1000 : v * 1609.344;
+        };
+        const stateText = w => {
+          const s = ttWaveState(race, w, now);
+          if (!s.started) return "Not started";
+          if (s.done) return "Finished";
+          return `${TT_LEG[s.leg]} · ${ttClock(s.endsAt - now)} left`;
+        };
+
+        // ── Standings ──
+        const ranked = list => list.slice().sort((a, b) => ttTotal(b) - ttTotal(a));
+        const boardList = () => {
+          if (board === "overall") return [["Overall", ranked(athletes)]];
+          if (board === "waves") return waves.map((_, w) => [`Wave ${w + 1}`, ranked(athletes.filter(a => (a.wave || 0) === w))]);
+          const groups = {};
+          athletes.forEach(a => { const k = `${a.gender || ""} ${ttAgeGroup(race, a.age === "" || a.age == null ? null : +a.age)}`.trim(); (groups[k] = groups[k] || []).push(a); });
+          return Object.entries(groups).sort().map(([k, l]) => [k, ranked(l)]);
+        };
+        const standings = (
+          <div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              {[["overall", "Overall"], ["waves", "By wave"], ["groups", "Age group"]].map(([k, l]) => (
+                <button key={k} onClick={() => setBoard(k)} style={{ ...btnStyle(TM.ink, board !== k), minHeight: 40, padding: "0 10px", fontSize: 14, flex: 1 }}>{l}</button>))}
+            </div>
+            {boardList().map(([title, list]) => (
+              <div key={title} style={{ marginBottom: 16 }}>
+                <div style={{ background: TM.ink, color: "#FFFFFF", padding: "8px 12px", fontWeight: 900, letterSpacing: 1 }}>{title.toUpperCase()}</div>
+                {list.length === 0 && <div style={{ ...TM_CAPTION, padding: 10 }}>Nobody yet.</div>}
+                {list.map((a, i) => (
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderBottom: `2px solid ${TM.line}`, background: "#FFFFFF" }}>
+                    <div style={{ width: 28, fontWeight: 900, fontSize: 18 }}>{ttTotal(a) > 0 ? i + 1 : "–"}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 16 }}>{a.name}{a.bib ? ` #${a.bib}` : ""}</div>
+                      <div style={{ fontSize: 13, color: TM.inkMuted }}>
+                        W{(a.wave || 0) + 1} · {stateText(a.wave || 0)}<br />
+                        {TT_SCORED.map(k => <span key={k} style={{ marginRight: 8 }}><b style={{ color: TT_COL[k] }}>{TT_LEG[k]}</b> {ttDist(a.dist && a.dist[k], unitFor(k))}</span>)}
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: 900, fontSize: 18, color: TM.run, whiteSpace: "nowrap" }}>{ttDist(ttTotal(a), units.dist)}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div style={TM_CAPTION}>Total = swim + bike + run distance. Most distance wins.</div>
+          </div>
+        );
+
+        // ── Athlete card: claim your name, enter swim distance from your watch ──
+        const myCard = a => {
+          const s = ttWaveState(race, a.wave || 0, now);
+          const legsToEnter = TT_SCORED.filter(k => k === "swim" || !(k === "bike" ? a.bike : a.tread));
+          return (
+            <div key={a.id} style={{ ...rowStyle(TM.swim), marginBottom: 12 }}>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>{a.name} · Wave {(a.wave || 0) + 1}</div>
+              <div style={{ fontSize: 28, fontWeight: 900, color: s.started && !s.done ? TT_COL[s.leg] : TM.ink }}>{stateText(a.wave || 0)}</div>
+              {legsToEnter.map(k => {
+                const win = ttLegWindow(race, a.wave || 0, k);
+                const open = win && now >= win[0];
+                return (
+                  <div key={k} style={{ marginTop: 10 }}>
+                    <div style={{ fontWeight: 800 }}>{TT_LEG[k]} distance {k === "swim" ? "(from your watch)" : "(from the machine)"}: {ttDist(a.dist && a.dist[k], unitFor(k))}</div>
+                    {open && race.status === "live" && (
+                      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                        <input inputMode="decimal" value={entry[a.id + k] ?? ""} onChange={e => setEntry(x => ({ ...x, [a.id + k]: e.target.value }))}
+                          placeholder={`e.g. ${k === "swim" ? (unitFor(k) === "yd" ? "450" : "400") : "3.1"} ${unitFor(k)}`} style={{ ...inputS, flex: 1, minWidth: 0 }} />
+                        <button onClick={() => { const m = parseDist(entry[a.id + k], unitFor(k)); if (m == null) return; set(`athletes/${a.id}/dist/${k}`, Math.round(m)); setEntry(x => ({ ...x, [a.id + k]: "" })); }}
+                          style={{ ...btnStyle(TM.ink), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Save</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        };
+
+        if (viewer || !isHost) {
+          return (
+            <div style={{ padding: "0 16px 60px" }}>
+              <button onClick={onBack} style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>← Back</button>
+              <h1 style={{ ...TM_DISPLAY, marginTop: 10, fontSize: 34 }}>{race.name || "Timed Tri"}</h1>
+              <div style={TM_CAPTION}>Timed Tri · code {code} · {legs.map(l => `${TT_LEG[l.k]} ${l.min}′`).join(" → ")}</div>
+              {currentUser && mine.map(myCard)}
+              {currentUser && mine.length === 0 && athletes.some(a => !a.uid) && (
+                <div style={{ ...rowStyle(), marginTop: 12 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Racing? Tap your name to enter your swim distance during T1.</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {athletes.filter(a => !a.uid).map(a => <button key={a.id} onClick={() => set(`athletes/${a.id}/uid`, currentUser.uid)}
+                      style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>{a.name}</button>)}
+                  </div>
+                </div>
+              )}
+              <div style={{ marginTop: 16 }}>{standings}</div>
+            </div>
+          );
+        }
+
+        // ── HOST ──
+        const tabs = [["setup", "Setup"], ["race", "Race"], ["devices", "Devices"], ["standings", "Standings"]];
+        const legEditor = (
+          <div style={rowStyle()}>
+            <div style={TM_LABEL}>Legs (minutes)</div>
+            {legs.map((l, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                <span style={{ width: 60, fontWeight: 800, color: TT_COL[l.k] }}>{TT_LEG[l.k]}</span>
+                <input type="number" min={0} value={l.min} onChange={e => set(`legs/${i}/min`, Math.max(0, +e.target.value || 0))} style={{ ...inputS, width: 90 }} />
+                <span style={TM_CAPTION}>min</span>
+              </div>
+            ))}
+            <div style={{ ...TM_CAPTION, marginTop: 6 }}>Total {legs.reduce((s, l) => s + (+l.min || 0), 0)} minutes per wave.</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>Swim in
+                <select value={units.swim} onChange={e => set("units/swim", e.target.value)} style={inputS}><option value="yd">yards</option><option value="m">metres</option></select></label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>Bike & run in
+                <select value={units.dist} onChange={e => set("units/dist", e.target.value)} style={inputS}><option value="mi">miles</option><option value="km">km</option></select></label>
+            </div>
+          </div>
+        );
+        const setupTab = (
+          <div>
+            <label style={TM_LABEL}>Race name</label>
+            <input defaultValue={race.name} onBlur={e => set("name", e.target.value.trim())} style={{ ...inputS, width: "100%" }} />
+            <div style={{ ...TM_CAPTION, margin: "6px 0 14px" }}>Code <b>{code}</b> — athletes and spectators open it with this code (timeathon.com/?timed={code}).</div>
+            {legEditor}
+            <div style={{ ...rowStyle(), marginTop: 12 }}>
+              <div style={TM_LABEL}>Age groups</div>
+              <input defaultValue={race.ageGroups || "Under 20, 20-29, 30-39, 40-49, 50-59, 60+"} onBlur={e => set("ageGroups", e.target.value)} style={{ ...inputS, width: "100%" }} />
+              <div style={TM_CAPTION}>Comma separated, e.g. "Under 20, 20-29, 30-39, 40+". Standings split by gender and age group.</div>
+            </div>
+            <div style={{ ...rowStyle(), marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ ...TM_LABEL, flex: 1, margin: 0 }}>Waves: {waves.length}</div>
+                <button onClick={() => set("waves", [...waves, {}])} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>+ Wave</button>
+                {waves.length > 1 && !waves[waves.length - 1].startAt && <button onClick={() => set("waves", waves.slice(0, -1))} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>− Wave</button>}
+              </div>
+            </div>
+            <div style={{ ...rowStyle(), marginTop: 12 }}>
+              <div style={TM_LABEL}>Athletes ({athletes.length})</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <input value={newAth.name} onChange={e => setNewAth(x => ({ ...x, name: e.target.value }))} placeholder="Name" style={{ ...inputS, flex: "2 1 140px" }} />
+                <select value={newAth.gender} onChange={e => setNewAth(x => ({ ...x, gender: e.target.value }))} style={{ ...inputS, flex: "1 1 90px" }}><option>Male</option><option>Female</option><option>Non-binary</option></select>
+                <input value={newAth.age} onChange={e => setNewAth(x => ({ ...x, age: e.target.value.replace(/\D/g, "") }))} placeholder="Age" inputMode="numeric" style={{ ...inputS, width: 70 }} />
+                <select value={newAth.wave} onChange={e => setNewAth(x => ({ ...x, wave: +e.target.value }))} style={{ ...inputS, width: 100 }}>{waves.map((_, w) => <option key={w} value={w}>Wave {w + 1}</option>)}</select>
+                <button disabled={!newAth.name.trim()} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: athletes.length + 1 }); setNewAth(x => ({ ...x, name: "", age: "" })); }}
+                  style={{ ...btnStyle(TM.ink), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Add</button>
+              </div>
+              <div style={{ marginTop: 10 }}>
+                {athletes.map(a => (
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", borderTop: `2px solid ${TM.line}`, flexWrap: "wrap" }}>
+                    <span style={{ flex: "1 1 120px", fontWeight: 800 }}>{a.name}<span style={TM_CAPTION}> · {a.gender} {a.age}{a.uid ? " · ✓ claimed" : ""}</span></span>
+                    <select value={a.wave || 0} onChange={e => set(`athletes/${a.id}/wave`, +e.target.value)} style={{ ...inputS, minHeight: 36, width: 90 }}>{waves.map((_, w) => <option key={w} value={w}>Wave {w + 1}</option>)}</select>
+                    <input defaultValue={a.bike || ""} onBlur={e => set(`athletes/${a.id}/bike`, e.target.value.trim())} placeholder="Bike #" style={{ ...inputS, minHeight: 36, width: 70 }} />
+                    <input defaultValue={a.tread || ""} onBlur={e => set(`athletes/${a.id}/tread`, e.target.value.trim())} placeholder="Tread #" style={{ ...inputS, minHeight: 36, width: 76 }} />
+                    <button onClick={() => { if (confirm(`Remove ${a.name}?`)) set(`athletes/${a.id}`, null); }} style={{ background: "none", border: "none", color: TM.live, fontWeight: 900, fontSize: 18, cursor: "pointer" }}>×</button>
+                  </div>
+                ))}
+              </div>
+              <div style={TM_CAPTION}>Bike # and Tread # match the numbers you give the machines on the Devices tab. Leave blank if that athlete's distance will be typed in.</div>
+            </div>
+            <button onClick={() => set("status", race.status === "live" ? "setup" : "live")}
+              style={{ ...btnStyle(race.status === "live" ? TM.live : TM.ink), width: "100%", marginTop: 16 }}>
+              {race.status === "live" ? "Take race offline" : "Open race (go live)"}</button>
+            <div style={TM_CAPTION}>Going live lets athletes claim their names and spectators follow. Waves still start only when you tap Start on the Race tab.</div>
+          </div>
+        );
+        const raceTab = (
+          <div>
+            {race.status !== "live" && <div style={{ ...rowStyle(TM.warn), marginBottom: 10 }}>The race isn't live yet — open it on the Setup tab first.</div>}
+            {waves.map((wv, w) => {
+              const s = ttWaveState(race, w, now);
+              const list = athletes.filter(a => (a.wave || 0) === w);
+              return (
+                <div key={w} style={{ ...rowStyle(s.started && !s.done ? TT_COL[s.leg] : TM.line), marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 900, fontSize: 18 }}>Wave {w + 1} · {list.length} athletes</div>
+                      <div style={{ fontSize: 26, fontWeight: 900, color: s.started && !s.done ? TT_COL[s.leg] : TM.ink }}>{stateText(w)}</div>
+                      {s.started && !s.done && s.idx + 1 < legs.length && <div style={TM_CAPTION}>Then {TT_LEG[legs[s.idx + 1].k]}</div>}
+                    </div>
+                    {!s.started
+                      ? <button disabled={race.status !== "live"} onClick={() => set(`waves/${w}/startAt`, firebase.database.ServerValue.TIMESTAMP)}
+                          style={{ ...btnStyle(TM.ink), minHeight: 56, padding: "0 20px", opacity: race.status === "live" ? 1 : 0.5 }}>▶ Start</button>
+                      : <button onClick={() => { if (confirm(`Reset wave ${w + 1}? Its clock and distances clear.`)) { const o = { [`waves/${w}/startAt`]: null }; list.forEach(a => { o[`athletes/${a.id}/dist`] = null; o[`athletes/${a.id}/live`] = null; o[`athletes/${a.id}/manual`] = null; Object.keys(TT_BT.acc).filter(k => k.startsWith(a.id + "|")).forEach(k => delete TT_BT.acc[k]); }); upd(o); } }}
+                          style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 14 }}>Reset</button>}
+                  </div>
+                  {list.map(a => (
+                    <div key={a.id} style={{ borderTop: `2px solid ${TM.line}`, padding: "6px 0" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                        <span style={{ fontWeight: 800, flex: 1 }}>{a.name}</span>
+                        <span style={{ fontWeight: 900, color: TM.run }}>{ttDist(ttTotal(a), units.dist)}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                        {TT_SCORED.map(k => {
+                          const live = a.live && a.live[k];
+                          const fresh = live && now - (live.t || 0) < 8000;
+                          return (
+                            <div key={k} style={{ border: `2px solid ${TT_COL[k]}`, borderRadius: 6, padding: "4px 8px", minWidth: 96 }}>
+                              <div style={{ fontSize: 12, fontWeight: 900, color: TT_COL[k] }}>{TT_LEG[k]}{k === "bike" && a.bike ? ` #${a.bike}` : k === "run" && a.tread ? ` #${a.tread}` : ""}{fresh ? " ●" : ""}</div>
+                              <div style={{ fontWeight: 900 }}>{ttDist(a.dist && a.dist[k], unitFor(k))}</div>
+                              {fresh && k === "bike" && <div style={{ fontSize: 11 }}>{live.w ?? "–"} W · {live.rpm ?? "–"} rpm{live.res != null ? ` · R${live.res}` : ""}</div>}
+                              {fresh && k === "run" && <div style={{ fontSize: 11 }}>{live.kmh != null ? (units.dist === "km" ? live.kmh.toFixed(1) + " km/h" : (live.kmh / 1.609).toFixed(1) + " mph") : ""}</div>}
+                              <input key={(a.dist && a.dist[k]) || 0} placeholder="fix" inputMode="decimal" onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                onBlur={e => { const m = parseDist(e.target.value, unitFor(k)); if (m == null || e.target.value === "") return; upd({ [`athletes/${a.id}/dist/${k}`]: Math.round(m), [`athletes/${a.id}/manual/${k}`]: true }); e.target.value = ""; }}
+                                style={{ width: 70, fontSize: 12, border: `1px solid ${TM.line}`, borderRadius: 4, padding: "2px 4px", marginTop: 2 }} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            <div style={TM_CAPTION}>Swim distances come from athletes' watches — they type them in on their phone during T1. Type a number in a box ("fix") to set any distance by hand; that leg then stops taking machine readings.</div>
+          </div>
+        );
+        const devList = [...TT_BT.devices.entries()];
+        const devicesTab = (
+          <div>
+            {!navigator.bluetooth && <div style={{ ...rowStyle(TM.live), marginBottom: 10 }}>This browser can't use Bluetooth. Use Chrome on a laptop (Windows or Mac) or an Android phone.</div>}
+            <button disabled={!navigator.bluetooth} onClick={async () => {
+              setMsg("");
+              try {
+                const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [0x1826] }, { services: [0x1814] }], optionalServices: [0x1826, 0x1814, 0x180a] });
+                setMsg("Connecting to " + (dev.name || "device") + "…");
+                const kind = await ttConnect(dev);
+                setMsg(`Connected ${dev.name || "device"} as a ${kind === "bike" ? "bike" : "treadmill / foot pod"}. Give it its number below.`);
+              } catch (e) { if (e && e.name !== "NotFoundError") setMsg("Couldn't connect: " + (e && e.message)); }
+            }} style={{ ...btnStyle(TM.ink), width: "100%" }}>+ Connect a bike or treadmill</button>
+            <div style={{ ...TM_CAPTION, marginTop: 6 }}>Stages bikes, other smart bikes and treadmills that work with Zwift (Bluetooth "FTMS"), or a running foot pod. Each machine can be connected to one device at a time — close Zwift or other apps first.</div>
+            {msg && <div style={{ fontWeight: 700, marginTop: 8 }}>{msg}</div>}
+            <div style={{ marginTop: 12 }}>
+              {devList.length === 0 && <div style={TM_CAPTION}>No machines connected yet.</div>}
+              {devList.map(([id, d]) => {
+                const l = d.last || {}; const fresh = d.seen && Date.now() - d.seen < 5000;
+                const who = athletes.filter(a => d.label && String((d.kind === "bike" ? a.bike : a.tread) || "").trim().toLowerCase() === String(d.label).trim().toLowerCase()).map(a => a.name);
+                return (
+                  <div key={id} style={{ ...rowStyle(d.kind === "bike" ? TM.bike : TM.run), marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 900 }}>{d.kind === "bike" ? "🚲" : "🏃"} {d.name}</span>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: d.connected && fresh ? "#1FA971" : d.connected ? "#C9C5BC" : "#B3001B" }} />
+                      <span style={TM_CAPTION}>{!d.connected ? "reconnecting…" : fresh ? (d.kind === "bike" ? `${l.w ?? "–"} W · ${l.rpm ?? "–"} rpm · ${l.kmh != null ? l.kmh.toFixed(1) : "–"} km/h` : `${l.kmh != null ? l.kmh.toFixed(1) : "–"} km/h`) : "no data — pedal / start the belt"}</span>
+                    </div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>Number
+                      <input defaultValue={d.label} onChange={e => { d.label = e.target.value; ttSetLabel(id, e.target.value); tick(x => x + 1); }} placeholder={d.kind === "bike" ? "e.g. 3" : "e.g. T2"} style={{ ...inputS, width: 90 }} />
+                      <span style={TM_CAPTION}>{who.length ? "→ " + who.join(", ") : "not assigned"}</span>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={TM_CAPTION}>Keep this tab open on the laptop during the race — it's the one sending bike and treadmill distances.</div>
+          </div>
+        );
+        return (
+          <div style={{ padding: "0 16px 60px" }}>
+            <button onClick={onBack} style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>← My races</button>
+            <h1 style={{ ...TM_DISPLAY, marginTop: 10, fontSize: 34 }}>{race.name || "Timed Tri"}</h1>
+            <div style={TM_CAPTION}>Timed Tri · code {code} · {race.status === "live" ? "● live" : "not live"}</div>
+            <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
+              {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ ...btnStyle(TM.ink, tab !== k), minHeight: 42, padding: "0 6px", fontSize: 14, flex: 1 }}>{l}</button>)}
+            </div>
+            {tab === "setup" && setupTab}
+            {tab === "race" && raceTab}
+            {tab === "devices" && devicesTab}
+            {tab === "standings" && standings}
+          </div>
+        );
+      }
+
       function App() {
         const [view, setView] = useState("myraces");
         const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
@@ -4568,6 +5024,16 @@ ${html}</body></html>`);
         // 0 = the step list (editing a saved race), 1-5 = wizard steps.
         const [setupStep, setSetupStep] = useState(1);
         const [newRaceKind, setNewRaceKind] = useState("triathlon");
+        const [timedCode, setTimedCode] = useState(null);       // Timed Tri open on screen
+        const [timedViewer, setTimedViewer] = useState(false);
+        const [timedSaved, setTimedSaved] = useState({});        // this host's Timed Tris
+        useEffect(() => {
+          if (!currentUser) { setTimedSaved({}); return; }
+          const r = rtdb.ref("users/" + currentUser.uid + "/timedRaces");
+          const fn = sn => setTimedSaved(sn.val() || {});
+          r.on("value", fn, () => {});
+          return () => r.off("value", fn);
+        }, [currentUser && currentUser.uid]);
         const [newRaceSport, setNewRaceSport] = useState("bike");
         const [newRaceName, setNewRaceName] = useState("");
         const [newRaceCode, setNewRaceCode] = useState("");
@@ -11620,8 +12086,8 @@ ${html}</body></html>`);
           const c = normCode(code);
           if (!c) return null;
           const has = (path) => rtdb.ref(path).once("value").then(s => s.exists()).catch(() => false);
-          const [tri, swim, bike] = await Promise.all([has("liveRaces/" + c), has("swimLive/" + c), has("bikeFeeds/" + c + "/meta")]);
-          return tri ? "triathlon" : swim ? "swim" : bike ? "bike" : null;
+          const [tri, swim, bike, timed] = await Promise.all([has("liveRaces/" + c), has("swimLive/" + c), has("bikeFeeds/" + c + "/meta"), has("timedRaces/" + c + "/status")]);
+          return tri ? "triathlon" : swim ? "swim" : bike ? "bike" : timed ? "timed" : null;
         }
 
         // Spectators never make an account. Anonymous auth satisfies the database
@@ -11682,6 +12148,7 @@ ${html}</body></html>`);
         }
 
         function openRaceAsViewer(kind, c) {
+          if (kind === "timed") { setTimedCode(c); setTimedViewer(true); setView("timed"); return; }
           if (kind === "triathlon") {
             selectMode("triathlon"); setSpectatorCode(c); watchRace(c); setView("watch");
           } else if (kind === "swim") {
@@ -11699,7 +12166,8 @@ ${html}</body></html>`);
           if (c.length < 3) return false;
           const me = auth.currentUser && auth.currentUser.uid;
           const get = (path) => rtdb.ref(path).once("value").then(s => s.val()).catch(() => null);
-          const [tri, swim, bike] = await Promise.all([get("liveRaces/" + c), get("swimLive/" + c), get("bikeFeeds/" + c + "/meta")]);
+          const [tri, swim, bike, timedHost] = await Promise.all([get("liveRaces/" + c), get("swimLive/" + c), get("bikeFeeds/" + c + "/meta"), get("timedRaces/" + c + "/hostUid")]);
+          if (timedHost && timedHost !== me) return false;
           if (tri && tri.publishedBy !== me) return false;
           if (swim && swim.hostUid !== me) return false;
           if (bike && bike.createdBy !== me) return false;
@@ -12124,6 +12592,15 @@ Start a new race anyway?`)) return;
             setSetupStep(2);
             return;
           }
+          if (kind === "timed") {
+            const data = { hostUid: currentUser.uid, name: nm || "Timed Tri", status: "setup", createdAt: Date.now(),
+              legs: TT_DEFAULT_LEGS, units: { swim: "yd", dist: "mi" }, ageGroups: "Under 20, 20-29, 30-39, 40-49, 50-59, 60+", waves: [{ n: 1 }] };
+            rtdb.ref("timedRaces/" + cd).set(data).then(() => {
+              rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + cd).set({ name: data.name, at: Date.now() }).catch(() => {});
+              setTimedCode(cd); setTimedViewer(false); setView("timed");
+            }).catch(e => alert("Couldn't create the race: " + e.message));
+            return;
+          }
           if (kind === "swim") {
             const hasWork = swimMeet.meetName || swimMeet.events.length > 0;
             setView("swim");
@@ -12137,6 +12614,15 @@ Start a new race anyway?`)) return;
           setBikeDraft({ ...newBikeFeed(), eventName: nm, code: cd, sport: newRaceSport, snapProfile: newRaceSport === "run" ? "hiking-mountain" : "trekking" }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
         }
 
+        const timedLinkRef = useRef(false);
+        useEffect(() => {
+          if (timedLinkRef.current || authLoading) return;
+          const c = normCode(new URLSearchParams(location.search).get("timed"));
+          if (!c) return;
+          timedLinkRef.current = true;
+          try { const u = new URL(location.href); u.searchParams.delete("timed"); history.replaceState(history.state, "", u.pathname + u.search + u.hash); } catch (_) {}
+          setTimedCode(c); setTimedViewer(!(currentUser && timedSaved && timedSaved[c])); setView("timed");
+        }, [authLoading]);
         const watchLinkRef = useRef(false);
         useEffect(() => {
           if (watchLinkRef.current || authLoading) return;
@@ -12171,8 +12657,8 @@ Start a new race anyway?`)) return;
           if (!effectiveRole || effectiveRole === "host") return;
           const allowed = effectiveRole === "timer" ? ["swimlane", "profile"]
             : effectiveRole === "athlete"
-            ? ["join", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount"]
-            : ["spectate", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount"];
+            ? ["join", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed"]
+            : ["spectate", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed"];
           if (!allowed.includes(view)) { setView(roleLanding(effectiveRole)); return; }
           if (view === "bike") {
             const ok = effectiveRole === "athlete" ? ["ride", "feed"] : ["feed"];
@@ -12507,7 +12993,7 @@ Start a new race anyway?`)) return;
             </header>
 
             {/* NAV — hosts only. Athletes and spectators move with a back arrow. */}
-            {isHost && (() => {
+            {isHost && view !== "timed" && (() => {
               const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimathletes:"athletes", swimfiles:"files", swimdevices:"devices" };
               const navTabs = appMode === "bike"
                 ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Run" : "Ride"],["__bike_feed__","Follow"],["__bike_riders__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Runners" : "Riders"]]
@@ -12540,7 +13026,7 @@ Start a new race anyway?`)) return;
             })()}
 
             {/* Swim, bike, lane and meet-viewer screens render outside this column, so it collapses there. */}
-            <div style={{ maxWidth: 640, margin: "0 auto", padding: ["swim","bike","swimlane","swimwatch"].includes(view) ? 0 : "16px 16px 60px" }}>
+            <div style={{ maxWidth: 640, margin: "0 auto", padding: ["swim","bike","swimlane","swimwatch","timed"].includes(view) ? 0 : "16px 16px 60px" }}>
 
               {/* STOPWATCH — the Race screen, plus anywhere else *while it's running*,
                   so stepping back to Setup mid-race never hides the clock. It no
@@ -12612,6 +13098,10 @@ Start a new race anyway?`)) return;
                   ...swimSavedMeets.map(m => ({ key: "s" + m.id, kind: "swim", name: m.meetName || "Untitled meet",
                     meta: `${(m.events || []).length} event${(m.events || []).length !== 1 ? "s" : ""} · ${m.pool || ""}`,
                     open: () => openSwim(m), del: () => persistSwimMeets(swimSavedMeets.filter(x => x.id !== m.id)) })),
+                  ...Object.entries(timedSaved || {}).map(([c, t]) => ({ key: "tt" + c, kind: "timed", name: (t && t.name) || "Timed Tri",
+                    meta: `Timed Tri · code ${c}`,
+                    open: () => { setTimedCode(c); setTimedViewer(false); setView("timed"); },
+                    del: () => { rtdb.ref("timedRaces/" + c).remove().catch(() => {}); rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + c).remove().catch(() => {}); } })),
                   ...bikeFeedList.map(f => ({ key: "b" + f.code, kind: "bike", name: f.eventName || bikeRiderFor(f)?.name || "Untitled ride",
                     meta: `${bikeRiderFor(f)?.name || "No rider yet"} · code ${f.code}`,
                     open: () => openBike(f), del: () => { persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code)); rtdb.ref(`bikeFeeds/${f.code}`).remove().catch(console.error); } })),
@@ -19300,6 +19790,11 @@ Start a new race anyway?`)) return;
                 </div>
               );
             })()}
+
+            {view === "timed" && timedCode && (
+              <TimedTri code={timedCode} viewer={timedViewer || !isHost} currentUser={currentUser} userProfile={userProfile}
+                onBack={() => { setTimedCode(null); setView(roleLanding(effectiveRole)); }} />
+            )}
 
             {/* ── SWIM MEET VIEWER ── */}
             {view === "swimwatch" && (() => {
