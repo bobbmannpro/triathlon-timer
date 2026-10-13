@@ -4630,8 +4630,11 @@ ${html}</body></html>`);
         const dirKey = viewer || !race ? "" : [race.status, race.name, race.date, firstWave.time, race.liveLeadMin, race.listed].join("|");
         React.useEffect(() => {
           if (viewer || !race || !currentUser || race.hostUid !== currentUser.uid) return;
+          const wi = eventWhen(race.date, firstWave.time, race.liveLeadMin);
+          rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + code).update({ name: race.name || "Timed Tri", date: race.date || null, time: firstWave.time || null,
+            lead: race.liveLeadMin == null ? null : race.liveLeadMin, startsAt: wi.startsAt }).catch(() => {});
           if ((race.status === "signup" || race.status === "live") && race.listed !== false) {
-            const w = eventWhen(race.date, firstWave.time, race.liveLeadMin);
+            const w = wi;
             rtdb.ref("raceDirectory/" + code).set({ kind: "timed", hostUid: currentUser.uid, name: race.name || "Timed Tri",
               hostName: (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || "",
               status: race.status === "live" ? "live" : "registration", updatedAt: Date.now(), startsAt: w.startsAt, liveAt: w.liveAt }).catch(() => {});
@@ -5350,6 +5353,9 @@ ${html}</body></html>`);
         const [timedCode, setTimedCode] = useState(null);       // Timed Tri open on screen
         const [timedViewer, setTimedViewer] = useState(false);
         const [timedSaved, setTimedSaved] = useState({});        // this host's Timed Tris
+        const [pastOpen, setPastOpen] = useState(false);         // My races → Past races list
+        const [whenEdit, setWhenEdit] = useState(null);          // { key, date, time, lead } — date editor open on a card
+        useEffect(() => { if (view !== "myraces") { setPastOpen(false); setWhenEdit(null); } }, [view]);
         useEffect(() => {
           if (!currentUser) { setTimedSaved({}); return; }
           const r = rtdb.ref("users/" + currentUser.uid + "/timedRaces");
@@ -10632,6 +10638,7 @@ ${html}</body></html>`);
         function newBikeFeed() {
           return {
             code: friendlyCode(),
+            createdAt: Date.now(),
             riderId: null,        // → bikeRiders profile
             eventName: "",
             units: "mi",
@@ -13412,72 +13419,107 @@ Start a new race anyway?`)) return;
                 const openSwim = (meet) => {
                   selectMode("swim");
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode(),
-                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null, anyAge: !!meet.anyAge });
+                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null, anyAge: !!meet.anyAge,
+                    startTime: meet.startTime || null, liveLeadMin: meet.liveLeadMin ?? null });
                   setSwimLiveCode(null); setSwimHomeSection(null); setSwimSetupStep(0);
                   setView("swim"); setSwimView("setup");
                 };
-                const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); setView("bike"); setBikeView("setup"); };
+                const openBike = (f) => { selectMode("bike"); setBikeDraft({ ...newBikeFeed(), ...f, createdAt: f.createdAt || 0 }); setBikeSetupStep(0); setView("bike"); setBikeView("setup"); };
+                const triWhen = (r, w) => {
+                  const cc = { eventDate: w.date || "", eventTime: w.time || "", liveLeadMin: w.lead };
+                  persistRaces(savedRaces.map(x => x.id === r.id ? { ...x, past: null, certConfig: { ...(x.certConfig || {}), ...cc } } : x));
+                  if (loadedRaceId === r.id) setCertConfig(c => ({ ...c, ...cc }));
+                };
+                const swimWhen = (m, w) => {
+                  const pm = { date: w.date || null, startTime: w.time || null, liveLeadMin: w.lead };
+                  persistSwimMeets(swimSavedMeets.map(x => x.id === m.id ? { ...x, ...pm, past: null } : x));
+                  if (swimMeet._id === m.id) setSwimMeet(x => ({ ...x, ...pm }));
+                };
+                const bikeWhen = (f, w) => {
+                  const pf = { date: w.date || "", time: w.time || "", liveLeadMin: w.lead };
+                  persistBikeFeeds(bikeFeedList.map(x => x.code === f.code ? { ...x, ...pf, past: null } : x));
+                  if (bikeDraft.code === f.code) setBikeDraft(d => ({ ...d, ...pf }));
+                };
+                // A Timed Tri moves all its waves together: the first wave takes the new time.
+                const timedWhen = async (c, w) => {
+                  try {
+                    const race = (await rtdb.ref("timedRaces/" + c).once("value")).val() || {};
+                    const ws = ttList(race.waves).length ? ttList(race.waves) : [{}];
+                    const toMin = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + (m || 0); };
+                    const hm = n => { const m = ((n % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); };
+                    const delta = w.time && ws[0].time ? toMin(w.time) - toMin(ws[0].time) : 0;
+                    const waves = ws.map((x, i) => {
+                      const t = i === 0 && w.time ? w.time : x.time && delta ? hm(toMin(x.time) + delta) : x.time;
+                      return { ...x, n: i + 1, ...(t ? { time: t } : {}) };
+                    });
+                    const patch = { date: w.date || null, liveLeadMin: w.lead == null ? 30 : +w.lead, waves };
+                    patch.liveAt = ttLiveAt(race, patch);
+                    await rtdb.ref("timedRaces/" + c).update(patch);
+                    const ew = eventWhen(patch.date, waves[0].time, patch.liveLeadMin);
+                    await rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + c).update({ date: patch.date, time: waves[0].time || null, lead: patch.liveLeadMin, startsAt: ew.startsAt, past: null });
+                  } catch (e) { alert("Couldn't change the date: " + e.message); }
+                };
                 const saved = [
                   ...savedRaces.map(r => ({ key: "t" + r.id, kind: "triathlon", name: r.name || "Untitled race", race: r,
+                    when: { date: r.certConfig?.eventDate, time: r.certConfig?.eventTime, lead: r.certConfig?.liveLeadMin },
+                    created: typeof r.id === "number" ? r.id : 0, past: r.past,
+                    setWhen: w => triWhen(r, w), setPast: v => persistRaces(savedRaces.map(x => x.id === r.id ? { ...x, past: v } : x)),
                     meta: `${asList(r.athletes).length} athlete${asList(r.athletes).length !== 1 ? "s" : ""} · saved ${r.savedAt || ""}`,
                     open: () => openTri(r), del: () => deleteRace(r.id) })),
                   ...swimSavedMeets.map(m => ({ key: "s" + m.id, kind: "swim", name: m.meetName || "Untitled meet",
+                    when: { date: m.date, time: m.startTime, lead: m.liveLeadMin }, created: +((String(m.id).match(/\d{12,}/) || [0])[0]), past: m.past,
+                    setWhen: w => swimWhen(m, w), setPast: v => persistSwimMeets(swimSavedMeets.map(x => x.id === m.id ? { ...x, past: v } : x)),
                     meta: `${(m.events || []).length} event${(m.events || []).length !== 1 ? "s" : ""} · ${m.pool || ""}`,
                     open: () => openSwim(m), del: () => persistSwimMeets(swimSavedMeets.filter(x => x.id !== m.id)) })),
                   ...Object.entries(timedSaved || {}).map(([c, t]) => ({ key: "tt" + c, kind: "timed", name: (t && t.name) || "Timed Tri",
+                    when: { date: t && t.date, time: t && t.time, lead: t && t.lead }, created: (t && t.at) || 0, past: t && t.past,
+                    setWhen: w => timedWhen(c, w), setPast: v => rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + c + "/past").set(v).catch(() => {}),
                     meta: `Timed Tri · code ${c}`,
                     open: () => { setTimedCode(c); setTimedViewer(false); setView("timed"); },
                     del: () => { rtdb.ref("timedRaces/" + c).remove().catch(() => {}); rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + c).remove().catch(() => {}); } })),
                   ...bikeFeedList.map(f => ({ key: "b" + f.code, kind: "bike", name: f.eventName || bikeRiderFor(f)?.name || "Untitled ride",
+                    when: { date: f.date, time: f.time, lead: f.liveLeadMin }, created: f.createdAt || 0, past: f.past,
+                    setWhen: w => bikeWhen(f, w), setPast: v => persistBikeFeeds(bikeFeedList.map(x => x.code === f.code ? { ...x, past: v } : x)),
                     meta: `${bikeRiderFor(f)?.name || "No rider yet"} · code ${f.code}`,
                     open: () => openBike(f), del: () => { persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code)); rtdb.ref(`bikeFeeds/${f.code}`).remove().catch(console.error); } })),
                 ];
-                const inProgress = raceInitialized && appMode !== "swim" && appMode !== "bike";
-                return (
-                  <div>
-                    <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
-
-                    <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setNewRaceCode(friendlyCode()); setView("newrace"); }}
-                      style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
-                               minHeight: 96, padding: "22px 24px", background: TM.ink, color: "#FFFFFF", border: "none",
-                               borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
-                      <span style={{ fontWeight: 900, fontSize: 34, lineHeight: 1 }}>+</span>
-                      <span style={{ flex: 1 }}>
-                        <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>New race</span>
-                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet, bike or run</span>
-                      </span>
-                      <ArrowIcon />
-                    </button>
-
-                    {inProgress && (
-                      <button onClick={() => setView(clockStarted ? "race" : "setup")}
-                        style={{ ...bleed, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
-                                 minHeight: 80, padding: "18px 24px", background: clockRunning ? TM.live : TM.bgAlt,
-                                 color: clockRunning ? "#FFFFFF" : TM.ink, border: "none", borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
-                        <span style={{ flex: 1 }}>
-                          <span style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase" }}>
-                            {clockRunning ? "● Live now" : liveRaceCode ? `● Live · ${liveRaceCode}` : "In progress"}
-                          </span>
-                          <span style={{ display: "block", fontWeight: 900, fontSize: 22, textTransform: "uppercase", marginTop: 2, overflowWrap: "anywhere" }}>
-                            {saveRaceName || certConfig.eventName || "Current race"}
-                          </span>
-                        </span>
-                        <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44, padding: "0 16px", borderRadius: 6, fontWeight: 900, fontSize: 17,
-                                       background: clockRunning ? "#FFFFFF" : TM.ink, color: clockRunning ? TM.live : "#FFFFFF" }}>Resume →</span>
-                      </button>
-                    )}
-
-                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>Saved races</h2>
-                    {saved.length === 0 ? (
-                      <div style={{ ...rowStyle(), ...TM_CAPTION }}>Nothing saved yet. Start a new race — you can save it from Setup.</div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                        {saved.map(r => (
+                // Past races: moved there by hand, or the race day has gone by. Races saved
+                // before this list existed (13 Oct 2026) and never given a date start there too.
+                const dayStart = new Date().setHours(0, 0, 0, 0);
+                const PAST_LIST_FROM = new Date("2026-10-14T00:00:00").getTime();
+                saved.forEach(r => {
+                  r.startsAt = eventStartsAt(r.when.date, r.when.time);
+                  r.isPast = r.past === true ? true : r.past === false ? false
+                    : r.startsAt ? r.startsAt < dayStart : r.created < PAST_LIST_FROM;
+                });
+                const upcoming = saved.filter(r => !r.isPast).sort((a, b) => (a.startsAt || 9e15) - (b.startsAt || 9e15) || b.created - a.created);
+                const pastList = saved.filter(r => r.isPast).sort((a, b) => (b.startsAt || b.created) - (a.startsAt || a.created));
+                const chipBtn = { ...btnStyle(TM.ink, true), minHeight: 38, padding: "0 10px", fontSize: 14 };
+                const whenRow = r => (<>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                    <button onClick={() => setWhenEdit(whenEdit && whenEdit.key === r.key ? null : { key: r.key, date: r.when.date || "", time: r.when.time || "", lead: r.when.lead })}
+                      aria-expanded={!!(whenEdit && whenEdit.key === r.key)}
+                      style={{ ...chipBtn, color: r.startsAt ? TM.ink : TM.swim, borderColor: r.startsAt ? TM.ink : TM.swim }}>📅 {r.startsAt ? eventWhenLabel(r.startsAt) : "Set date & time"}</button>
+                    <button onClick={() => r.setPast(!r.isPast)} style={chipBtn}>{r.isPast ? "↩ Back to saved races" : "Move to past races"}</button>
+                  </div>
+                  {whenEdit && whenEdit.key === r.key && (
+                    <div style={{ ...rowStyle(TM.swim), marginTop: 8 }}>
+                      <EventWhen date={whenEdit.date} time={whenEdit.time} lead={whenEdit.lead} onChange={p => setWhenEdit(w => ({ ...w, ...p }))} />
+                      {r.kind === "timed" && <div style={TM_CAPTION}>Every wave moves by the same amount.</div>}
+                      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <button onClick={() => { r.setWhen(whenEdit); setWhenEdit(null); }} style={{ ...btnStyle(TM.ink), minHeight: 44, flex: 1 }}>Save date</button>
+                        <button onClick={() => setWhenEdit(null)} style={{ ...btnStyle(TM.ink, true), minHeight: 44, flex: 1 }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </>);
+                const renderCard = r => (
                           <div key={r.key} style={{ ...rowStyle(RACE_KINDS[r.kind].colour), display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: RACE_KINDS[r.kind].colour }}>{RACE_KINDS[r.kind].label}</div>
                               <div style={{ fontSize: 18, fontWeight: 800, color: TM.ink, lineHeight: 1.25, overflowWrap: "anywhere" }}>{r.name}</div>
                               <div style={TM_CAPTION}>{r.meta}</div>
+                              {whenRow(r)}
                               {r.kind === "triathlon" && (() => {
                                 const res = resultsForRace(r.race).sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
                                 const pc = photoCodeForRace(r.race);
@@ -13540,6 +13582,58 @@ Start a new race anyway?`)) return;
                               </div>
                             )}
                           </div>
+                );
+                if (pastOpen) return (
+                  <div>
+                    <button onClick={() => setPastOpen(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 44, marginTop: 8 }}>← My races</button>
+                    <h1 style={{ ...TM_DISPLAY, marginTop: 14 }}>Past races</h1>
+                    <div style={{ ...TM_CAPTION, marginBottom: 14 }}>Races whose day has gone by, or that you moved here. Open, copy or re-date any of them — a new date brings it back to Saved races.</div>
+                    {pastList.length === 0
+                      ? <div style={{ ...rowStyle(), ...TM_CAPTION }}>No past races yet.</div>
+                      : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{pastList.map(renderCard)}</div>}
+                  </div>
+                );
+                const inProgress = raceInitialized && appMode !== "swim" && appMode !== "bike";
+                return (
+                  <div>
+                    <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
+
+                    <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setNewRaceCode(friendlyCode()); setView("newrace"); }}
+                      style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
+                               minHeight: 96, padding: "22px 24px", background: TM.ink, color: "#FFFFFF", border: "none",
+                               borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
+                      <span style={{ fontWeight: 900, fontSize: 34, lineHeight: 1 }}>+</span>
+                      <span style={{ flex: 1 }}>
+                        <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>New race</span>
+                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet, bike or run</span>
+                      </span>
+                      <ArrowIcon />
+                    </button>
+
+                    {inProgress && (
+                      <button onClick={() => setView(clockStarted ? "race" : "setup")}
+                        style={{ ...bleed, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
+                                 minHeight: 80, padding: "18px 24px", background: clockRunning ? TM.live : TM.bgAlt,
+                                 color: clockRunning ? "#FFFFFF" : TM.ink, border: "none", borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase" }}>
+                            {clockRunning ? "● Live now" : liveRaceCode ? `● Live · ${liveRaceCode}` : "In progress"}
+                          </span>
+                          <span style={{ display: "block", fontWeight: 900, fontSize: 22, textTransform: "uppercase", marginTop: 2, overflowWrap: "anywhere" }}>
+                            {saveRaceName || certConfig.eventName || "Current race"}
+                          </span>
+                        </span>
+                        <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44, padding: "0 16px", borderRadius: 6, fontWeight: 900, fontSize: 17,
+                                       background: clockRunning ? "#FFFFFF" : TM.ink, color: clockRunning ? TM.live : "#FFFFFF" }}>Resume →</span>
+                      </button>
+                    )}
+
+                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>Saved races</h2>
+                    {upcoming.length === 0 ? (
+                      <div style={{ ...rowStyle(), ...TM_CAPTION }}>No races in the works. Start a new race{pastList.length ? ", or bring one back from Past races" : " — you can save it from Setup"}.</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {upcoming.map(renderCard)}
                         ))}
                       </div>
                     )}
@@ -13549,6 +13643,15 @@ Start a new race anyway?`)) return;
                       <span style={{ flex: 1 }}>
                         <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>🧪 Sample swim meet</span>
                         <span style={{ display: "block", ...TM_CAPTION }}>16 events, 40 made-up swimmers, heats already seeded — for trying things out</span>
+                      </span>
+                      <ArrowIcon size={24} />
+                    </button>
+
+                    <button onClick={() => { setPastOpen(true); window.scrollTo(0, 0); }}
+                      style={{ ...rowStyle(TM.ink), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 72, cursor: "pointer", textAlign: "left", color: TM.ink, marginTop: 10 }}>
+                      <span style={{ flex: 1 }}>
+                        <span style={{ display: "block", fontSize: 19, fontWeight: 900 }}>🗂 Past races</span>
+                        <span style={{ display: "block", ...TM_CAPTION }}>{pastList.length === 0 ? "None yet" : `${pastList.length} race${pastList.length === 1 ? "" : "s"}`}</span>
                       </span>
                       <ArrowIcon size={24} />
                     </button>
@@ -18227,6 +18330,7 @@ Start a new race anyway?`)) return;
                     meetEntries: swimMeet.meetEntries || [],
                     date: swimMeet.date || null, facility: swimMeet.facility || null,
                     teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null, anyAge: !!swimMeet.anyAge,
+                    startTime: swimMeet.startTime || null, liveLeadMin: swimMeet.liveLeadMin ?? null, past: existing?.past ?? null,
                     // A code parents already have (the meet went live) never changes;
                     // before that, the one chosen in step 1 is kept.
                     code: (existing?.live && existing.code) || swimMeet.code || existing?.code,
@@ -18246,7 +18350,8 @@ Start a new race anyway?`)) return;
                   const id = swimMeet._id || `meet_${Date.now()}`;
                   const entry = { id, meetName: name, pool: swimMeet.pool, lanes: swimMeet.lanes || 8, savedAt: new Date().toLocaleDateString(), events: swimMeet.events,
                     meetEntries: swimMeet.meetEntries || [], date: swimMeet.date || null, facility: swimMeet.facility || null,
-                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null, anyAge: !!swimMeet.anyAge, code };
+                    teams: swimMeet.teams || [], relays: swimMeet.relays || [], ageUpDate: swimMeet.ageUpDate || null, meetUid: swimMeet.meetUid || null, anyAge: !!swimMeet.anyAge, code,
+                    startTime: swimMeet.startTime || null, liveLeadMin: swimMeet.liveLeadMin ?? null, past: existing?.past ?? null };
                   if (existing) {
                     persistSwimMeets(swimSavedMeets.map(m => m.id === id ? entry : m));
                   } else {
@@ -18268,7 +18373,8 @@ Start a new race anyway?`)) return;
                 }
                 function loadSwimMeet(meet) {
                   setSwimMeet({ meetName: meet.meetName, pool: meet.pool, lanes: meet.lanes || 8, events: normSavedMeets([meet])[0].events, meetEntries: asList(meet.meetEntries), _id: meet.id, code: meet.code || friendlyCode(),
-                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null, anyAge: !!meet.anyAge });
+                    date: meet.date || null, facility: meet.facility || null, teams: asList(meet.teams), relays: asList(meet.relays).map(r => ({ ...r, legs: asList(r.legs) })), ageUpDate: meet.ageUpDate || null, meetUid: meet.meetUid || null, anyAge: !!meet.anyAge,
+                    startTime: meet.startTime || null, liveLeadMin: meet.liveLeadMin ?? null });
                   setSwimLiveCode(null);
                   setSwimSetupStep(0);
                   setSwimView("setup");
