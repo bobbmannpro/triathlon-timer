@@ -794,7 +794,7 @@
                 style={{ border: `2px solid ${TM.line}`, borderRadius: 8, overflow: "hidden", background: "#FFFFFF" }}>
                 <div style={{ background: TM.ink, color: "#FFFFFF", padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                   <span style={{ fontWeight: 900, fontSize: 17, letterSpacing: 0.5 }}>{f.label}</span>
-                  <span style={{ fontSize: 14, fontWeight: 700 }}>Live standings</span>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>{f.rows.length && !f.waiting.length && f.rows.every(r => r.a && r.a.finished) ? "Final standings" : "Live standings"}</span>
                 </div>
                 {f.rows.length === 0 && !f.waiting.length && !(f.dnf || []).length && (
                   <div style={{ padding: "10px 12px", fontSize: 15, fontWeight: 600, color: TM.inkMuted }}>Nobody's been sent off yet.</div>
