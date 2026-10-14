@@ -7246,30 +7246,45 @@ ${html}</body></html>`);
           });
         }, [lapTaps, athletes, courses, liveRaceCode, autoSplits]);
 
-        // Watches send { seg, n, at: server time } on each LAP press. In Auto the
-        // host turns it into that leg's split at the moment it was pressed —
-        // only if it's the leg that's next for that athlete, so a press for a
-        // leg the host already logged (or a double press) changes nothing.
-        const watchLapSeenRef = useRef({});
+        // Watches send { seg, n, ago, at: server time, auto } on each LAP press —
+        // or by themselves when they reach the pin that ends the leg (auto). Each
+        // is kept under gps/watchLaps, so several sent back to back after a spell
+        // out of the phone's range all count, in order. In Auto the host turns each
+        // into that leg's split at the moment it happened — only if it's the leg
+        // that's next for that athlete, so a double press or a leg already logged
+        // by hand changes nothing. (Older watches send only gps/watchLap.)
+        const watchLapSeenRef = useRef(new Set());
         useEffect(() => {
           if (!liveRaceCode) return;
+          const seen = watchLapSeenRef.current;
           Object.entries(athleteWatch).forEach(([k, g]) => {
-            const i = +k, wl = g && g.watchLap;
-            if (!wl || wl.at == null || wl.seg == null) return;
-            const key = `${wl.n}-${wl.at}`;
-            if (watchLapSeenRef.current[i] === key) return;
-            watchLapSeenRef.current[i] = key;
-            if (!autoSplits) return;
+            const i = +k;
+            if (!g) return;
+            const raw = g.watchLaps ? Object.entries(g.watchLaps).map(([key, v]) => ({ ...(v || {}), key }))
+                      : g.watchLap ? [{ ...g.watchLap, key: "one" }] : [];
+            const list = raw.filter(w => w.at != null && w.seg != null)
+              .map(w => ({ ...w, pressedAt: w.at - Math.max(0, +w.ago || 0) }))
+              .sort((a, b) => a.pressedAt - b.pressedAt);
+            if (!list.length) return;
             const ath = athletes[i];
+            if (!autoSplits) { list.forEach(w => seen.add(`${i}:${w.key}:${w.n}-${w.at}`)); return; }
             if (!ath || !ath.started || ath.finished) return;
-            const next = ath.splits.findIndex(x => x === null);
-            if (next !== +wl.seg) return;
-            const prev = next === 0 ? (ath.startOffset || 0) : ath.splits[next - 1];
-            // when the button was pressed: the server's receipt time, less how long
-            // the watch held it (e.g. out of Bluetooth range during the swim)
-            const pressedAt = wl.at - Math.max(0, +wl.ago || 0);
-            const at = Math.max(prev || 0, Math.round(raceNow() - Math.max(0, serverNow() - pressedAt)));
-            logSplit(i, next, at);
+            const crs = (courses || []).find(c => c.id === ath.courseId) || (courses || [])[0] || {};
+            const splits = [...ath.splits];
+            for (const w of list) {
+              const sk = `${i}:${w.key}:${w.n}-${w.at}`;
+              if (seen.has(sk)) continue;
+              seen.add(sk);
+              const next = splits.findIndex(x => x === null);
+              if (next < 0 || next !== +w.seg) continue;
+              // a bike on a trainer, or counted in laps, ends by its distance, not the T2 pin
+              if (w.auto && next === slotOf("bike") && (crs.bikeType || "gps") !== "gps") continue;
+              const at = Math.round(raceNow() - Math.max(0, serverNow() - w.pressedAt));
+              if (ath.startOffset != null && at < ath.startOffset) continue;   // left over from an earlier start
+              const prev = next === 0 ? (ath.startOffset || 0) : splits[next - 1];
+              splits[next] = Math.max(prev || 0, at);
+              logSplit(i, next, splits[next]);
+            }
           });
         }, [athleteWatch, autoSplits, liveRaceCode]);
 

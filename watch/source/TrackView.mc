@@ -15,8 +15,11 @@ import Toybox.WatchUi;
 
 // Racing.
 //   Sends:  liveRaces/{race}/athletes/{i}/gps  ← { lat, lng, distanceMi, accuracy, seg, onBike, src:"watch", tok, t }
-//           .../gps/watchLap                   ← { seg, n, ago, at: server time }  (one per LAP press;
-//                                                ago = ms between the press and sending it)
+//           .../gps/watchLap                   ← { seg, n, ago, at: server time, auto }  (one per LAP press
+//           .../gps/watchLaps/{key}            ←   or pin reached; ago = ms between it and sending it)
+//   Reads:  liveRaces/{race}/waypoints         ← the course map's split pins: reaching the next leg's pin
+//                                                ends that leg by itself (auto), timed on the watch, so it
+//                                                works out of the phone's range and sends when back in range
 //   Reads:  watchTokens/{code}/race            ← { started, startAt, splits[5], finished,  (server times,
 //                                                dist[5], unit[5] }  kept up to date by the host's screen)
 // The times shown are the race's: from when the host sent this athlete off,
@@ -61,6 +64,15 @@ class TrackView extends WatchUi.View {
     var session = null;
     var isRide as Boolean = false;    // a bike ride ("W" codes) rather than a race
     var zones = null;                 // heart-rate zone thresholds from the watch's user profile
+    // Auto splits at the course map's pins
+    var pins = null;                  // [[seg, lat, lng, radius m], ...]; null until loaded
+    var pinsNext as Number = 0;       // tick to (re)try loading them
+    var armLeg as Number = -1;        // leg the pin checks below are for
+    var armed as Boolean = false;     // been outside this leg's pin since the leg began
+    var legSeen as Number = 0;        // System.getTimer() when the watch first saw this leg
+    var lastAutoMs as Number = 0;
+    var everAuto as Boolean = false;
+    var pinM = null;                  // metres to this leg's nearest pin
 
     function initialize() {
         View.initialize();
@@ -179,7 +191,77 @@ class TrackView extends WatchUi.View {
                 var m = metres(lastLat, lastLng, lat, lng);
                 if (m > 3 && m < 200) { totalM += m; lastLat = lat; lastLng = lng; }
             } else { lastLat = lat; lastLng = lng; }
+            checkPins();
         }
+    }
+
+    // ── auto splits ──
+    // Reaching the pin that ends the leg you're on ends it, like a LAP press.
+    // Only the current leg's pins count, so passing T1 again on the run does
+    // nothing. The swim's pin arms once you've been outside it (the swim
+    // start is often right by transition); every leg must run a minimum time.
+    function checkPins() as Void {
+        if (pins == null || isRide || !raceKnown || !started || lat == null) { pinM = null; return; }
+        var l = leg();
+        if (l >= 5) { pinM = null; return; }
+        if (l != armLeg) { armLeg = l; armed = l != 0; legSeen = System.getTimer(); }
+        var best = null, inside = false;
+        for (var i = 0; i < pins.size(); i++) {
+            var p = pins[i] as Array;
+            if (p[0] != l) { continue; }
+            var m = metres(lat, lng, p[1], p[2]);
+            if (best == null || m < best) { best = m; }
+            if (m < p[3]) { inside = true; }
+        }
+        pinM = best;
+        if (best == null) { return; }
+        if (!inside) { armed = true; return; }
+        if (!armed) { return; }
+        // time on this leg: the race's own clock where known, else since the watch saw it
+        var on = System.getTimer() - legSeen;
+        var now = serverNow();
+        var from = l == 0 ? startAt : (splits[l - 1] > 0 ? splits[l - 1] : null);
+        if (now != null && from != null) { on = (now - from).toNumber(); }
+        if (on < ((l == 1 || l == 3) ? 10000 : 60000)) { return; }
+        addLap(true);
+    }
+    function loadPins() as Void {
+        sending = true;
+        Communications.makeWebRequest(Tm.RTDB + "/liveRaces/" + raceCode + "/waypoints.json", null,
+            { :method => Communications.HTTP_REQUEST_METHOD_GET, :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON },
+            method(:onPins));
+    }
+    function num(v) as Boolean {
+        return v instanceof Number || v instanceof Long || v instanceof Float || v instanceof Double;
+    }
+    function dbl(v) as Double {
+        if (v instanceof Number) { return (v as Number).toDouble(); }
+        if (v instanceof Long) { return (v as Long).toDouble(); }
+        if (v instanceof Float) { return (v as Float).toDouble(); }
+        if (v instanceof Double) { return v as Double; }
+        return 0.0d;
+    }
+    function onPins(code as Number, data as Dictionary or String or Null) as Void {
+        sending = false; lastCode = code;
+        pinsNext = tick + 30;                       // look again in 30 s (pins can be added later)
+        if (code != 200) { return; }
+        lastSentMs = System.getTimer(); everSent = true;
+        var list = [];
+        var d = data as Object or Null;
+        if (d instanceof Array) { list = d; }
+        else if (d instanceof Dictionary) { list = d.values(); }
+        var out = [];
+        for (var i = 0; i < list.size(); i++) {
+            var w = list[i];
+            if (!(w instanceof Dictionary)) { continue; }
+            if (!"split".equals(w.get("action")) || w.get("enabled") == false) { continue; }
+            var a = w.get("lat"), o = w.get("lng"), sg = w.get("segIdx"), r = w.get("radiusM");
+            if (!num(a) || !num(o) || !num(sg)) { continue; }
+            var rad = num(r) ? dbl(r).toFloat() : 30.0;
+            if (rad < 15) { rad = 15.0; }
+            out.add([dbl(sg).toNumber(), dbl(a), dbl(o), rad]);
+        }
+        if (out.size() > 0) { pins = out; pinsNext = tick + 120; }   // refresh every 2 min
     }
     // metres on the leg showing now (starts again from 0 each new leg)
     function legMetres() as Float {
@@ -268,7 +350,10 @@ class TrackView extends WatchUi.View {
             sending = true;
             var l = lapsToSend[0] as Dictionary;
             var ago = System.getTimer() - (l.get("press") as Number);
-            patch({ "watchLap" => { "seg" => l.get("seg"), "n" => l.get("n"), "ago" => ago, "at" => { ".sv" => "timestamp" } } }, method(:onLapSent));
+            var body = { "seg" => l.get("seg"), "n" => l.get("n"), "ago" => ago, "auto" => l.get("auto"), "at" => { ".sv" => "timestamp" } };
+            // watchLap for older host screens; watchLaps keeps every one, so several sent
+            // back to back (after a spell out of range) are all seen
+            patch({ "watchLap" => body, "watchLaps/" + l.get("key") => body }, method(:onLapSent));
             return;
         }
         if (token != null && (tick % 4 == 1 || !raceKnown && tick % 2 == 1)) {
@@ -276,6 +361,10 @@ class TrackView extends WatchUi.View {
             Communications.makeWebRequest(Tm.RTDB + "/watchTokens/" + token + "/race.json", null,
                 { :method => Communications.HTTP_REQUEST_METHOD_GET, :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON },
                 method(:onRace));
+            return;
+        }
+        if (!isRide && raceKnown && tick >= pinsNext) {
+            loadPins();
             return;
         }
         if (tick % 3 == 0 && lat != null) {
@@ -336,17 +425,31 @@ class TrackView extends WatchUi.View {
             if (Attention has :vibrate) { Attention.vibrate([new Attention.VibeProfile(60, 200)]); }
             return;
         }
+        // a pin just ended the leg: a LAP pressed out of habit right after mustn't end the next one too
+        if (everAuto && System.getTimer() - lastAutoMs < 20000) {
+            if (Attention has :vibrate) { Attention.vibrate([new Attention.VibeProfile(30, 100)]); }
+            return;
+        }
+        addLap(false);
+    }
+    function addLap(auto as Boolean) as Void {
         var l = leg();
         if (l >= 5) { return; }
         lapCount++;
         lastPressMs = System.getTimer();
         everPressed = true;
-        lapsToSend.add({ "seg" => l, "n" => lapCount, "press" => lastPressMs });
+        if (auto) { lastAutoMs = lastPressMs; everAuto = true; }
+        var key = "w" + (localStart % 1000000).abs().format("%d") + "_" + lapCount.format("%d");
+        lapsToSend.add({ "seg" => l, "n" => lapCount, "press" => lastPressMs, "auto" => auto, "key" => key });
         localLeg = l + 1;
         if (session != null && session.isRecording() && !isRide) {
             try { session.addLap(); } catch (e) { }
         }
-        if (Attention has :vibrate) { Attention.vibrate([new Attention.VibeProfile(80, 250)]); }
+        if (Attention has :vibrate) {
+            Attention.vibrate(auto
+                ? [new Attention.VibeProfile(100, 300), new Attention.VibeProfile(0, 150), new Attention.VibeProfile(100, 300)]
+                : [new Attention.VibeProfile(80, 250)]);
+        }
         WatchUi.requestUpdate();
     }
 
@@ -411,7 +514,7 @@ class TrackView extends WatchUi.View {
                 dc.setColor(left > 0 ? 0xAAAAAA : 0x2FC27A, Graphics.COLOR_TRANSPARENT);
                 dc.drawText(w / 2, h * 0.69, Graphics.FONT_XTINY, left > 0 ? fmtDist(left, u) + " " + u + " left" : "Distance done", Graphics.TEXT_JUSTIFY_CENTER);
             } else if (l == 1 || l == 3) {
-                dc.drawText(w / 2, h * 0.63, Graphics.FONT_XTINY, "Transition", Graphics.TEXT_JUSTIFY_CENTER);
+                dc.drawText(w / 2, h * 0.63, Graphics.FONT_XTINY, pinM != null ? "Transition  pin " + (pinM as Float).toNumber().format("%d") + " m" : "Transition", Graphics.TEXT_JUSTIFY_CENTER);
             } else {
                 dc.drawText(w / 2, h * 0.63, Graphics.FONT_SMALL, fmtDist(done, "mi") + " mi", Graphics.TEXT_JUSTIFY_CENTER);
             }
@@ -424,7 +527,11 @@ class TrackView extends WatchUi.View {
         if (lapsToSend.size() > 0) { line = "Sending lap..."; }
         dc.drawText(w / 2, h * 0.76, Graphics.FONT_XTINY, line + (gps ? "  GPS ok" : "  GPS ..."), Graphics.TEXT_JUSTIFY_CENTER);
         dc.setColor(0x777777, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, h * 0.84, Graphics.FONT_XTINY, l < 5 && (!raceKnown || started) ? (isRide ? "LAP = lap" : "LAP = end " + Tm.LEGS[l]) : "Hold UP for menu", Graphics.TEXT_JUSTIFY_CENTER);
+        var hint = "Hold UP for menu";
+        if (l < 5 && (!raceKnown || started)) {
+            hint = isRide ? "LAP = lap" : (pins != null ? "AUTO  LAP = end " : "LAP = end ") + Tm.LEGS[l];
+        }
+        dc.drawText(w / 2, h * 0.84, Graphics.FONT_XTINY, hint, Graphics.TEXT_JUSTIFY_CENTER);
     }
 }
 
