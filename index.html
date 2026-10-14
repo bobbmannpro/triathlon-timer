@@ -13419,7 +13419,7 @@ Start a new race anyway?`)) return;
             const d = new Date(); const s0 = new Date(d.getFullYear(), d.getMonth() + 1, 1), e0 = new Date(d.getFullYear(), d.getMonth() + 2, 0);
             const sd = s0.toLocaleDateString("en-CA"), ed = e0.toLocaleDateString("en-CA");
             const data = { hostUid: currentUser.uid, name: nm || "Challenge", status: "setup", createdAt: Date.now(), sport: "run", unit: "mi",
-              startDate: sd, endDate: ed, ...chBounds(sd, ed), nextBib: 0 };
+              startDate: sd, endDate: ed, ...chBounds(sd, ed) };
             rtdb.ref("challenges/" + cd).set(data).then(() => {
               rtdb.ref("users/" + currentUser.uid + "/challenges/" + cd).set({ name: data.name, at: Date.now(), startDate: sd, endDate: ed, startsAt: data.startAt }).catch(() => {});
               setChCode(cd); setChViewer(false); setView("challenge");
