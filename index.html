@@ -5189,7 +5189,7 @@ ${html}</body></html>`);
         w.document.close();
       }
 
-      function Challenge({ code, viewer, currentUser, userProfile, onBack }) {
+      function Challenge({ code, viewer, currentUser, userProfile, onBack, action }) {
         const [c, setC] = React.useState(undefined);
         const [tab, setTab] = React.useState(viewer ? "me" : "setup");
         const [msg, setMsg] = React.useState("");
@@ -5216,6 +5216,16 @@ ${html}</body></html>`);
               status: Date.now() >= (c.startAt || 0) ? "live" : "registration", updatedAt: Date.now(), startsAt: c.startAt || null, liveAt: c.startAt || null, endsAt: c.endAt }).catch(() => {});
           } else rtdb.ref("raceDirectory/" + code).once("value").then(sn => { if (sn.exists()) sn.ref.remove().catch(() => {}); }).catch(() => {});
         }, [dirKey]);
+        // Opened from "Track my run" / "Add a run" on the home screen: do that once it's loaded.
+        const actionDone = React.useRef(false);
+        const meNow = c && currentUser && c.entrants && c.entrants[currentUser.uid];
+        const onNow = c && c.startAt && c.endAt && Date.now() >= c.startAt && Date.now() <= c.endAt;
+        React.useEffect(() => {
+          if (actionDone.current || !action || !meNow || !onNow) return;
+          actionDone.current = true; setTab("me");
+          if (action === "add") setEntry({ dist: "", date: new Date().toLocaleDateString("en-CA"), time: "", src: "garmin" });
+          if (action === "run") setTimeout(() => { const b = document.getElementById("ch-start-run"); if (b) b.click(); }, 50);
+        }, [!!meNow, !!onNow, action]);
         // stop GPS if the page goes away
         React.useEffect(() => () => { if (runRef.current && runRef.current.watch != null) navigator.geolocation.clearWatch(runRef.current.watch); }, []);
 
@@ -5360,7 +5370,7 @@ ${html}</body></html>`);
             {phase === "on" && !run && !entry && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
                 <button onClick={() => setEntry({ dist: "", date: new Date().toLocaleDateString("en-CA"), time: "", src: "garmin" })} style={{ ...btnStyle(TM.ink), minHeight: 56 }}>📝 Add a run from my watch or app</button>
-                <button onClick={startRun} style={{ ...btnStyle(TM.run), minHeight: 56 }}>📍 Run now with this phone's GPS</button>
+                <button id="ch-start-run" onClick={startRun} style={{ ...btnStyle(TM.run), minHeight: 56 }}>📍 Run now with this phone's GPS</button>
               </div>
             )}
             {phase === "before" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>You're in! Runs count from {chDay(c.startAt)} 12:00 AM.</div>}
@@ -13126,6 +13136,23 @@ ${html}</body></html>`);
         }
 
         const [todayRaces, setTodayRaces] = useState(null);   // null while loading
+        const [myChallenges, setMyChallenges] = useState([]);  // [{ code, c, me, count }] — challenges I've joined
+        const [chAction, setChAction] = useState(null);        // "run" | "add" — what to do when the challenge opens
+        useEffect(() => {
+          if (!currentUser || !["join", "spectate", "watch"].includes(view)) return;
+          let live = true;
+          const load = () => rtdb.ref("users/" + currentUser.uid + "/joinedChallenges").once("value").then(sn =>
+            Promise.all(Object.keys(sn.val() || {}).map(code => rtdb.ref("challenges/" + code).once("value").then(x => {
+              const c = x.val(); if (!c) return null;
+              const rows = chStandings(c); const me = rows.find(r => r.uid === currentUser.uid);
+              return me ? { code, c: { ...c, code }, me, count: rows.length } : null;
+            }).catch(() => null)))
+          ).then(list => { if (live) setMyChallenges(list.filter(Boolean).sort((a, b) => (b.c.endAt || 0) - (a.c.endAt || 0))); }).catch(() => {});
+          load();
+          const t = setInterval(load, 60000);
+          return () => { live = false; clearInterval(t); };
+        }, [currentUser && currentUser.uid, view]);
+        function openChallenge(code, action) { setChAction(action || null); setChCode(code); setChViewer(true); setView("challenge"); }
         const [todayBusy, setTodayBusy] = useState(null);
         const showToday = view === "spectate" || (view === "join" && !joinRace) || (view === "swimlane" && !swimLaneSession);
         useEffect(() => {
@@ -13166,6 +13193,7 @@ ${html}</body></html>`);
 
         function renderTodayRaces(mode) {
           const list = todayRaces;
+          const racesOnly = (list || []).filter(r => r.kind !== "challenge");
           return (
             <section aria-label="Today's races" style={{ marginTop: 20 }}>
               {(mode === "join" || view === "spectate") && (
@@ -13174,14 +13202,66 @@ ${html}</body></html>`);
                   <VideoModal video={videoOpen} onClose={() => setVideoOpen(null)} />
                 </div>
               )}
+              {(() => {
+                const now = Date.now();
+                const mine = myChallenges.filter(x => !x.c.endAt || now < x.c.endAt + 14 * 86400e3);   // hide two weeks after the end
+                const joined = new Set(myChallenges.map(x => x.code));
+                const open = (list || []).filter(r => r.kind === "challenge" && !joined.has(r.code));
+                if (!mine.length && !open.length) return null;
+                return (
+                  <section aria-label="Challenges" style={{ marginBottom: 22 }}>
+                    <h2 style={{ ...TM_H2, marginBottom: 10 }}>Challenges</h2>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {mine.map(({ code, c, me, count }) => {
+                        const on = c.startAt && c.endAt && now >= c.startAt && now <= c.endAt, over = c.endAt && now > c.endAt;
+                        const days = c.startAt && c.endAt ? Math.round((c.endAt - c.startAt) / 86400e3) : 0;
+                        const day = on ? Math.floor((now - c.startAt) / 86400e3) + 1 : 0;
+                        return (
+                          <div key={code} style={{ ...rowStyle(TM.warn) }}>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: TM.warn }}>MY CHALLENGE</span>
+                              <span style={TM_CAPTION}>{on ? `Day ${day} of ${days}` : over ? "Finished" : `Starts ${chDay(c.startAt)}`}</span>
+                            </div>
+                            <button onClick={() => openChallenge(code)} style={{ display: "block", width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: TM.ink }}>
+                              <div style={{ fontSize: 20, fontWeight: 900 }}>{c.name || "Challenge"}</div>
+                              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 28, fontWeight: 900 }}>{chFmt(me.total, c.unit)}</span>
+                                <span style={{ fontWeight: 800 }}>{me.place ? `${chOrd(me.place)} of ${count}` : "No distance yet"} · bib #{me.bib}</span>
+                              </div>
+                            </button>
+                            {on && (
+                              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                                <button onClick={() => openChallenge(code, "run")} style={{ ...btnStyle(TM.run), flex: 1, minHeight: 52 }}>▶ Track my run</button>
+                                <button onClick={() => openChallenge(code, "add")} style={{ ...btnStyle(TM.ink, true), flex: 1, minHeight: 52 }}>+ Add a run</button>
+                              </div>
+                            )}
+                            {over && <button onClick={() => openChallenge(code)} style={{ ...btnStyle(TM.warn), width: "100%", minHeight: 46, marginTop: 10 }}>🏅 Results & my certificate</button>}
+                          </div>
+                        );
+                      })}
+                      {open.map(r => (
+                        <button key={r.code} onClick={() => openChallenge(r.code)}
+                          style={{ ...rowStyle(TM.warn), display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", cursor: "pointer", color: TM.ink }}>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: TM.warn }}>CHALLENGE · JOIN</span>
+                            <span style={{ display: "block", fontSize: 19, fontWeight: 900 }}>{r.name}</span>
+                            <span style={{ display: "block", fontWeight: 700 }}>{eventWhenLabel(r.startsAt, false)} – {eventWhenLabel(r.endsAt, false)}</span>
+                          </span>
+                          <ArrowIcon />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })()}
               <h2 style={{ ...TM_H2, marginBottom: 10 }}>Today's races</h2>
               {list === null ? (
                 <div style={TM_CAPTION}>Loading…</div>
-              ) : list.length === 0 ? (
+              ) : racesOnly.length === 0 ? (
                 <div style={{ ...rowStyle(), ...TM_CAPTION }}>No races listed right now. If you have a code, type it below.</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {list.map(r => {
+                  {list.filter(r => r.kind !== "challenge").map(r => {
                     const k = RACE_KINDS[r.kind] || RACE_KINDS.triathlon;
                     return (
                       <button key={r.code} onClick={() => pickTodayRace(r, mode)} disabled={todayBusy === r.code}
@@ -20738,8 +20818,8 @@ Start a new race anyway?`)) return;
             })()}
 
             {view === "challenge" && chCode && (
-              <Challenge code={chCode} viewer={chViewer || !isHost} currentUser={currentUser} userProfile={userProfile}
-                onBack={() => { setChCode(null); setView(roleLanding(effectiveRole)); }} />
+              <Challenge code={chCode} viewer={chViewer || !isHost} currentUser={currentUser} userProfile={userProfile} action={chAction}
+                onBack={() => { setChCode(null); setChAction(null); setView(roleLanding(effectiveRole)); }} />
             )}
             {view === "timed" && timedCode && (
               <TimedTri code={timedCode} viewer={timedViewer || !isHost} currentUser={currentUser} userProfile={userProfile}
