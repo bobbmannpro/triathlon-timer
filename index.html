@@ -1218,6 +1218,7 @@
         swim:      { label: "Swim meet", colour: TM.swim },
         bike:      { label: "Bike / Run", colour: TM.bike },
         timed:     { label: "Timed Tri", colour: TM.run },
+        challenge: { label: "Challenge", colour: TM.warn },
       };
 
       // ── Setup wizard frame ───────────────────────────────────────────────────
@@ -1334,6 +1335,7 @@
           ["swim",      TM.swim, "Swim meet", "Events, heats, lanes and team scores"],
           ["bike",      TM.bike, "Bike / Run", "Live map of a ride or a run — one or many athletes"],
           ["timed",     TM.run,  "Timed Tri", "Set time per leg — most distance wins. Waves, bikes & treadmills"],
+          ["challenge", TM.warn, "Challenge", "Most miles in a month — sign up, get a bib, log runs, live standings"],
         ];
         return (
           <div>
@@ -5106,6 +5108,393 @@ ${html}</body></html>`);
         );
       }
 
+      // ── Challenges ───────────────────────────────────────────────────────────
+      // A distance challenge over days or weeks — e.g. most miles in January.
+      // People sign up (each gets the next bib number), then log runs until the
+      // end: typed in from any watch or app, run with this phone's GPS, or sent
+      // by the Timeathon Garmin app. Standings are total distance, overall.
+      // Data: challenges/{code} = { hostUid, name, status: "setup"|"open", sport,
+      //   unit: "mi"|"km", startDate, endDate (YYYY-MM-DD), startAt, endAt (ms),
+      //   nextBib, entrants/{uid}: { name, bib, at, entries/{id}: { m, at, src,
+      //   dur?, note?, added }, live?: { m, t } } }
+      const CH_SOURCES = [["garmin", "Garmin"], ["apple", "Apple Watch"], ["wear", "Samsung / Wear OS"], ["phoneapp", "Phone app (Strava, Nike…)"], ["treadmill", "Treadmill"], ["other", "Other"]];
+      const CH_SRC_LABEL = { ...Object.fromEntries(CH_SOURCES), gps: "This phone's GPS", watch: "Timeathon Garmin app" };
+      const CH_SPORTS = [["run", "Run"], ["walk", "Walk / run"], ["ride", "Ride"], ["any", "Any distance"]];
+      function chBounds(startDate, endDate) {
+        const s = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
+        const e = endDate ? new Date(endDate + "T23:59:59.999").getTime() : null;
+        return { startAt: isNaN(s) ? null : s, endAt: isNaN(e) ? null : e };
+      }
+      function chDist(m, unit) { return (m || 0) / (unit === "km" ? 1000 : 1609.344); }
+      function chFmt(m, unit) { const v = chDist(m, unit); return (v >= 100 ? v.toFixed(1) : v.toFixed(2)) + " " + (unit === "km" ? "km" : "mi"); }
+      function chDur(ms) { if (!ms) return ""; const s = Math.round(ms / 1000); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); }
+      function chDay(t) { return t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""; }
+      function chOrd(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+      function chStandings(c) {
+        const now = Date.now();
+        return Object.entries((c && c.entrants) || {}).filter(([, e]) => e && e.name)
+          .map(([uid, e]) => {
+            const entries = Object.entries(e.entries || {}).filter(([, x]) => x && x.m > 0).map(([id, x]) => ({ id, ...x }));
+            return { uid, name: e.name, bib: e.bib, at: e.at || 0, entries, total: entries.reduce((s, x) => s + x.m, 0),
+                     live: e.live && now - (e.live.t || 0) < 90000 ? e.live : null };
+          })
+          .sort((a, b) => b.total - a.total || a.at - b.at)
+          .map((r, i, arr) => ({ ...r, place: r.total > 0 ? arr.filter(x => x.total > r.total).length + 1 : null }));
+      }
+      // Bib: a printable card with the number big, for the fridge or the race belt.
+      function drawChallengeBib(c, me) {
+        const W = 1500, H = 1050, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+        const g = cv.getContext("2d"); const F = (w, px) => `${w} ${px}px Archivo, Arial, sans-serif`;
+        g.fillStyle = "#FFFFFF"; g.fillRect(0, 0, W, H);
+        g.fillStyle = TM.warn; g.fillRect(0, 0, W, 190);
+        g.fillStyle = "#FFFFFF"; g.textAlign = "center";
+        let px = 70; g.font = F(900, px); while (px > 30 && g.measureText((c.name || "Challenge").toUpperCase()).width > W - 160) { px -= 4; g.font = F(900, px); }
+        g.fillText((c.name || "Challenge").toUpperCase(), W / 2, 120);
+        g.fillStyle = TM.ink; g.font = F(900, 520); g.fillText(String(me.bib || ""), W / 2, 700);
+        g.font = F(800, 64); let nm = me.name || ""; px = 64; while (px > 30 && g.measureText(nm).width > W - 200) { px -= 4; g.font = F(800, px); } g.fillText(nm, W / 2, 830);
+        g.fillStyle = TM.inkMuted; g.font = F(700, 38);
+        g.fillText(`${chDay(c.startAt)} – ${chDay(c.endAt)}  ·  TIMEATHON CHALLENGE  ·  code ${c.code || ""}`, W / 2, 920);
+        g.fillStyle = "#DDD9D0"; [[60, 250], [W - 60, 250], [60, H - 60], [W - 60, H - 60]].forEach(([x, y]) => { g.beginPath(); g.arc(x, y, 18, 0, 7); g.fill(); });
+        return new Promise(r => cv.toBlob(r, "image/png"));
+      }
+      async function drawChallengeCert(c, row, count) {
+        const W = 1650, H = 1275, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+        const g = cv.getContext("2d"); const F = (w, px) => `${w} ${px}px Archivo, Arial, sans-serif`;
+        try { await document.fonts.load("900 60px Archivo"); } catch (_) {}
+        const center = (t, y, w, px, col) => { g.font = F(w, px); while (px > 14 && g.measureText(t).width > W - 240) { px -= 2; g.font = F(w, px); } g.fillStyle = col; g.textAlign = "center"; g.fillText(t, W / 2, y); };
+        const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, "#EFEDE8"); bg.addColorStop(0.55, "#FFFFFF"); bg.addColorStop(1, "#EFEDE8");
+        g.fillStyle = bg; g.fillRect(0, 0, W, H);
+        g.strokeStyle = TM.warn; g.lineWidth = 12; g.strokeRect(18, 18, W - 36, H - 36);
+        try { const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = LOGO_B64; }); const h = 110, w = im.width * h / im.height; g.drawImage(im, (W - w) / 2, 70, w, h); } catch (_) {}
+        center((c.name || "Challenge").toUpperCase(), 250, 800, 40, TM.inkMuted);
+        center(`${chDay(c.startAt)} – ${chDay(c.endAt)}, ${new Date(c.endAt || Date.now()).getFullYear()}`, 300, 700, 30, TM.warn);
+        const win = row.place === 1;
+        center(win ? "🏆 CHALLENGE WINNER" : "CERTIFICATE OF ACHIEVEMENT", 410, 900, 54, TM.ink);
+        center(row.name, 560, 900, 120, TM.ink);
+        center(`Bib #${row.bib}`, 625, 800, 32, TM.warn);
+        center(chFmt(row.total, c.unit), 790, 900, 130, TM.ink);
+        center(`${row.place ? chOrd(row.place) + " of " + count : "Finisher"}  ·  ${row.entries.length} ${row.entries.length === 1 ? "activity" : "activities"} logged`, 870, 700, 40, TM.inkMuted);
+        center("timeathon.com", H - 70, 700, 28, TM.inkMuted);
+        return new Promise(r => cv.toBlob(r, "image/png"));
+      }
+      async function chSaveOrShare(blob, name, share) {
+        const file = new File([blob], safeFileName(name) + ".png", { type: "image/png" });
+        if (share && navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (_) { return; } }
+        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      }
+      function chPrintImage(blob, title) {
+        const url = URL.createObjectURL(blob); const w = window.open("", "_blank"); if (!w) return;
+        w.document.write(`<!doctype html><title>${escHtml(title)}</title><style>@page{size:landscape;margin:0.4in}body{margin:0}img{width:100%}</style><img src="${url}" onload="setTimeout(()=>print(),300)">`);
+        w.document.close();
+      }
+
+      function Challenge({ code, viewer, currentUser, userProfile, onBack }) {
+        const [c, setC] = React.useState(undefined);
+        const [tab, setTab] = React.useState(viewer ? "me" : "setup");
+        const [msg, setMsg] = React.useState("");
+        const [find, setFind] = React.useState("");
+        const [entry, setEntry] = React.useState(null);        // manual entry form
+        const [run, setRun] = React.useState(null);            // phone GPS run in progress
+        const [, setTick] = React.useState(0);
+        const runRef = React.useRef(null);
+        const ref = React.useMemo(() => rtdb.ref("challenges/" + code), [code]);
+        React.useEffect(() => {
+          const fn = sn => setC(sn.exists() ? { ...sn.val(), code } : null);
+          ref.on("value", fn, () => setC(null));
+          const iv = setInterval(() => setTick(t => t + 1), 1000);
+          return () => { ref.off("value", fn); clearInterval(iv); };
+        }, [ref]);
+        // listed in Today's races while open (host's screen keeps it current)
+        const dirKey = viewer || !c ? "" : [c.status, c.name, c.startAt, c.endAt].join("|");
+        React.useEffect(() => {
+          if (viewer || !c || !currentUser || c.hostUid !== currentUser.uid) return;
+          rtdb.ref("users/" + currentUser.uid + "/challenges/" + code).update({ name: c.name || "Challenge", startDate: c.startDate || null, endDate: c.endDate || null, startsAt: c.startAt || null }).catch(() => {});
+          if (c.status === "open" && c.endAt && Date.now() < c.endAt) {
+            rtdb.ref("raceDirectory/" + code).set({ kind: "challenge", hostUid: currentUser.uid, name: c.name || "Challenge",
+              hostName: (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || "",
+              status: Date.now() >= (c.startAt || 0) ? "live" : "registration", updatedAt: Date.now(), startsAt: c.startAt || null, liveAt: c.startAt || null, endsAt: c.endAt }).catch(() => {});
+          } else rtdb.ref("raceDirectory/" + code).once("value").then(sn => { if (sn.exists()) sn.ref.remove().catch(() => {}); }).catch(() => {});
+        }, [dirKey]);
+        // stop GPS if the page goes away
+        React.useEffect(() => () => { if (runRef.current && runRef.current.watch != null) navigator.geolocation.clearWatch(runRef.current.watch); }, []);
+
+        if (c === undefined) return <div style={{ padding: 20 }}>Loading…</div>;
+        if (!c) return <div style={{ padding: 20 }}><button onClick={onBack} style={btnStyle(TM.ink, true)}>← Back</button><div style={{ marginTop: 16 }}>No challenge found with code {code}.</div></div>;
+
+        const now = Date.now();
+        const unit = c.unit || "mi";
+        const phase = !c.startAt || !c.endAt ? "unset" : now < c.startAt ? "before" : now > c.endAt ? "ended" : "on";
+        const rows = chStandings(c);
+        const me = currentUser ? rows.find(r => r.uid === currentUser.uid) : null;
+        const isHost = !!currentUser && c.hostUid === currentUser.uid && !viewer;
+        const inputS = { minHeight: 44, fontSize: 16, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF", color: TM.ink };
+        const set = (path, val) => ref.child(path).set(val).catch(e => setMsg("Couldn't save: " + e.message));
+        const winner = phase === "ended" ? rows.find(r => r.place === 1) : null;
+        const countdown = t => { const s = Math.max(0, Math.round((t - now) / 1000)); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+          return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
+        const phaseLine = phase === "unset" ? "Dates not set yet"
+          : phase === "before" ? `Starts ${chDay(c.startAt)} · in ${countdown(c.startAt)}`
+          : phase === "on" ? `● On now · ends ${chDay(c.endAt)} 11:59 PM · ${countdown(c.endAt)} left`
+          : `Finished ${chDay(c.endAt)}`;
+
+        async function signUp(name) {
+          if (!currentUser) { setMsg("Sign in first."); return; }
+          try {
+            const res = await ref.child("nextBib").transaction(n => (n || 0) + 1);
+            const bib = res.snapshot.val();
+            await ref.child("entrants/" + currentUser.uid).set({ name: name.trim(), bib, at: Date.now() });
+            try { rtdb.ref("users/" + currentUser.uid + "/joinedChallenges/" + code).set({ name: c.name || "Challenge", at: Date.now() }); } catch (_) {}
+            setMsg(""); setTab("me");
+          } catch (e) { setMsg("Couldn't sign you up: " + e.message); }
+        }
+        async function saveEntry(e) {
+          const v = parseFloat(String(e.dist).replace(",", "."));
+          if (!(v > 0)) { setMsg("Enter the distance."); return; }
+          const m = Math.round(v * (unit === "km" ? 1000 : 1609.344));
+          let at = e.date ? new Date(e.date + "T12:00:00").getTime() : Date.now();
+          if (at > Date.now()) at = Date.now();
+          if (at < c.startAt || at > c.endAt) { setMsg(`Runs must be between ${chDay(c.startAt)} and ${chDay(c.endAt)}.`); return; }
+          const parts = String(e.time || "").split(":").map(Number).filter(x => !isNaN(x));
+          const dur = parts.length ? parts.reduce((s, x) => s * 60 + x, 0) * 1000 * (parts.length === 1 ? 60 : 1) : null;
+          try {
+            await ref.child("entrants/" + currentUser.uid + "/entries").push({ m, at, src: e.src || "other", dur: dur || null, note: (e.note || "").slice(0, 80) || null, added: Date.now() });
+            setEntry(null); setMsg(`✓ Added ${chFmt(m, unit)}`);
+          } catch (er) { setMsg("Couldn't save: " + er.message); }
+        }
+        function startRun() {
+          if (!navigator.geolocation) { setMsg("This phone can't share its location."); return; }
+          const st = { m: 0, start: Date.now(), dist: makeTriDistance(), watch: null, acc: null, lastPush: 0 };
+          try { navigator.wakeLock && navigator.wakeLock.request("screen").then(l => { st.lock = l; }).catch(() => {}); } catch (_) {}
+          st.watch = navigator.geolocation.watchPosition(p => {
+            const add = st.dist.add({ lat: p.coords.latitude, lng: p.coords.longitude, t: Date.now(), acc: p.coords.accuracy, spd: p.coords.speed });
+            if (add > 0) st.m += add;
+            st.acc = p.coords.accuracy;
+            setRun({ m: st.m, start: st.start, acc: st.acc });
+            if (Date.now() - st.lastPush > 15000) { st.lastPush = Date.now(); ref.child("entrants/" + currentUser.uid + "/live").set({ m: Math.round(st.m), t: firebase.database.ServerValue.TIMESTAMP }).catch(() => {}); }
+          }, err => setMsg(err.code === 1 ? "Location is blocked — allow it for this site, then start again." : "GPS: " + err.message), { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+          runRef.current = st; setRun({ m: 0, start: st.start, acc: null }); setMsg("");
+        }
+        async function stopRun(save) {
+          const st = runRef.current; runRef.current = null;
+          if (st) { if (st.watch != null) navigator.geolocation.clearWatch(st.watch); try { st.lock && st.lock.release(); } catch (_) {} }
+          setRun(null);
+          ref.child("entrants/" + currentUser.uid + "/live").remove().catch(() => {});
+          if (!save || !st) return;
+          if (st.m < 50) { setMsg("Less than 50 m measured — nothing saved."); return; }
+          if (Date.now() > c.endAt) { setMsg("The challenge ended during this run — it can't be added."); return; }
+          try { await ref.child("entrants/" + currentUser.uid + "/entries").push({ m: Math.round(st.m), at: st.start, src: "gps", dur: Date.now() - st.start, added: Date.now() });
+                setMsg(`✓ Saved ${chFmt(st.m, unit)}`); }
+          catch (e) { setMsg("Couldn't save the run: " + e.message); }
+        }
+
+        // ── standings (everyone) ──
+        const q = find.trim().toLowerCase();
+        const shown = rows.filter(r => !q || r.name.toLowerCase().includes(q) || String(r.bib) === q.replace(/^#/, ""));
+        const standings = (
+          <div>
+            {winner && (
+              <div style={{ ...rowStyle(TM.warn), marginBottom: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2 }}>🏆 WINNER</div>
+                <div style={{ fontSize: 26, fontWeight: 900 }}>{winner.name} <span style={{ color: TM.warn }}>#{winner.bib}</span></div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>{chFmt(winner.total, unit)}</div>
+              </div>
+            )}
+            <input value={find} onChange={e => setFind(e.target.value)} placeholder="Find a name or bib number" aria-label="Find a name or bib number" style={{ ...inputS, width: "100%", marginBottom: 10 }} />
+            {rows.length === 0 && <div style={{ ...rowStyle(), ...TM_CAPTION }}>Nobody's signed up yet.</div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {shown.map(r => (
+                <div key={r.uid} style={{ ...rowStyle(r.place === 1 ? TM.warn : undefined), display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+                                          outline: me && me.uid === r.uid ? `3px solid ${TM.swim}` : "none" }}>
+                  <div style={{ width: 42, textAlign: "center", fontSize: 22, fontWeight: 900 }}>{r.place ? (r.place <= 3 ? ["🥇", "🥈", "🥉"][r.place - 1] : r.place) : "–"}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 17, fontWeight: 800, overflowWrap: "anywhere" }}>{r.name} <span style={{ color: TM.warn, fontWeight: 800 }}>#{r.bib}</span></div>
+                    <div style={TM_CAPTION}>{r.entries.length} {r.entries.length === 1 ? "activity" : "activities"}{r.live ? ` · ● running now (${chFmt(r.live.m, unit)})` : ""}</div>
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 900, whiteSpace: "nowrap" }}>{chFmt(r.total, unit)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+
+        // ── my challenge (athletes; hosts too if they join) ──
+        const myPanel = !currentUser ? (
+          <div style={rowStyle()}>Sign in to sign up and log your runs.</div>
+        ) : !me ? (() => {
+          const canJoin = c.status === "open" && phase !== "ended" && phase !== "unset";
+          const nm0 = [userProfile && userProfile.firstName, userProfile && userProfile.lastName].filter(Boolean).join(" ") || (userProfile && userProfile.displayName) || "";
+          return (
+            <div style={rowStyle(TM.warn)}>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>Join the challenge</div>
+              <div style={TM_CAPTION}>{chDay(c.startAt)} – {chDay(c.endAt)} · {(CH_SPORTS.find(s => s[0] === c.sport) || CH_SPORTS[0])[1]} · most {unit === "km" ? "kilometres" : "miles"} wins</div>
+              {canJoin ? (
+                <form onSubmit={e => { e.preventDefault(); const v = e.target.elements.nm.value; if (v.trim()) signUp(v); }} style={{ marginTop: 10 }}>
+                  <label style={TM_LABEL}>Your name (as it shows on the standings)</label>
+                  <input name="nm" defaultValue={nm0} required maxLength={60} style={{ ...inputS, width: "100%" }} />
+                  <button type="submit" style={{ ...btnStyle(TM.warn), width: "100%", marginTop: 10 }}>Sign up & get my bib →</button>
+                </form>
+              ) : <div style={{ marginTop: 8, fontWeight: 700 }}>{phase === "ended" ? "This challenge has finished." : "Sign-ups aren't open yet."}</div>}
+            </div>
+          );
+        })() : (
+          <div>
+            <div style={{ ...rowStyle(TM.warn), display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ textAlign: "center", minWidth: 90 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: 1.2 }}>BIB</div>
+                <div style={{ fontSize: 46, fontWeight: 900, lineHeight: 1 }}>{me.bib}</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 900, overflowWrap: "anywhere" }}>{me.name}</div>
+                <div style={{ fontSize: 26, fontWeight: 900 }}>{chFmt(me.total, unit)}</div>
+                <div style={TM_CAPTION}>{me.place ? `${chOrd(me.place)} of ${rows.length}` : "No distance yet"} · {me.entries.length} {me.entries.length === 1 ? "activity" : "activities"}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+              <button onClick={async () => chSaveOrShare(await drawChallengeBib(c, me), `${c.name || "Challenge"} bib ${me.bib}`, false)} style={{ ...btnStyle(TM.ink, true), minHeight: 42, flex: 1 }}>⬇ Save bib</button>
+              <button onClick={async () => chPrintImage(await drawChallengeBib(c, me), `Bib ${me.bib}`)} style={{ ...btnStyle(TM.ink, true), minHeight: 42, flex: 1 }}>🖨 Print bib</button>
+              {phase === "ended" && <button onClick={async () => chSaveOrShare(await drawChallengeCert(c, me, rows.filter(r => r.total > 0).length), `${me.name} - ${c.name || "Challenge"}`, true)}
+                style={{ ...btnStyle(TM.warn), minHeight: 42, flex: "1 1 100%" }}>🏅 My certificate</button>}
+            </div>
+
+            {phase === "on" && !run && !entry && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
+                <button onClick={() => setEntry({ dist: "", date: new Date().toLocaleDateString("en-CA"), time: "", src: "garmin" })} style={{ ...btnStyle(TM.ink), minHeight: 56 }}>📝 Add a run from my watch or app</button>
+                <button onClick={startRun} style={{ ...btnStyle(TM.run), minHeight: 56 }}>📍 Run now with this phone's GPS</button>
+              </div>
+            )}
+            {phase === "before" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>You're in! Runs count from {chDay(c.startAt)} 12:00 AM.</div>}
+            {phase === "ended" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>The challenge is over — no more runs can be added.</div>}
+
+            {run && (
+              <div style={{ ...rowStyle(TM.run), marginTop: 14, textAlign: "center" }}>
+                <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2 }}>● RECORDING</div>
+                <div style={{ fontSize: 54, fontWeight: 900, lineHeight: 1.1 }}>{chDist(run.m, unit).toFixed(2)}<span style={{ fontSize: 22 }}> {unit}</span></div>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{chDur(now - run.start)}</div>
+                <div style={TM_CAPTION}>{run.acc != null ? `GPS ±${Math.round(run.acc)} m` : "Finding GPS…"} · keep this screen open</div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <button onClick={() => stopRun(true)} style={{ ...btnStyle(TM.run), flex: 2, minHeight: 56 }}>■ Finish & save</button>
+                  <button onClick={() => { if (confirm("Throw this run away?")) stopRun(false); }} style={{ ...btnStyle(TM.ink, true), flex: 1, minHeight: 56 }}>Discard</button>
+                </div>
+              </div>
+            )}
+            {entry && (
+              <form onSubmit={e => { e.preventDefault(); saveEntry(entry); }} style={{ ...rowStyle(), marginTop: 14 }}>
+                <div style={{ fontSize: 18, fontWeight: 900 }}>Add a run</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                  <label style={{ flex: "1 1 120px" }}><span style={TM_LABEL}>Distance ({unit})</span>
+                    <input value={entry.dist} onChange={e => setEntry({ ...entry, dist: e.target.value })} inputMode="decimal" placeholder={unit === "km" ? "e.g. 8.2" : "e.g. 5.1"} required style={{ ...inputS, width: "100%" }} /></label>
+                  <label style={{ flex: "1 1 140px" }}><span style={TM_LABEL}>Date</span>
+                    <input type="date" value={entry.date} min={c.startDate} max={new Date(Math.min(Date.now(), c.endAt)).toLocaleDateString("en-CA")} onChange={e => setEntry({ ...entry, date: e.target.value })} style={{ ...inputS, width: "100%" }} /></label>
+                  <label style={{ flex: "1 1 120px" }}><span style={TM_LABEL}>Time (optional)</span>
+                    <input value={entry.time} onChange={e => setEntry({ ...entry, time: e.target.value })} placeholder="h:mm:ss" style={{ ...inputS, width: "100%" }} /></label>
+                  <label style={{ flex: "1 1 180px" }}><span style={TM_LABEL}>Tracked with</span>
+                    <select value={entry.src} onChange={e => setEntry({ ...entry, src: e.target.value })} style={{ ...inputS, width: "100%" }}>{CH_SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <button type="submit" style={{ ...btnStyle(TM.ink), flex: 2 }}>Save run</button>
+                  <button type="button" onClick={() => setEntry(null)} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Cancel</button>
+                </div>
+              </form>
+            )}
+            {msg && <div role="status" style={{ fontWeight: 800, marginTop: 10 }}>{msg}</div>}
+
+            {me.entries.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={TM_LABEL}>My activities</div>
+                {[...me.entries].sort((a, b) => b.at - a.at).map(x => (
+                  <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${TM.line}` }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{chFmt(x.m, unit)}{x.dur ? ` · ${chDur(x.dur)}` : ""}</div>
+                      <div style={TM_CAPTION}>{chDay(x.at)} · {CH_SRC_LABEL[x.src] || "Other"}</div>
+                    </div>
+                    {phase === "on" && <button onClick={() => { if (confirm("Remove this activity?")) ref.child(`entrants/${currentUser.uid}/entries/${x.id}`).remove().catch(e => setMsg(e.message)); }}
+                      aria-label="Remove activity" style={{ background: "none", border: "none", fontSize: 20, color: TM.live, cursor: "pointer" }}>×</button>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ ...TM_CAPTION, marginTop: 14 }}>Garmin: the Timeathon watch app can send runs here too — coming in the next watch update.</div>
+          </div>
+        );
+
+        // ── host setup ──
+        const setDates = (sd, ed) => { const b = chBounds(sd, ed); ref.update({ startDate: sd || null, endDate: ed || null, startAt: b.startAt, endAt: b.endAt }).catch(e => setMsg(e.message)); };
+        const setupTab = (
+          <div>
+            <label style={TM_LABEL}>Challenge name</label>
+            <input defaultValue={c.name} onBlur={e => set("name", e.target.value.trim() || "Challenge")} style={{ ...inputS, width: "100%" }} />
+            <div style={{ ...TM_CAPTION, margin: "6px 0 14px" }}>Code <b>{code}</b> · link timeathon.com/?challenge={code}</div>
+            <div style={{ ...rowStyle(), marginBottom: 12 }}>
+              <div style={TM_LABEL}>When</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <label><span style={{ fontSize: 14, fontWeight: 700 }}>Starts (12:00 AM)</span><br />
+                  <input type="date" value={c.startDate || ""} onChange={e => setDates(e.target.value, c.endDate)} style={inputS} /></label>
+                <label><span style={{ fontSize: 14, fontWeight: 700 }}>Ends (11:59 PM)</span><br />
+                  <input type="date" value={c.endDate || ""} min={c.startDate || undefined} onChange={e => setDates(c.startDate, e.target.value)} style={inputS} /></label>
+              </div>
+              <div style={TM_CAPTION}>Runs can only be added between these times. After the end nothing more can be added, and certificates unlock.</div>
+            </div>
+            <div style={{ ...rowStyle(), marginBottom: 12 }}>
+              <div style={TM_LABEL}>What counts</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {CH_SPORTS.map(([k, l]) => <button key={k} onClick={() => set("sport", k)} aria-pressed={(c.sport || "run") === k} style={{ ...btnStyle(TM.ink, (c.sport || "run") !== k), minHeight: 42, padding: "0 12px", fontSize: 15 }}>{l}</button>)}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                {[["mi", "Miles"], ["km", "Kilometres"]].map(([k, l]) => <button key={k} onClick={() => set("unit", k)} aria-pressed={unit === k} style={{ ...btnStyle(TM.ink, unit !== k), minHeight: 42, padding: "0 12px", fontSize: 15, flex: 1 }}>{l}</button>)}
+              </div>
+            </div>
+            <div style={{ ...rowStyle(TM.warn), marginBottom: 12 }}>
+              <div style={TM_LABEL}>Sign-ups</div>
+              <div style={{ fontWeight: 700 }}>{c.status === "open" ? `Open · ${rows.length} signed up` : "Closed — nobody can sign up yet."}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                <button onClick={() => { if (!c.startAt || !c.endAt) { setMsg("Set the start and end dates first."); return; } set("status", c.status === "open" ? "setup" : "open"); }}
+                  style={{ ...btnStyle(c.status === "open" ? TM.live : TM.warn, c.status === "open"), minHeight: 46 }}>{c.status === "open" ? "Close sign-ups" : "Open sign-ups"}</button>
+                <button onClick={async () => {
+                  const url = "https://timeathon.com/?challenge=" + code;
+                  try { if (navigator.share) { await navigator.share({ title: c.name || "Challenge", text: `Join ${c.name || "the challenge"} on Timeathon:`, url }); return; } } catch (_) { return; }
+                  try { await navigator.clipboard.writeText(url); setMsg("Link copied: " + url); } catch (_) { setMsg(url); }
+                }} style={{ ...btnStyle(TM.ink, true), minHeight: 46 }}>📤 Share link</button>
+              </div>
+              <div style={TM_CAPTION}>Everyone who signs up gets the next bib number, to save or print. While open, the challenge is listed in Today's races.</div>
+            </div>
+            {msg && <div role="status" style={{ fontWeight: 800, margin: "8px 0" }}>{msg}</div>}
+            <div style={TM_LABEL}>Entrants ({rows.length})</div>
+            {rows.map(r => (
+              <details key={r.uid} style={{ ...rowStyle(), marginBottom: 6, padding: "8px 12px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 800 }}>#{r.bib} {r.name} · {chFmt(r.total, unit)} · {r.entries.length} activities</summary>
+                {[...r.entries].sort((a, b) => b.at - a.at).map(x => (
+                  <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: `1px solid ${TM.line}` }}>
+                    <div style={{ flex: 1, fontSize: 15 }}>{chFmt(x.m, unit)}{x.dur ? ` · ${chDur(x.dur)}` : ""} · {chDay(x.at)} · {CH_SRC_LABEL[x.src] || "Other"}</div>
+                    <button onClick={() => { if (confirm(`Remove ${chFmt(x.m, unit)} from ${r.name}?`)) ref.child(`entrants/${r.uid}/entries/${x.id}`).remove().catch(e => setMsg(e.message)); }}
+                      style={{ ...btnStyle(TM.live, true), minHeight: 34, padding: "0 10px", fontSize: 14 }}>Remove</button>
+                  </div>
+                ))}
+                <button onClick={() => { if (confirm(`Take ${r.name} out of the challenge? Their activities go too.`)) ref.child("entrants/" + r.uid).remove().catch(e => setMsg(e.message)); }}
+                  style={{ ...btnStyle(TM.live, true), minHeight: 36, marginTop: 8, fontSize: 14 }}>Remove entrant</button>
+              </details>
+            ))}
+          </div>
+        );
+
+        const tabs = isHost ? [["setup", "Setup"], ["standings", "Standings"], ["me", "My runs"]] : [["me", "My challenge"], ["standings", "Standings"]];
+        return (
+          <div style={{ padding: "0 16px 60px", maxWidth: 640, margin: "0 auto" }}>
+            <button onClick={onBack} style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>← {isHost ? "My races" : "Back"}</button>
+            <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: TM.warn, marginTop: 12 }}>CHALLENGE</div>
+            <h1 style={{ ...TM_DISPLAY, marginTop: 2, fontSize: 34 }}>{c.name || "Challenge"}</h1>
+            <div style={{ fontWeight: 800, color: phase === "on" ? TM.run : TM.inkMuted }}>{phaseLine}</div>
+            <div style={TM_CAPTION}>{(CH_SPORTS.find(s => s[0] === c.sport) || CH_SPORTS[0])[1]} · most {unit === "km" ? "kilometres" : "miles"} wins · {rows.length} {rows.length === 1 ? "entrant" : "entrants"}</div>
+            <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
+              {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ ...btnStyle(TM.ink, tab !== k), minHeight: 42, padding: "0 6px", fontSize: 15, flex: 1 }}>{l}</button>)}
+            </div>
+            {tab === "setup" && isHost && setupTab}
+            {tab === "me" && myPanel}
+            {tab === "standings" && standings}
+          </div>
+        );
+      }
+
       function App() {
         const [view, setView] = useState("myraces");
         const [raceInitialized, setRaceInitialized] = useState(false); // true once a race is started or loaded; false after clear
@@ -5387,6 +5776,16 @@ ${html}</body></html>`);
         const [timedCode, setTimedCode] = useState(null);       // Timed Tri open on screen
         const [timedViewer, setTimedViewer] = useState(false);
         const [timedSaved, setTimedSaved] = useState({});        // this host's Timed Tris
+        const [chCode, setChCode] = useState(null);              // Challenge open on screen
+        const [chViewer, setChViewer] = useState(false);
+        const [chSaved, setChSaved] = useState({});              // this host's challenges
+        useEffect(() => {
+          if (!currentUser) { setChSaved({}); return; }
+          const r = rtdb.ref("users/" + currentUser.uid + "/challenges");
+          const fn = sn => setChSaved(sn.val() || {});
+          r.on("value", fn, () => {});
+          return () => r.off("value", fn);
+        }, [currentUser && currentUser.uid]);
         const [pastOpen, setPastOpen] = useState(false);
         const [closeCurConfirm, setCloseCurConfirm] = useState(false);   // My races: closing the race in progress         // My races → Past races list
         const [whenEdit, setWhenEdit] = useState(null);          // { key, date, time, lead } — date editor open on a card
@@ -12502,8 +12901,8 @@ ${html}</body></html>`);
           const c = normCode(code);
           if (!c) return null;
           const has = (path) => rtdb.ref(path).once("value").then(s => s.exists()).catch(() => false);
-          const [tri, swim, bike, timed] = await Promise.all([has("liveRaces/" + c), has("swimLive/" + c), has("bikeFeeds/" + c + "/meta"), has("timedRaces/" + c + "/status")]);
-          return tri ? "triathlon" : swim ? "swim" : bike ? "bike" : timed ? "timed" : null;
+          const [tri, swim, bike, timed, ch] = await Promise.all([has("liveRaces/" + c), has("swimLive/" + c), has("bikeFeeds/" + c + "/meta"), has("timedRaces/" + c + "/status"), has("challenges/" + c + "/status")]);
+          return tri ? "triathlon" : swim ? "swim" : bike ? "bike" : timed ? "timed" : ch ? "challenge" : null;
         }
 
         // Spectators never make an account. Anonymous auth satisfies the database
@@ -12565,6 +12964,7 @@ ${html}</body></html>`);
 
         function openRaceAsViewer(kind, c) {
           if (kind === "timed") { setTimedCode(c); setTimedViewer(true); setView("timed"); return; }
+          if (kind === "challenge") { setChCode(c); setChViewer(!(currentUser && chSaved && chSaved[c])); setView("challenge"); return; }
           if (kind === "triathlon") {
             selectMode("triathlon"); setSpectatorCode(c); watchRace(c); setView("watch");
           } else if (kind === "swim") {
@@ -12582,8 +12982,9 @@ ${html}</body></html>`);
           if (c.length < 3) return false;
           const me = auth.currentUser && auth.currentUser.uid;
           const get = (path) => rtdb.ref(path).once("value").then(s => s.val()).catch(() => null);
-          const [tri, swim, bike, timedHost] = await Promise.all([get("liveRaces/" + c), get("swimLive/" + c), get("bikeFeeds/" + c + "/meta"), get("timedRaces/" + c + "/hostUid")]);
+          const [tri, swim, bike, timedHost, chHost] = await Promise.all([get("liveRaces/" + c), get("swimLive/" + c), get("bikeFeeds/" + c + "/meta"), get("timedRaces/" + c + "/hostUid"), get("challenges/" + c + "/hostUid")]);
           if (timedHost && timedHost !== me) return false;
+          if (chHost && chHost !== me) return false;
           if (tri && tri.publishedBy !== me) return false;
           if (swim && swim.hostUid !== me) return false;
           if (bike && bike.createdBy !== me) return false;
@@ -12735,10 +13136,11 @@ ${html}</body></html>`);
             const now = Date.now(), H = 3600e3;
             const list = Object.entries(sn.val() || {})
               .map(([code, r]) => ({ code, ...(r || {}) }))
-              .filter(r => r.kind && (r.startsAt && r.startsAt > now - 12 * H && r.startsAt < now + 60 * 24 * H
+              .filter(r => r.kind && (r.endsAt && r.endsAt > now && (!r.startsAt || r.startsAt < now + 60 * 24 * H))
+                                    || r.kind && !r.endsAt && (r.startsAt && r.startsAt > now - 12 * H && r.startsAt < now + 60 * 24 * H
                                     || (r.status === "live" ? now - (r.updatedAt || 0) < 36 * H
                                     : r.status === "registration" ? now - (r.updatedAt || 0) < 21 * 24 * H : false)))
-              .map(r => ({ ...r, liveNow: r.status === "live" && !(r.liveAt && now < r.liveAt) }))
+              .map(r => ({ ...r, liveNow: r.status === "live" && !(r.liveAt && now < r.liveAt) && !(r.endsAt && now > r.endsAt) }))
               .sort((a, b) => ((a.liveNow ? 0 : 1) - (b.liveNow ? 0 : 1)) || ((a.startsAt || 9e15) - (b.startsAt || 9e15)) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
             // A bike ride is only "live" while a rider is actually sending: a saved
             // ride gets re-listed whenever its owner opens the app, so the listing
@@ -12754,7 +13156,7 @@ ${html}</body></html>`);
 
         async function pickTodayRace(r, mode) {
           setTodayBusy(r.code);
-          if (mode === "join" && r.kind !== "timed") { setJoinCode(r.code); await joinRaceByCode(r.code); setTodayBusy(null); return; }
+          if (mode === "join" && r.kind !== "timed" && r.kind !== "challenge") { setJoinCode(r.code); await joinRaceByCode(r.code); setTodayBusy(null); return; }
           setSpectateCode(r.code); setSpectateError("");
           const authed = await ensureViewerAuth();
           setTodayBusy(null);
@@ -12793,7 +13195,8 @@ ${html}</body></html>`);
                               : <span style={{ border: `2px solid ${TM.ink}`, fontSize: 14, fontWeight: 800, letterSpacing: 0.4, padding: "0 8px", borderRadius: 4 }}>{r.status === "registration" ? "SIGN-UPS OPEN" : "UPCOMING"}</span>}
                           </span>
                           <span style={{ display: "block", fontSize: 19, fontWeight: 900, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || "Race"}</span>
-                          {r.startsAt && <span style={{ display: "block", fontSize: 15, fontWeight: 800 }}>{r.liveNow && r.startsAt < Date.now() ? "Started " : "Starts "}{eventWhenLabel(r.startsAt)}</span>}
+                          {r.endsAt ? <span style={{ display: "block", fontSize: 15, fontWeight: 800 }}>{eventWhenLabel(r.startsAt, false)} – {eventWhenLabel(r.endsAt, false)}</span>
+                            : r.startsAt && <span style={{ display: "block", fontSize: 15, fontWeight: 800 }}>{r.liveNow && r.startsAt < Date.now() ? "Started " : "Starts "}{eventWhenLabel(r.startsAt)}</span>}
                           {r.hostName && <span style={{ display: "block", ...TM_CAPTION }}>Hosted by {r.hostName}</span>}
                         </span>
                         {todayBusy === r.code ? <span style={{ fontWeight: 800 }}>…</span> : <ArrowIcon />}
@@ -13011,6 +13414,18 @@ Start a new race anyway?`)) return;
             setSetupStep(2);
             return;
           }
+          if (kind === "challenge") {
+            // default: next calendar month
+            const d = new Date(); const s0 = new Date(d.getFullYear(), d.getMonth() + 1, 1), e0 = new Date(d.getFullYear(), d.getMonth() + 2, 0);
+            const sd = s0.toLocaleDateString("en-CA"), ed = e0.toLocaleDateString("en-CA");
+            const data = { hostUid: currentUser.uid, name: nm || "Challenge", status: "setup", createdAt: Date.now(), sport: "run", unit: "mi",
+              startDate: sd, endDate: ed, ...chBounds(sd, ed), nextBib: 0 };
+            rtdb.ref("challenges/" + cd).set(data).then(() => {
+              rtdb.ref("users/" + currentUser.uid + "/challenges/" + cd).set({ name: data.name, at: Date.now(), startDate: sd, endDate: ed, startsAt: data.startAt }).catch(() => {});
+              setChCode(cd); setChViewer(false); setView("challenge");
+            }).catch(e => alert("Couldn't create the challenge: " + e.message));
+            return;
+          }
           if (kind === "timed") {
             const data = { hostUid: currentUser.uid, name: nm || "Timed Tri", status: "setup", createdAt: Date.now(),
               legs: TT_DEFAULT_LEGS, units: { swim: "yd", dist: "mi" }, ageGroups: AGE_GROUP_PRESETS[1][1], waves: [{ n: 1 }] };
@@ -13033,6 +13448,15 @@ Start a new race anyway?`)) return;
           setBikeDraft({ ...newBikeFeed(), eventName: nm, code: cd, sport: newRaceSport, snapProfile: newRaceSport === "run" ? "hiking-mountain" : "trekking" }); setBikeSetupStep(2); setView("bike"); setBikeView("setup");
         }
 
+        const chLinkRef = useRef(false);
+        useEffect(() => {
+          if (chLinkRef.current || authLoading) return;
+          const c = normCode(new URLSearchParams(location.search).get("challenge"));
+          if (!c) return;
+          chLinkRef.current = true;
+          try { const u = new URL(location.href); u.searchParams.delete("challenge"); history.replaceState(history.state, "", u.pathname + u.search + u.hash); } catch (_) {}
+          setChCode(c); setChViewer(!(currentUser && chSaved && chSaved[c])); setView("challenge");
+        }, [authLoading]);
         const timedLinkRef = useRef(false);
         useEffect(() => {
           if (timedLinkRef.current || authLoading) return;
@@ -13076,8 +13500,8 @@ Start a new race anyway?`)) return;
           if (!effectiveRole || effectiveRole === "host") return;
           const allowed = effectiveRole === "timer" ? ["swimlane", "profile"]
             : effectiveRole === "athlete"
-            ? ["join", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed"]
-            : ["spectate", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed"];
+            ? ["join", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed", "challenge"]
+            : ["spectate", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed", "challenge"];
           if (!allowed.includes(view)) { setView(roleLanding(effectiveRole)); return; }
           if (view === "bike") {
             const ok = effectiveRole === "athlete" ? ["ride", "feed"] : ["feed"];
@@ -13412,7 +13836,7 @@ Start a new race anyway?`)) return;
             </header>
 
             {/* NAV — hosts only. Athletes and spectators move with a back arrow. */}
-            {isHost && view !== "timed" && (() => {
+            {isHost && view !== "timed" && view !== "challenge" && (() => {
               const swimNavMap = { swimsetup:"setup", swimrace:"race", swimresults:"results", swimathletes:"athletes", swimfiles:"files", swimdevices:"devices" };
               const navTabs = appMode === "bike"
                 ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Run" : "Ride"],["__bike_feed__","Follow"],["__bike_riders__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Runners" : "Riders"]]
@@ -13445,7 +13869,7 @@ Start a new race anyway?`)) return;
             })()}
 
             {/* Swim, bike, lane and meet-viewer screens render outside this column, so it collapses there. */}
-            <div style={{ maxWidth: 640, margin: "0 auto", padding: ["swim","bike","swimlane","swimwatch","timed"].includes(view) ? 0 : "16px 16px 60px" }}>
+            <div style={{ maxWidth: 640, margin: "0 auto", padding: ["swim","bike","swimlane","swimwatch","timed","challenge"].includes(view) ? 0 : "16px 16px 60px" }}>
 
               {/* STOPWATCH — the Race screen, plus anywhere else *while it's running*,
                   so stepping back to Setup mid-race never hides the clock. It no
@@ -13545,7 +13969,28 @@ Start a new race anyway?`)) return;
                     await rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + c).update({ date: patch.date, time: waves[0].time || null, lead: patch.liveLeadMin, startsAt: ew.startsAt, past: null });
                   } catch (e) { alert("Couldn't change the date: " + e.message); }
                 };
+                const chWhen = (c, w) => {
+                  const sd = w.date || null;
+                  rtdb.ref("challenges/" + c).once("value").then(sn => {
+                    const v = sn.val() || {}; let ed = v.endDate;
+                    if (sd && v.startDate && v.endDate) {   // keep the same length
+                      const len = Math.round((new Date(v.endDate + "T12:00:00") - new Date(v.startDate + "T12:00:00")) / 86400e3);
+                      const e2 = new Date(sd + "T12:00:00"); e2.setDate(e2.getDate() + len); ed = e2.toLocaleDateString("en-CA");
+                    }
+                    const b = chBounds(sd, ed);
+                    return Promise.all([rtdb.ref("challenges/" + c).update({ startDate: sd, endDate: ed || null, ...b }),
+                      rtdb.ref("users/" + currentUser.uid + "/challenges/" + c).update({ startDate: sd, endDate: ed || null, startsAt: b.startAt, past: null })]);
+                  }).catch(e => alert("Couldn't change the date: " + e.message));
+                };
                 const saved = [
+                  ...Object.entries(chSaved || {}).map(([c, t]) => ({ key: "ch" + c, kind: "challenge", name: (t && t.name) || "Challenge",
+                    meta: `Challenge · ${t && t.startDate ? chDay(new Date(t.startDate + "T12:00:00").getTime()) + " – " + (t.endDate ? chDay(new Date(t.endDate + "T12:00:00").getTime()) : "") : "dates not set"} · code ${c}`,
+                    when: { date: t && t.startDate }, created: (t && t.at) || 0, past: t && t.past,
+                    // a challenge is current until its last day is over
+                    endsAt: t && t.endDate ? new Date(t.endDate + "T23:59:59").getTime() : null,
+                    setWhen: w => chWhen(c, w), setPast: v => rtdb.ref("users/" + currentUser.uid + "/challenges/" + c + "/past").set(v).catch(() => {}),
+                    open: () => { setChCode(c); setChViewer(false); setView("challenge"); },
+                    del: () => { rtdb.ref("challenges/" + c).remove().catch(() => {}); rtdb.ref("raceDirectory/" + c).remove().catch(() => {}); rtdb.ref("users/" + currentUser.uid + "/challenges/" + c).remove().catch(() => {}); } })),
                   ...savedRaces.map(r => ({ key: "t" + r.id, kind: "triathlon", name: r.name || "Untitled race", race: r,
                     when: { date: r.certConfig?.eventDate, time: r.certConfig?.eventTime, lead: r.certConfig?.liveLeadMin },
                     created: typeof r.id === "number" ? r.id : 0, past: r.past,
@@ -13576,6 +14021,7 @@ Start a new race anyway?`)) return;
                 saved.forEach(r => {
                   r.startsAt = eventStartsAt(r.when.date, r.when.time);
                   r.isPast = r.past === true ? true : r.past === false ? false
+                    : r.endsAt ? r.endsAt < dayStart
                     : r.startsAt ? r.startsAt < dayStart : r.created < PAST_LIST_FROM;
                 });
                 const upcoming = saved.filter(r => !r.isPast).sort((a, b) => (a.startsAt || 9e15) - (b.startsAt || 9e15) || b.created - a.created);
@@ -13691,7 +14137,7 @@ Start a new race anyway?`)) return;
                       <span style={{ fontWeight: 900, fontSize: 34, lineHeight: 1 }}>+</span>
                       <span style={{ flex: 1 }}>
                         <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>New race</span>
-                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet, bike or run</span>
+                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet, bike or run, challenge</span>
                       </span>
                       <ArrowIcon />
                     </button>
@@ -20291,6 +20737,10 @@ Start a new race anyway?`)) return;
               );
             })()}
 
+            {view === "challenge" && chCode && (
+              <Challenge code={chCode} viewer={chViewer || !isHost} currentUser={currentUser} userProfile={userProfile}
+                onBack={() => { setChCode(null); setView(roleLanding(effectiveRole)); }} />
+            )}
             {view === "timed" && timedCode && (
               <TimedTri code={timedCode} viewer={timedViewer || !isHost} currentUser={currentUser} userProfile={userProfile}
                 onBack={() => { setTimedCode(null); setView(roleLanding(effectiveRole)); }} />

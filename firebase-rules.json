@@ -214,6 +214,31 @@
           }
         }
       }
+    },
+    "challenges": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() ? (newData.child('hostUid').val() === auth.uid && ((auth.uid === 'nfH10ASvHbZkazkXMkEIoo8IbGY2' || auth.uid === 'yomrf3PDWoRGMsAZJudT7Y4LuYE3') || auth.uid === 'zaZlSgcfROeSKUwgFz2Qwsu0WVg2' || (root.child('hostAccess').child(auth.uid).exists() && (!root.child('hostAccess').child(auth.uid).child('until').exists() || root.child('hostAccess').child(auth.uid).child('until').val() > now)))) : data.child('hostUid').val() === auth.uid)",
+        "nextBib": {
+          ".write": "auth != null && root.child('challenges').child($code).child('status').val() === 'open' && now < root.child('challenges').child($code).child('endAt').val()",
+          ".validate": "newData.isNumber() && newData.val() === (data.exists() ? data.val() : 0) + 1"
+        },
+        "entrants": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('challenges').child($code).child('status').val() === 'open' && now < root.child('challenges').child($code).child('endAt').val()",
+            ".validate": "!newData.exists() || (newData.child('name').isString() && newData.child('name').val().length <= 60 && newData.child('bib').isNumber())",
+            "entries": {
+              "$id": {
+                ".write": "now >= root.child('challenges').child($code).child('startAt').val() && now <= root.child('challenges').child($code).child('endAt').val() && ((auth != null && auth.uid === $uid) || (!data.exists() && newData.child('tok').exists() && root.child('watchTokens').child(newData.child('tok').val() + '').child('uid').val() === $uid && root.child('watchTokens').child(newData.child('tok').val() + '').child('challenge').val() === $code))",
+                ".validate": "!newData.exists() || (newData.child('m').isNumber() && newData.child('m').val() > 0 && newData.child('m').val() <= 200000 && newData.child('at').isNumber() && newData.child('at').val() >= root.child('challenges').child($code).child('startAt').val() - 86400000 && newData.child('at').val() <= now + 60000)"
+              }
+            },
+            "live": {
+              ".write": "auth != null && auth.uid === $uid"
+            }
+          }
+        }
+      }
     }
   }
 }
