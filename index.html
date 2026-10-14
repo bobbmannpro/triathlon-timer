@@ -2085,7 +2085,8 @@
       // closed). It then stops being live but keeps every time and its final clock.
       function liveRaceOver(raw) {
         const d = withLiveClock(raw);
-        if (!d || d.status !== "live" || d.clockRunning) return false;
+        if (!d || d.status !== "live") return false;
+        if (d.clockRunning) return Date.now() - (d.updatedAt || 0) > 12 * 3600e3;   // left running, host long gone
         const aths = asList(d.athletes).filter(Boolean);
         const started = aths.filter(a => a.started);
         if (started.length && started.every(a => a.finished || a.dnf)) return true;
@@ -2099,7 +2100,9 @@
         if (!d) return false;
         const aths = asList(d.athletes).filter(Boolean);
         if (aths.length > 0 && aths.some(a => a.started) && aths.every(a => a.finished || a.dnf)) return false;
-        if (d.clockRunning) return true;
+        // A clock "running" with no host heartbeat for 12 hours is a tab someone
+        // closed mid-race long ago, not a race that's on.
+        if (d.clockRunning) return (d.updatedAt || 0) > Date.now() - 12 * 3600 * 1000;
         const notStarted = !d.clockStarted && !(d.clockMs > 0) && !aths.some(a => a.started);
         return notStarted && (d.updatedAt || 0) > Date.now() - 4 * 3600 * 1000;
       }
@@ -5384,7 +5387,8 @@ ${html}</body></html>`);
         const [timedCode, setTimedCode] = useState(null);       // Timed Tri open on screen
         const [timedViewer, setTimedViewer] = useState(false);
         const [timedSaved, setTimedSaved] = useState({});        // this host's Timed Tris
-        const [pastOpen, setPastOpen] = useState(false);         // My races → Past races list
+        const [pastOpen, setPastOpen] = useState(false);
+        const [closeCurConfirm, setCloseCurConfirm] = useState(false);   // My races: closing the race in progress         // My races → Past races list
         const [whenEdit, setWhenEdit] = useState(null);          // { key, date, time, lead } — date editor open on a card
         useEffect(() => { if (view !== "myraces") { setPastOpen(false); setWhenEdit(null); } }, [view]);
         useEffect(() => {
@@ -13692,10 +13696,22 @@ Start a new race anyway?`)) return;
                       <ArrowIcon />
                     </button>
 
-                    {inProgress && (
+                    {inProgress && closeCurConfirm && (
+                      <div role="alertdialog" style={{ ...bleed, padding: "16px 24px", background: TM.bgAlt }}>
+                        <div style={{ fontSize: 17, fontWeight: 800 }}>Close “{saveRaceName || certConfig.eventName || "Current race"}”?</div>
+                        <div style={{ ...TM_CAPTION, margin: "4px 0 10px" }}>{liveRaceCode ? "It stops being live. Times already logged stay in its results; " : ""}{loadedRaceId ? "It stays in your saved races — open it again any time." : "It was never saved, so its setup goes."}</div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => { if (liveRaceCode) endLiveRace(liveRaceCode); clearRace(); setCloseCurConfirm(false); }}
+                            style={{ ...btnStyle(TM.live), minHeight: 46, flex: 1 }}>Close race</button>
+                          <button onClick={() => setCloseCurConfirm(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 46, flex: 1 }}>Keep it</button>
+                        </div>
+                      </div>
+                    )}
+                    {inProgress && !closeCurConfirm && (
+                      <div style={{ ...bleed, position: "relative" }}>
                       <button onClick={() => setView(clockStarted ? "race" : "setup")}
-                        style={{ ...bleed, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
-                                 minHeight: 80, padding: "18px 24px", background: clockRunning ? TM.live : TM.bgAlt,
+                        style={{ width: "100%", display: "flex", alignItems: "center", gap: 16,
+                                 minHeight: 80, padding: "18px 48px 18px 24px", background: clockRunning ? TM.live : TM.bgAlt,
                                  color: clockRunning ? "#FFFFFF" : TM.ink, border: "none", borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
                         <span style={{ flex: 1 }}>
                           <span style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase" }}>
@@ -13708,6 +13724,10 @@ Start a new race anyway?`)) return;
                         <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44, padding: "0 16px", borderRadius: 6, fontWeight: 900, fontSize: 17,
                                        background: clockRunning ? "#FFFFFF" : TM.ink, color: clockRunning ? TM.live : "#FFFFFF" }}>Resume →</span>
                       </button>
+                      <button onClick={() => setCloseCurConfirm(true)} aria-label="Close this race"
+                        style={{ position: "absolute", top: 4, right: 6, width: 36, height: 36, border: "none", background: "transparent",
+                                 color: clockRunning ? "#FFFFFF" : TM.ink, fontSize: 22, fontWeight: 900, cursor: "pointer" }}>×</button>
+                      </div>
                     )}
 
                     <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>Saved races</h2>
