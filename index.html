@@ -4653,7 +4653,8 @@ ${html}</body></html>`);
         const upd = obj => ref.update(obj).catch(e => setMsg("Couldn't save: " + e.message));
         const mine = athletes.filter(a => currentUser && a.uid === currentUser.uid);
         const live = ttIsLive(race, now);
-        const cap = Math.min(...[race.bikes, race.treads].map(n => +n || Infinity));
+        // A wave is full at the host's limit, or when every bike or treadmill is taken.
+        const cap = Math.min(...[race.waveCap, race.bikes, race.treads].map(n => +n || Infinity));
         const waveCount = w => athletes.filter(a => (a.wave || 0) === w).length;
         const waveFull = w => isFinite(cap) && waveCount(w) >= cap;
         const waveShort = w => `W${w + 1}${waves[w] && waves[w].time ? " · " + ttTimeLabel(waves[w].time) : ""}`;
@@ -4831,6 +4832,22 @@ ${html}</body></html>`);
             <label style={TM_LABEL}>Race name</label>
             <input defaultValue={race.name} onBlur={e => set("name", e.target.value.trim())} style={{ ...inputS, width: "100%" }} />
             <div style={{ ...TM_CAPTION, margin: "6px 0 14px" }}>Code <b>{code}</b> — athletes and spectators open it with this code (timeathon.com/?timed={code}).</div>
+            <div style={{ ...rowStyle(TM.run), marginBottom: 12 }}>
+              <div style={TM_LABEL}>Sign-ups</div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{race.status === "signup" || race.status === "live"
+                ? `Open — ${athletes.length} signed up${isFinite(cap) ? ` of ${cap * waves.length} spots` : ""}`
+                : "Closed — athletes can't sign up yet."}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                {race.status !== "signup" && race.status !== "live" && <button onClick={() => set("status", "signup")} style={{ ...btnStyle(TM.run), minHeight: 46 }}>Open sign-ups</button>}
+                <button onClick={async () => {
+                  const url = "https://timeathon.com/?timed=" + code;
+                  try { if (navigator.share) { await navigator.share({ title: race.name || "Timed Tri", text: `Sign up for ${race.name || "the Timed Tri"} and pick your start time:`, url }); return; } } catch (_) { return; }
+                  try { await navigator.clipboard.writeText(url); setMsg("Sign-up link copied: " + url); } catch (_) { setMsg(url); }
+                }} style={{ ...btnStyle(TM.ink, true), minHeight: 46 }}>📤 Share sign-up link</button>
+              </div>
+              <div style={TM_CAPTION}>Athletes open the link, sign in, give their name, gender and age, and pick a wave by start time. Full waves can't be picked. It's also listed in Today's races while sign-ups are open.</div>
+              {msg && <div style={{ fontWeight: 700, marginTop: 6, overflowWrap: "anywhere" }}>{msg}</div>}
+            </div>
             <div style={{ ...rowStyle(), marginBottom: 12 }}>
               <div style={TM_LABEL}>Date & start times</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -4842,12 +4859,15 @@ ${html}</body></html>`);
               <div style={{ ...TM_CAPTION, marginTop: 6 }}>{race.liveAt ? `Goes live ${new Date(race.liveAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} (once sign-ups are open).` : "Set the date and Wave 1's start time below to go live by itself."}</div>
             </div>
             <div style={{ ...rowStyle(), marginBottom: 12 }}>
-              <div style={TM_LABEL}>Machines per wave</div>
+              <div style={TM_LABEL}>Wave size</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>👥 Max people per wave <input type="number" min={0} defaultValue={race.waveCap || ""} placeholder="No limit" onChange={e => set("waveCap", Math.max(0, +e.target.value || 0))} style={{ ...inputS, width: 100 }} /></label>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 6 }}>🚲 Bikes <input type="number" min={0} defaultValue={race.bikes || ""} onChange={e => set("bikes", Math.max(0, +e.target.value || 0))} style={{ ...inputS, width: 70 }} /></label>
                 <label style={{ display: "flex", alignItems: "center", gap: 6 }}>🏃 Treadmills <input type="number" min={0} defaultValue={race.treads || ""} onChange={e => set("treads", Math.max(0, +e.target.value || 0))} style={{ ...inputS, width: 70 }} /></label>
               </div>
-              <div style={TM_CAPTION}>Each wave holds this many athletes. Everyone gets the next free bike and treadmill number in their wave when they sign up or you add them.</div>
+              <div style={TM_CAPTION}>A wave is full at your limit, or when every bike or treadmill is taken{isFinite(cap) ? ` — right now ${cap} per wave` : ""}. Everyone gets the next free bike and treadmill number in their wave when they sign up or you add them.</div>
             </div>
             {legEditor}
             <div style={{ ...rowStyle(), marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
