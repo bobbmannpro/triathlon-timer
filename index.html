@@ -2080,6 +2080,17 @@
           return { ...d, clockMs: c.ms || 0, clockRunning: !!c.running, clockStarted: !!c.started, updatedAt: c.at || d.updatedAt };
         return d;
       }
+      // A live race is over once its clock has stopped and everyone who started is
+      // finished or DNF — or its clock has sat stopped for 12 hours (a race nobody
+      // closed). It then stops being live but keeps every time and its final clock.
+      function liveRaceOver(raw) {
+        const d = withLiveClock(raw);
+        if (!d || d.status !== "live" || d.clockRunning) return false;
+        const aths = asList(d.athletes).filter(Boolean);
+        const started = aths.filter(a => a.started);
+        if (started.length && started.every(a => a.finished || a.dnf)) return true;
+        return started.length > 0 && Date.now() - (d.updatedAt || 0) > 12 * 3600e3;
+      }
       // Is this race worth reopening after a refresh? Only if its clock is running,
       // or it hasn't started yet and was touched in the last few hours. A finished
       // race (even with stragglers never marked) opens on the home screen instead.
@@ -7017,6 +7028,34 @@ ${html}</body></html>`);
 
         // True while a finished race is open just to look at (so nothing re-saves it).
         const finishedViewRef = useRef(false);
+        // Ending a race: it stops being live (off Today's races, no LIVE badge) but
+        // stays readable — final clock, every split — for athletes, parents and
+        // followers. This screen keeps showing it as it finished.
+        function endLiveRace(code) {
+          if (!code) return;
+          rtdb.ref("liveRaces/" + code).update({ status: "closed", endedAt: Date.now(), clockRunning: false, clockMs: clockMs,
+            clock: clockStamp(clockMs, false, true), updatedAt: Date.now() }).catch(console.error);
+          unlistRace(code);
+          if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; }
+          try { localStorage.removeItem("tri-active-live"); } catch (_) {}
+          setLiveRaceCode(null);
+          setEndPrompt(null);
+        }
+        // Everyone done and the clock stopped: say the race is ending, then end it
+        // a minute later unless the host keeps it live.
+        const [endPrompt, setEndPrompt] = useState(null);   // { code, at } while counting down
+        const keepLiveRef = useRef(null);
+        const allDoneStopped = !!liveRaceCode && clockStarted && !clockRunning
+          && athletes.some(a => a.started) && athletes.filter(a => a.started).every(a => a.finished || a.dnf);
+        useEffect(() => {
+          if (!allDoneStopped) { keepLiveRef.current = null; setEndPrompt(null); return; }
+          if (keepLiveRef.current === liveRaceCode) return;
+          const at = Date.now() + 60000;
+          setEndPrompt({ code: liveRaceCode, at });
+          const t = setTimeout(() => endLiveRace(liveRaceCode), 60000);
+          return () => clearTimeout(t);
+        }, [allDoneStopped, liveRaceCode]);
+        useTicker(!!endPrompt, 1000);
         useEffect(() => {
           if (athletes.some(a => a.finished)) autoArchiveRace();
         }, [athletes]);
@@ -8722,7 +8761,14 @@ ${html}</body></html>`);
               const liveSnap = await rtdb.ref("liveRaces/" + race.code).once("value");
               if (liveSnap.exists()) {
                 const ld = withLiveClock(liveSnap.val());
-                if (ld.status === "live" && ld.publishedBy === currentUser.uid) {
+                // Never closed, but over: stop it being live, and open it as it finished (below).
+                if (ld.publishedBy === currentUser.uid && liveRaceOver(liveSnap.val())) {
+                  await rtdb.ref("liveRaces/" + race.code).update({ status: "closed", endedAt: Date.now(), clockRunning: false,
+                    clock: { ms: ld.clockMs || 0, running: false, started: true, at: Date.now() } }).catch(console.error);
+                  unlistRace(race.code);
+                  try { const a = JSON.parse(localStorage.getItem("tri-active-live") || "null"); if (a && a.code === race.code) localStorage.removeItem("tri-active-live"); } catch (_) {}
+                }
+                else if (ld.status === "live" && ld.publishedBy === currentUser.uid) {
                   const elapsed = ld.clockRunning ? Math.max(0, Date.now() - (ld.updatedAt || Date.now())) : 0;
                   const restoredClockMs = (ld.clockMs || 0) + elapsed;
                   offsetRef.current = restoredClockMs;
@@ -8780,7 +8826,8 @@ ${html}</body></html>`);
               try {
                 const fsnap = await rtdb.ref("liveRaces/" + fc).once("value");
                 const fd = fsnap.val();
-                if (!fd || fd.status !== "closed" || fd.publishedBy !== currentUser.uid || !(fd.clock && fd.clock.started)) continue;
+                if (!fd || fd.status !== "closed" || fd.publishedBy !== currentUser.uid) continue;
+                if (!((fd.clock && fd.clock.started) || fd.clockStarted || asList(fd.athletes).some(a => a && a.started))) continue;
                 const fl = withLiveClock(fd);
                 const segs = fd.segments || SEGMENTS;
                 const byName = new Map(asList(race.athletes).map(a => [String(a.name || "").trim().toLowerCase(), a]));
@@ -17322,6 +17369,19 @@ Start a new race anyway?`)) return;
               {/* ── RACE ── */}
               {view === "race" && (
                 <div>
+                  {endPrompt && endPrompt.code === liveRaceCode && (
+                    <div role="status" style={{ ...rowStyle(TM.run), marginBottom: 12 }}>
+                      <div style={{ fontSize: 17, fontWeight: 800 }}>Everyone's done and the clock is stopped</div>
+                      <div style={{ fontSize: 15, margin: "4px 0 10px" }}>The race stops being live in {Math.max(0, Math.ceil((endPrompt.at - Date.now()) / 1000))} s. Times stay where everyone can see them — just not as live.</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => endLiveRace(liveRaceCode)} style={{ ...btnStyle(TM.run), minHeight: 44, flex: 1 }}>End race now</button>
+                        <button onClick={() => { keepLiveRef.current = liveRaceCode; setEndPrompt(null); }} style={{ ...btnStyle(TM.ink, true), minHeight: 44, flex: 1 }}>Keep it live</button>
+                      </div>
+                    </div>
+                  )}
+                  {!liveRaceCode && clockStarted && !clockRunning && athletes.some(a => a.finished) && (
+                    <div style={{ ...rowStyle(), marginBottom: 12, fontSize: 15, fontWeight: 700 }}>🏁 Race finished — not live. Times and standings as it ended.</div>
+                  )}
                   {hostLost && (
                     <div role="alert" style={{ ...rowStyle(TM.live), marginBottom: 12 }}>
                       <div style={{ fontSize: 17, fontWeight: 800 }}>This race is being run from another screen</div>
