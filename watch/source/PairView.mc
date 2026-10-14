@@ -10,10 +10,19 @@ class PairView extends WatchUi.View {
     var status as String = "";
     var busy as Boolean = false;
     var pending as String = "";
+    var sender as ChSender;
 
-    function initialize() { View.initialize(); }
+    function initialize() { View.initialize(); sender = new ChSender(); sender.onChange = method(:changed); }
+    function changed() as Void { WatchUi.requestUpdate(); }
+    // runs finished out of the phone's range go as soon as this screen is up
+    function onShow() as Void { sender.send(); }
 
+    function isChallenge() as Boolean {
+        var m = Application.Storage.getValue("mode");
+        return m != null && m.toString().equals("challenge");
+    }
     function paired() as Boolean {
+        if (isChallenge()) { return Application.Storage.getValue("chCode") != null && Application.Storage.getValue("chTok") != null && Application.Storage.getValue("chUid") != null; }
         // the code is needed too: it is how the watch reads the race's times
         return Application.Storage.getValue("raceCode") != null && Application.Storage.getValue("athIdx") != null
             && Application.Storage.getValue("token") != null;
@@ -24,7 +33,17 @@ class PairView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
         dc.drawText(w / 2, h * 0.14, Graphics.FONT_SMALL, "TIMEATHON", Graphics.TEXT_JUSTIFY_CENTER);
-        if (paired()) {
+        if (paired() && isChallenge()) {
+            var cn = Application.Storage.getValue("chName");
+            dc.drawText(w / 2, h * 0.32, Graphics.FONT_MEDIUM, cn != null ? cn.toString() : "Athlete", Graphics.TEXT_JUSTIFY_CENTER);
+            dc.setColor(0xD49A2E, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(w / 2, h * 0.47, Graphics.FONT_SMALL, "Challenge " + Application.Storage.getValue("chCode").toString(), Graphics.TEXT_JUSTIFY_CENTER);
+            dc.setColor(0x2FC27A, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(w / 2, h * 0.62, Graphics.FONT_SMALL, "START = run", Graphics.TEXT_JUSTIFY_CENTER);
+            var np = sender.pending().size();
+            dc.setColor(0xAAAAAA, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(w / 2, h * 0.75, Graphics.FONT_XTINY, np > 0 ? np.format("%d") + " run(s) to send" : "Hold UP for a new code", Graphics.TEXT_JUSTIFY_CENTER);
+        } else if (paired()) {
             var name = Application.Storage.getValue("athleteName");
             var code = Application.Storage.getValue("raceCode");
             dc.drawText(w / 2, h * 0.32, Graphics.FONT_MEDIUM, name != null ? name.toString() : "Athlete", Graphics.TEXT_JUSTIFY_CENTER);
@@ -45,7 +64,8 @@ class PairView extends WatchUi.View {
         }
     }
 
-    // Look the code up: watchTokens/{CODE} → { raceCode, athIdx, athleteName }.
+    // Look the code up: watchTokens/{CODE} → { raceCode, athIdx, athleteName }
+    // for a race, or { challenge, uid, athleteName, unit } for a challenge.
     function lookUp(code as String) as Void {
         busy = true; pending = code; status = "Checking " + code + "...";
         WatchUi.requestUpdate();
@@ -56,7 +76,18 @@ class PairView extends WatchUi.View {
 
     function onToken(code as Number, data as Dictionary or String or Null) as Void {
         busy = false;
-        if (code == 200 && data instanceof Dictionary && data.get("raceCode") != null && data.get("athIdx") != null) {
+        if (code == 200 && data instanceof Dictionary && data.get("challenge") != null && data.get("uid") != null) {
+            Application.Storage.setValue("mode", "challenge");
+            Application.Storage.setValue("chCode", data.get("challenge").toString());
+            Application.Storage.setValue("chUid", data.get("uid").toString());
+            Application.Storage.setValue("chTok", pending);
+            var cnm = data.get("athleteName");
+            Application.Storage.setValue("chName", cnm != null ? cnm.toString() : "Athlete");
+            var u = data.get("unit");
+            Application.Storage.setValue("chUnit", u != null ? u.toString() : "mi");
+            status = "";
+        } else if (code == 200 && data instanceof Dictionary && data.get("raceCode") != null && data.get("athIdx") != null) {
+            Application.Storage.setValue("mode", "race");
             Application.Storage.setValue("raceCode", data.get("raceCode").toString());
             Application.Storage.setValue("athIdx", data.get("athIdx"));
             var nm = data.get("athleteName");
@@ -81,7 +112,10 @@ class PairDelegate extends WatchUi.BehaviorDelegate {
 
     function onSelect() as Boolean {
         if (view.busy) { return true; }
-        if (view.paired()) {
+        if (view.paired() && view.isChallenge()) {
+            var c = new ChallengeView();
+            WatchUi.switchToView(c, new ChallengeDelegate(c), WatchUi.SLIDE_LEFT);
+        } else if (view.paired()) {
             var t = new TrackView();
             WatchUi.switchToView(t, new TrackDelegate(t), WatchUi.SLIDE_LEFT);
         } else {
@@ -97,6 +131,10 @@ class PairDelegate extends WatchUi.BehaviorDelegate {
         Application.Storage.deleteValue("athIdx");
         Application.Storage.deleteValue("athleteName");
         Application.Storage.deleteValue("token");
+        Application.Storage.deleteValue("mode");
+        Application.Storage.deleteValue("chCode");
+        Application.Storage.deleteValue("chUid");
+        Application.Storage.deleteValue("chTok");
         var cv = new CodeView();
         WatchUi.pushView(cv, new CodeDelegate(cv, view), WatchUi.SLIDE_UP);
         return true;

@@ -5196,6 +5196,11 @@ ${html}</body></html>`);
         const [find, setFind] = React.useState("");
         const [entry, setEntry] = React.useState(null);        // manual entry form
         const [run, setRun] = React.useState(null);            // phone GPS run in progress
+        const [watchTok, setWatchTok] = React.useState(null);  // this athlete's watch code for this challenge
+        React.useEffect(() => {
+          if (!currentUser) return;
+          rtdb.ref("users/" + currentUser.uid + "/challengeWatch/" + code).once("value").then(sn => { if (sn.val()) setWatchTok(String(sn.val())); }).catch(() => {});
+        }, [code, currentUser && currentUser.uid]);
         const [, setTick] = React.useState(0);
         const runRef = React.useRef(null);
         const ref = React.useMemo(() => rtdb.ref("challenges/" + code), [code]);
@@ -5424,7 +5429,28 @@ ${html}</body></html>`);
                 ))}
               </div>
             )}
-            <div style={{ ...TM_CAPTION, marginTop: 14 }}>Garmin: the Timeathon watch app can send runs here too — coming in the next watch update.</div>
+            <div style={{ ...rowStyle(), marginTop: 16 }}>
+              <div style={{ fontSize: 17, fontWeight: 900 }}>⌚ Garmin watch</div>
+              {watchTok ? (<>
+                <div style={{ fontSize: 15, margin: "4px 0" }}>On the watch open <b>Timeathon</b>, press START and enter this code once:</div>
+                <div style={{ fontSize: 38, fontWeight: 900, letterSpacing: 6, textAlign: "center" }}>{watchTok}</div>
+                <div style={TM_CAPTION}>After that, START on the watch begins a run. Hold UP → Finish & save adds it here (and saves it to Garmin Connect). Out of phone range? It sends when you're back. Using another app's run screen instead? Add that run with “Add a run”.</div>
+              </>) : (<>
+                <div style={TM_CAPTION}>Run with the free Timeathon app on your Garmin and your runs land here by themselves.</div>
+                <button onClick={async () => {
+                  for (let i = 0; i < 5; i++) {
+                    const tok = String(Math.floor(100000 + Math.random() * 900000));
+                    try {
+                      await rtdb.ref("watchTokens/" + tok).set({ createdBy: currentUser.uid, uid: currentUser.uid, challenge: code, athleteName: me.name, unit, createdAt: Date.now() });
+                      await rtdb.ref("users/" + currentUser.uid + "/challengeWatch/" + code).set(tok);
+                      setWatchTok(tok); return;
+                    } catch (_) {}
+                  }
+                  setMsg("Couldn't make a watch code — try again.");
+                }} style={{ ...btnStyle(TM.ink, true), width: "100%", marginTop: 8 }}>Connect my Garmin watch</button>
+                <a href={GARMIN_STORE_URL} target="_blank" rel="noopener" style={{ display: "block", ...TM_CAPTION, marginTop: 6 }}>Get the Timeathon watch app ↗</a>
+              </>)}
+            </div>
           </div>
         );
 
