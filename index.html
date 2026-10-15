@@ -13100,6 +13100,37 @@ ${html}</body></html>`);
             setPromoMsg({ ok: false, text: "That code didn't work. Check it with whoever gave it to you." });
           }
         }
+        // Host invite link (timeathon.com/?host=CODE): opens as a host and, once
+        // they're signed in or have made an account, applies the code by itself.
+        const hostInviteRef = useRef(false);
+        useEffect(() => {
+          if (hostInviteRef.current) return;
+          const c = normCode(new URLSearchParams(location.search).get("host"));
+          if (!c) return;
+          hostInviteRef.current = true;
+          try { localStorage.setItem("tm-host-invite", c); } catch (_) {}
+          try { const u = new URL(location.href); u.searchParams.delete("host"); history.replaceState(history.state, "", u.pathname + u.search + u.hash); } catch (_) {}
+          setPromoInput(c);
+          chooseRole("host");
+        }, []);
+        useEffect(() => {
+          if (!currentUser || currentUser.isAnonymous || hostAccess !== null) return;
+          let c = null; try { c = localStorage.getItem("tm-host-invite"); } catch (_) {}
+          if (!c) return;
+          try { localStorage.removeItem("tm-host-invite"); } catch (_) {}
+          setPromoInput(c);
+          (async () => {
+            setPromoMsg({ busy: true });
+            try {
+              const pc = (await rtdb.ref("promoCodes/" + c).once("value")).val();
+              if (!pc) throw new Error("no code");
+              const until = pc.days > 0 ? Date.now() + pc.days * 86400000 : null;
+              await rtdb.ref("hostAccess/" + currentUser.uid).set({ via: "promo", code: c, at: Date.now(), email: currentUser.email || "", ...(until ? { until } : {}) });
+              rtdb.ref("promoCodes/" + c + "/redeemed/" + currentUser.uid).set({ email: currentUser.email || "", at: Date.now(), ...(until ? { until } : {}) }).catch(() => {});
+              setPromoMsg({ ok: true, text: "You're in — welcome, host!" });
+            } catch (e) { setPromoMsg({ ok: false, text: "Your invite code didn't work — ask whoever sent it for a new link." }); }
+          })();
+        }, [currentUser && currentUser.uid, hostAccess]);
         // Owner: make and list promo codes
         const [promoList, setPromoList] = useState(null);
         const [newPromo, setNewPromo] = useState("");
