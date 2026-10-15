@@ -2831,6 +2831,13 @@
       // What 🌱 Seed puts in an event: entered swimmers, or relay teams. No-shows
       // are left out. An event that another was combined into swims both lists,
       // each swimmer tagged with the event they're scored in (fromEvent).
+      // On race day only events with somebody in them are run: a seeded lane
+      // that isn't scratched, or an entry still waiting to be seeded.
+      function swimEvHasSwimmers(meet, ev) {
+        if (!ev || ev.mergedInto) return false;
+        if ((ev.heats || []).some(h => (h.lanes || []).some(l => l.name && !l.scratch))) return true;
+        return swimEntriesForEvent(meet, ev).length > 0;
+      }
       function swimEntriesForEvent(meet, ev) {
         if (ev.mergedInto) return [];
         const own = swimEntriesOwn(meet, ev);
@@ -19571,9 +19578,11 @@ Start a new race anyway?`)) return;
                     if (swimLiveCode) rtdb.ref(`swimLive/${swimLiveCode}`).update({ activeHeat: nextHeat.heatNum }).catch(console.error);
                   } else {
                     const eIdx = swimMeet.events.findIndex(e => e.eventNum === swimActiveEvent);
-                    if (eIdx < swimMeet.events.length - 1) {
-                      const nextEv = swimMeet.events[eIdx + 1];
-                      const nextHt = nextEv.heats[0] ? nextEv.heats[0].heatNum : 1;
+                    // the next event somebody is actually swimming in — empty and combined-away events are skipped
+                    const nextEv = swimMeet.events.slice(eIdx + 1).find(e => swimEvHasSwimmers(swimMeet, e));
+                    if (nextEv) {
+                      const firstHt = nextEv.heats.find(h => h.lanes.some(l => l.name && !l.scratch)) || nextEv.heats[0];
+                      const nextHt = firstHt ? firstHt.heatNum : 1;
                       setSwimActiveEvent(nextEv.eventNum);
                       setSwimActiveHeat(nextHt);
                       if (swimLiveCode) rtdb.ref(`swimLive/${swimLiveCode}`).update({ activeEvent: nextEv.eventNum, activeHeat: nextHt }).catch(console.error);
@@ -20147,17 +20156,19 @@ Start a new race anyway?`)) return;
                         {!activeEv || !activeHt ? (
                           <div>
                             <h2 style={{ ...TM_H2, marginTop: 4 }}>Pick a heat to start</h2>
-                            {swimMeet.events.length === 0 && (
+                            {swimMeet.events.length === 0 ? (
                               <div style={{ ...rowStyle(), ...TM_CAPTION, marginTop: 10 }}>No events yet — add them in Setup.</div>
+                            ) : !swimMeet.events.some(ev => swimEvHasSwimmers(swimMeet, ev)) && (
+                              <div style={{ ...rowStyle(), ...TM_CAPTION, marginTop: 10 }}>No swimmers entered yet. Events with nobody in them are skipped on race day.</div>
                             )}
                             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                              {swimMeet.events.filter(ev => !ev.mergedInto).map(ev => (
+                              {swimMeet.events.filter(ev => swimEvHasSwimmers(swimMeet, ev)).map(ev => (
                                 <div key={ev.eventNum} style={{ ...rowStyle(TM.swim) }}>
                                   <div style={{ fontSize: 16, fontWeight: 900 }}>{swimMeet.events.some(o => o.mergedInto === ev.eventNum)
                                     ? <>Events {combinedLabel(swimMeet, ev)} · {[ev, ...swimMeet.events.filter(o => o.mergedInto === ev.eventNum)].map(x => `${x.gender} ${x.ageGroup}`).join(" + ")} {ev.distance} {ev.stroke} <span style={{ color: TM.run }}>· combined</span></>
                                     : <>Event {evLabel(ev)} · {ev.gender} {ev.ageGroup} {ev.distance} {ev.stroke}</>}</div>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                                    {ev.heats.map(h => {
+                                    {ev.heats.filter(h => h.lanes.some(l => l.name && !l.scratch)).map(h => {
                                       const n = h.lanes.filter(l => l.name && !l.scratch).length;
                                       const done = n > 0 && h.lanes.filter(l => l.name && !l.scratch).every(l => l.finalMs != null || l.dq);
                                       return (
