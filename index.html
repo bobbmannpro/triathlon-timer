@@ -5223,7 +5223,7 @@ ${html}</body></html>`);
             g.textAlign = "center"; g.fillStyle = CH_KIND[s].colour; g.font = F(800, 34); g.fillText(CH_KIND[s].label.toUpperCase(), x, 730);
             g.fillStyle = TM.ink; g.font = F(900, 70); g.fillText(chDist(row.bySport[s], c.unit).toFixed(1) + " " + (c.unit === "km" ? "km" : "mi"), x, 810);
           });
-          if (row.pledge) center(`“If I commit to consistent movement, I believe I can ${row.pledge}”`, 920, 600, 32, TM.inkMuted);
+          if (row.pledge) center(`“${(c.prompt || "I believe I can").replace(/[\s_.…]+$/, "")} ${row.pledge}”`, 920, 600, 32, TM.inkMuted);
         } else {
           const win = row.place === 1;
           center(win ? "🏆 CHALLENGE WINNER" : "CERTIFICATE OF ACHIEVEMENT", 410, 900, 54, TM.ink);
