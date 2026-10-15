@@ -13117,6 +13117,8 @@ ${html}</body></html>`);
           if (!currentUser || currentUser.isAnonymous || hostAccess !== null) return;
           let c = null; try { c = localStorage.getItem("tm-host-invite"); } catch (_) {}
           if (!c) return;
+          // Owners and testers already host — an invite they open themselves is just dropped.
+          if (OWNER_UIDS.includes(currentUser.uid) || TESTER_UIDS.includes(currentUser.uid)) { try { localStorage.removeItem("tm-host-invite"); } catch (_) {} return; }
           try { localStorage.removeItem("tm-host-invite"); } catch (_) {}
           setPromoInput(c);
           (async () => {
