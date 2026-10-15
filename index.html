@@ -5109,37 +5109,79 @@ ${html}</body></html>`);
       }
 
       // ── Challenges ───────────────────────────────────────────────────────────
-      // A distance challenge over days or weeks — e.g. most miles in January.
-      // People sign up (each gets the next bib number), then log runs until the
-      // end: typed in from any watch or app, run with this phone's GPS, or sent
-      // by the Timeathon Garmin app. Standings are total distance, overall.
-      // Data: challenges/{code} = { hostUid, name, status: "setup"|"open", sport,
-      //   unit: "mi"|"km", startDate, endDate (YYYY-MM-DD), startAt, endAt (ms),
-      //   nextBib, entrants/{uid}: { name, bib, at, entries/{id}: { m, at, src,
-      //   dur?, note?, added }, live?: { m, t } } }
-      const CH_SOURCES = [["garmin", "Garmin"], ["apple", "Apple Watch"], ["wear", "Samsung / Wear OS"], ["phoneapp", "Phone app (Strava, Nike…)"], ["treadmill", "Treadmill"], ["other", "Other"]];
+      // A distance challenge over days or weeks. Two formats:
+      //  · "distance" — most miles wins (e.g. January's most miles), one sport;
+      //  · "goal"     — finish a set distance in each sport (e.g. The Endurance
+      //    Experiment: swim 2.4 / bike 112 / run 26.2 in January). Entrants pick
+      //    a division; finishing every target makes them a finisher.
+      // People sign up (each gets the next bib number), then log activities until
+      // the end: typed in from any watch or app, with this phone's GPS, or sent by
+      // the Timeathon Garmin app. Data: challenges/{code} = { hostUid, name,
+      //   status: "setup"|"open", format, sport, sports[], divisions[{id,name,goals}],
+      //   prompt, regLink, themes[], unit, startDate, endDate, startAt, endAt,
+      //   nextBib, entrants/{uid}: { name, bib, at, division?, pledge?,
+      //   entries/{id}: { m, sport?, at, src, dur?, added }, live?: { m, t } } }
+      const CH_SOURCES = [["garmin", "Garmin"], ["apple", "Apple Watch"], ["wear", "Samsung / Wear OS"], ["phoneapp", "Phone app (Strava, Nike…)"], ["treadmill", "Treadmill / indoor"], ["pool", "Pool / lap count"], ["other", "Other"]];
       const CH_SRC_LABEL = { ...Object.fromEntries(CH_SOURCES), gps: "This phone's GPS", watch: "Timeathon Garmin app" };
       const CH_SPORTS = [["run", "Run"], ["walk", "Walk / run"], ["ride", "Ride"], ["any", "Any distance"]];
+      const CH_KIND = { swim: { label: "Swim", icon: "🏊", colour: TM.swim }, bike: { label: "Bike", icon: "🚴", colour: TM.bike }, run: { label: "Run", icon: "🏃", colour: TM.run } };
+      const CH_DIV_PRESETS = [
+        { id: "full", name: "The 140.6 Experiment", goals: { swim: 2.4, bike: 112, run: 26.2 } },
+        { id: "half", name: "The 70.3 Experiment", goals: { swim: 1.2, bike: 56, run: 13.1 } },
+      ];
       function chBounds(startDate, endDate) {
         const s = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
         const e = endDate ? new Date(endDate + "T23:59:59.999").getTime() : null;
         return { startAt: isNaN(s) ? null : s, endAt: isNaN(e) ? null : e };
       }
-      function chDist(m, unit) { return (m || 0) / (unit === "km" ? 1000 : 1609.344); }
+      const chPerUnit = unit => unit === "km" ? 1000 : 1609.344;
+      function chDist(m, unit) { return (m || 0) / chPerUnit(unit); }
       function chFmt(m, unit) { const v = chDist(m, unit); return (v >= 100 ? v.toFixed(1) : v.toFixed(2)) + " " + (unit === "km" ? "km" : "mi"); }
       function chDur(ms) { if (!ms) return ""; const s = Math.round(ms / 1000); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); }
       function chDay(t) { return t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""; }
       function chOrd(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+      const chIsGoal = c => c && c.format === "goal";
+      const chSportsOf = c => chIsGoal(c) ? ((c.sports && c.sports.length) ? c.sports : ["swim", "bike", "run"]) : ["run"];
+      const chDivs = c => (c && Array.isArray(c.divisions) ? c.divisions : c && c.divisions ? Object.values(c.divisions) : []).filter(Boolean);
+      // this week's theme, if the host set any (week 1 starts on the first day)
+      function chTheme(c, now) {
+        const th = (Array.isArray(c.themes) ? c.themes : Object.values(c.themes || {})).filter(Boolean);
+        if (!th.length || !c.startAt || now < c.startAt) return null;
+        const wk = Math.floor((now - c.startAt) / (7 * 86400e3));
+        return th[Math.min(wk, th.length - 1)];
+      }
       function chStandings(c) {
-        const now = Date.now();
-        return Object.entries((c && c.entrants) || {}).filter(([, e]) => e && e.name)
-          .map(([uid, e]) => {
-            const entries = Object.entries(e.entries || {}).filter(([, x]) => x && x.m > 0).map(([id, x]) => ({ id, ...x }));
-            return { uid, name: e.name, bib: e.bib, at: e.at || 0, entries, total: entries.reduce((s, x) => s + x.m, 0),
-                     live: e.live && now - (e.live.t || 0) < 90000 ? e.live : null };
-          })
-          .sort((a, b) => b.total - a.total || a.at - b.at)
-          .map((r, i, arr) => ({ ...r, place: r.total > 0 ? arr.filter(x => x.total > r.total).length + 1 : null }));
+        const now = Date.now(), goal = chIsGoal(c), sports = chSportsOf(c), divs = chDivs(c), per = chPerUnit(c && c.unit);
+        const rows = Object.entries((c && c.entrants) || {}).filter(([, e]) => e && e.name).map(([uid, e]) => {
+          const entries = Object.entries(e.entries || {}).filter(([, x]) => x && x.m > 0).map(([id, x]) => ({ id, ...x, sport: x.sport || (goal ? "run" : "run") }));
+          const bySport = {}; sports.forEach(s => { bySport[s] = 0; });
+          entries.forEach(x => { if (bySport[x.sport] != null) bySport[x.sport] += x.m; });
+          const row = { uid, name: e.name, bib: e.bib, at: e.at || 0, entries, bySport, pledge: e.pledge || "", total: entries.reduce((s, x) => s + x.m, 0),
+                        live: e.live && now - (e.live.t || 0) < 90000 ? e.live : null };
+          if (goal) {
+            const div = divs.find(d => d.id === e.division) || divs[0] || { goals: {} };
+            row.division = div;
+            const g = s => (+((div.goals || {})[s]) || 0) * per;
+            const parts = sports.filter(s => g(s) > 0);
+            row.pct = parts.length ? parts.reduce((t, s) => t + Math.min(1, bySport[s] / g(s)), 0) / parts.length : 0;
+            row.finished = parts.length > 0 && parts.every(s => bySport[s] >= g(s));
+            if (row.finished) {   // the moment the last target was reached
+              const acc = {}; row.finishedAt = null;
+              for (const x of [...entries].sort((a, b) => a.at - b.at || (a.added || 0) - (b.added || 0))) {
+                acc[x.sport] = (acc[x.sport] || 0) + x.m;
+                if (parts.every(s => (acc[s] || 0) >= g(s))) { row.finishedAt = x.added || x.at; break; }
+              }
+            }
+          }
+          return row;
+        });
+        if (goal) {
+          rows.sort((a, b) => (b.finished - a.finished) || (a.finished ? (a.finishedAt || 0) - (b.finishedAt || 0) : b.pct - a.pct) || a.at - b.at);
+          let n = 0; rows.forEach(r => { r.place = r.finished ? ++n : null; });
+          return rows;
+        }
+        rows.sort((a, b) => b.total - a.total || a.at - b.at);
+        return rows.map(r => ({ ...r, place: r.total > 0 ? rows.filter(x => x.total > r.total).length + 1 : null }));
       }
       // Bib: a printable card with the number big, for the fridge or the race belt.
       function drawChallengeBib(c, me) {
@@ -5153,7 +5195,8 @@ ${html}</body></html>`);
         g.fillStyle = TM.ink; g.font = F(900, 520); g.fillText(String(me.bib || ""), W / 2, 700);
         g.font = F(800, 64); let nm = me.name || ""; px = 64; while (px > 30 && g.measureText(nm).width > W - 200) { px -= 4; g.font = F(800, px); } g.fillText(nm, W / 2, 830);
         g.fillStyle = TM.inkMuted; g.font = F(700, 38);
-        g.fillText(`${chDay(c.startAt)} – ${chDay(c.endAt)}  ·  TIMEATHON CHALLENGE  ·  code ${c.code || ""}`, W / 2, 920);
+        const sub = me.division && me.division.name ? me.division.name.toUpperCase() : "TIMEATHON CHALLENGE";
+        g.fillText(`${chDay(c.startAt)} – ${chDay(c.endAt)}  ·  ${sub}`, W / 2, 920);
         g.fillStyle = "#DDD9D0"; [[60, 250], [W - 60, 250], [60, H - 60], [W - 60, H - 60]].forEach(([x, y]) => { g.beginPath(); g.arc(x, y, 18, 0, 7); g.fill(); });
         return new Promise(r => cv.toBlob(r, "image/png"));
       }
@@ -5168,13 +5211,45 @@ ${html}</body></html>`);
         try { const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = LOGO_B64; }); const h = 110, w = im.width * h / im.height; g.drawImage(im, (W - w) / 2, 70, w, h); } catch (_) {}
         center((c.name || "Challenge").toUpperCase(), 250, 800, 40, TM.inkMuted);
         center(`${chDay(c.startAt)} – ${chDay(c.endAt)}, ${new Date(c.endAt || Date.now()).getFullYear()}`, 300, 700, 30, TM.warn);
-        const win = row.place === 1;
-        center(win ? "🏆 CHALLENGE WINNER" : "CERTIFICATE OF ACHIEVEMENT", 410, 900, 54, TM.ink);
-        center(row.name, 560, 900, 120, TM.ink);
-        center(`Bib #${row.bib}`, 625, 800, 32, TM.warn);
-        center(chFmt(row.total, c.unit), 790, 900, 130, TM.ink);
-        center(`${row.place ? chOrd(row.place) + " of " + count : "Finisher"}  ·  ${row.entries.length} ${row.entries.length === 1 ? "activity" : "activities"} logged`, 870, 700, 40, TM.inkMuted);
+        if (chIsGoal(c)) {
+          center(((row.division && row.division.name) || "Challenge").toUpperCase() + " · FINISHER", 410, 900, 50, TM.ink);
+          center(row.name, 560, 900, 120, TM.ink);
+          center(`Bib #${row.bib}${row.finishedAt ? "  ·  finished " + chDay(row.finishedAt) : ""}`, 625, 800, 32, TM.warn);
+          const sp = chSportsOf(c);
+          sp.forEach((s, i) => {
+            const x = W / 2 + (i - (sp.length - 1) / 2) * 420;
+            g.textAlign = "center"; g.fillStyle = CH_KIND[s].colour; g.font = F(800, 34); g.fillText(CH_KIND[s].label.toUpperCase(), x, 730);
+            g.fillStyle = TM.ink; g.font = F(900, 70); g.fillText(chDist(row.bySport[s], c.unit).toFixed(1) + " " + (c.unit === "km" ? "km" : "mi"), x, 810);
+          });
+          if (row.pledge) center(`“If I commit to consistent movement, I believe I can ${row.pledge}”`, 920, 600, 32, TM.inkMuted);
+        } else {
+          const win = row.place === 1;
+          center(win ? "🏆 CHALLENGE WINNER" : "CERTIFICATE OF ACHIEVEMENT", 410, 900, 54, TM.ink);
+          center(row.name, 560, 900, 120, TM.ink);
+          center(`Bib #${row.bib}`, 625, 800, 32, TM.warn);
+          center(chFmt(row.total, c.unit), 790, 900, 130, TM.ink);
+          center(`${row.place ? chOrd(row.place) + " of " + count : "Finisher"}  ·  ${row.entries.length} ${row.entries.length === 1 ? "activity" : "activities"} logged`, 870, 700, 40, TM.inkMuted);
+        }
         center("timeathon.com", H - 70, 700, 28, TM.inkMuted);
+        return new Promise(r => cv.toBlob(r, "image/png"));
+      }
+      // Square finisher badge for Instagram / Facebook.
+      async function drawChallengeBadge(c, row) {
+        const S = 1080, cv = document.createElement("canvas"); cv.width = S; cv.height = S;
+        const g = cv.getContext("2d"); const F = (w, px) => `${w} ${px}px Archivo, Arial, sans-serif`;
+        try { await document.fonts.load("900 60px Archivo"); } catch (_) {}
+        g.fillStyle = TM.ink; g.fillRect(0, 0, S, S);
+        const fit = (t, y, w, px, col, max = S - 140) => { g.font = F(w, px); while (px > 14 && g.measureText(t).width > max) { px -= 2; g.font = F(w, px); } g.fillStyle = col; g.textAlign = "center"; g.fillText(t, S / 2, y); };
+        g.strokeStyle = "#D49A2E"; g.lineWidth = 18; g.beginPath(); g.arc(S / 2, 470, 330, 0, 7); g.stroke();
+        fit("FINISHER", 300, 900, 60, "#D49A2E");
+        fit((c.name || "Challenge").toUpperCase(), 380, 900, 64, "#FFFFFF", 560);
+        fit(((row.division && row.division.name) || "").toUpperCase(), 450, 800, 40, "#B8B3A9", 560);
+        const sp = chSportsOf(c);
+        sp.forEach((s, i) => { const x = S / 2 + (i - (sp.length - 1) / 2) * 190; g.textAlign = "center"; g.fillStyle = "#FFFFFF"; g.font = F(900, 46);
+          g.fillText(chDist(row.bySport[s], c.unit).toFixed(1), x, 560); g.fillStyle = "#B8B3A9"; g.font = F(800, 24); g.fillText(CH_KIND[s].label.toUpperCase(), x, 595); });
+        fit(new Date(c.endAt || Date.now()).toLocaleDateString(undefined, { month: "long", year: "numeric" }).toUpperCase(), 690, 800, 36, "#D49A2E");
+        fit(row.name, 900, 900, 72, "#FFFFFF");
+        fit("timeathon.com", 1010, 700, 30, "#B8B3A9");
         return new Promise(r => cv.toBlob(r, "image/png"));
       }
       async function chSaveOrShare(blob, name, share) {
@@ -5188,6 +5263,20 @@ ${html}</body></html>`);
         w.document.write(`<!doctype html><title>${escHtml(title)}</title><style>@page{size:landscape;margin:0.4in}body{margin:0}img{width:100%}</style><img src="${url}" onload="setTimeout(()=>print(),300)">`);
         w.document.close();
       }
+      function ChBar({ value, goal, colour, label, unit }) {
+        const pct = goal > 0 ? Math.min(1, value / goal) : 0;
+        return (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800 }}>
+              <span style={{ color: colour }}>{label}</span>
+              <span>{chDist(value, unit).toFixed(1)} / {chDist(goal, unit).toFixed(1)} {unit === "km" ? "km" : "mi"}{pct >= 1 ? " ✓" : ""}</span>
+            </div>
+            <div style={{ height: 10, background: TM.bgAlt, borderRadius: 5, overflow: "hidden", marginTop: 3 }}>
+              <div style={{ width: (pct * 100).toFixed(1) + "%", height: "100%", background: colour }} />
+            </div>
+          </div>
+        );
+      }
 
       function Challenge({ code, viewer, currentUser, userProfile, onBack, action }) {
         const [c, setC] = React.useState(undefined);
@@ -5195,12 +5284,9 @@ ${html}</body></html>`);
         const [msg, setMsg] = React.useState("");
         const [find, setFind] = React.useState("");
         const [entry, setEntry] = React.useState(null);        // manual entry form
-        const [run, setRun] = React.useState(null);            // phone GPS run in progress
+        const [run, setRun] = React.useState(null);            // phone GPS activity in progress
         const [watchTok, setWatchTok] = React.useState(null);  // this athlete's watch code for this challenge
-        React.useEffect(() => {
-          if (!currentUser) return;
-          rtdb.ref("users/" + currentUser.uid + "/challengeWatch/" + code).once("value").then(sn => { if (sn.val()) setWatchTok(String(sn.val())); }).catch(() => {});
-        }, [code, currentUser && currentUser.uid]);
+        const [joinDiv, setJoinDiv] = React.useState(null);
         const [, setTick] = React.useState(0);
         const runRef = React.useRef(null);
         const ref = React.useMemo(() => rtdb.ref("challenges/" + code), [code]);
@@ -5210,6 +5296,10 @@ ${html}</body></html>`);
           const iv = setInterval(() => setTick(t => t + 1), 1000);
           return () => { ref.off("value", fn); clearInterval(iv); };
         }, [ref]);
+        React.useEffect(() => {
+          if (!currentUser) return;
+          rtdb.ref("users/" + currentUser.uid + "/challengeWatch/" + code).once("value").then(sn => { if (sn.val()) setWatchTok(String(sn.val())); }).catch(() => {});
+        }, [code, currentUser && currentUser.uid]);
         // listed in Today's races while open (host's screen keeps it current)
         const dirKey = viewer || !c ? "" : [c.status, c.name, c.startAt, c.endAt].join("|");
         React.useEffect(() => {
@@ -5228,7 +5318,7 @@ ${html}</body></html>`);
         React.useEffect(() => {
           if (actionDone.current || !action || !meNow || !onNow) return;
           actionDone.current = true; setTab("me");
-          if (action === "add") setEntry({ dist: "", date: new Date().toLocaleDateString("en-CA"), time: "", src: "garmin" });
+          if (action === "add") setEntry({ dist: "", date: new Date().toLocaleDateString("en-CA"), time: "", src: "garmin", sport: chSportsOf(c)[chSportsOf(c).length - 1], du: "" });
           if (action === "run") setTimeout(() => { const b = document.getElementById("ch-start-run"); if (b) b.click(); }, 50);
         }, [!!meNow, !!onNow, action]);
         // stop GPS if the page goes away
@@ -5238,27 +5328,33 @@ ${html}</body></html>`);
         if (!c) return <div style={{ padding: 20 }}><button onClick={onBack} style={btnStyle(TM.ink, true)}>← Back</button><div style={{ marginTop: 16 }}>No challenge found with code {code}.</div></div>;
 
         const now = Date.now();
-        const unit = c.unit || "mi";
+        const unit = c.unit || "mi", per = chPerUnit(unit);
+        const goal = chIsGoal(c), sports = chSportsOf(c), divs = chDivs(c);
         const phase = !c.startAt || !c.endAt ? "unset" : now < c.startAt ? "before" : now > c.endAt ? "ended" : "on";
         const rows = chStandings(c);
         const me = currentUser ? rows.find(r => r.uid === currentUser.uid) : null;
         const isHost = !!currentUser && c.hostUid === currentUser.uid && !viewer;
         const inputS = { minHeight: 44, fontSize: 16, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF", color: TM.ink };
         const set = (path, val) => ref.child(path).set(val).catch(e => setMsg("Couldn't save: " + e.message));
-        const winner = phase === "ended" ? rows.find(r => r.place === 1) : null;
+        const winner = !goal && phase === "ended" ? rows.find(r => r.place === 1) : null;
+        const finishers = goal ? rows.filter(r => r.finished) : [];
+        const theme = chTheme(c, now);
+        const word = goal ? "activity" : "run";
         const countdown = t => { const s = Math.max(0, Math.round((t - now) / 1000)); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
           return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
         const phaseLine = phase === "unset" ? "Dates not set yet"
           : phase === "before" ? `Starts ${chDay(c.startAt)} · in ${countdown(c.startAt)}`
           : phase === "on" ? `● On now · ends ${chDay(c.endAt)} 11:59 PM · ${countdown(c.endAt)} left`
           : `Finished ${chDay(c.endAt)}`;
+        const goalsLine = d => sports.filter(s => +(d.goals || {})[s] > 0).map(s => `${CH_KIND[s].label} ${d.goals[s]}`).join(" · ") + " " + (unit === "km" ? "km" : "mi");
 
-        async function signUp(name) {
+        async function signUp(f) {
           if (!currentUser) { setMsg("Sign in first."); return; }
+          if (goal && divs.length && !f.division) { setMsg("Pick your challenge."); return; }
           try {
             const res = await ref.child("nextBib").transaction(n => (n || 0) + 1);
             const bib = res.snapshot.val();
-            await ref.child("entrants/" + currentUser.uid).set({ name: name.trim(), bib, at: Date.now() });
+            await ref.child("entrants/" + currentUser.uid).set({ name: f.name.trim(), bib, at: Date.now(), division: f.division || null, pledge: (f.pledge || "").trim().slice(0, 140) || null });
             try { rtdb.ref("users/" + currentUser.uid + "/joinedChallenges/" + code).set({ name: c.name || "Challenge", at: Date.now() }); } catch (_) {}
             setMsg(""); setTab("me");
           } catch (e) { setMsg("Couldn't sign you up: " + e.message); }
@@ -5266,29 +5362,30 @@ ${html}</body></html>`);
         async function saveEntry(e) {
           const v = parseFloat(String(e.dist).replace(",", "."));
           if (!(v > 0)) { setMsg("Enter the distance."); return; }
-          const m = Math.round(v * (unit === "km" ? 1000 : 1609.344));
+          const du = e.du || unit;
+          const m = Math.round(v * (du === "yd" ? 0.9144 : du === "m" ? 1 : du === "km" ? 1000 : 1609.344));
           let at = e.date ? new Date(e.date + "T12:00:00").getTime() : Date.now();
           if (at > Date.now()) at = Date.now();
-          if (at < c.startAt || at > c.endAt) { setMsg(`Runs must be between ${chDay(c.startAt)} and ${chDay(c.endAt)}.`); return; }
+          if (at < c.startAt || at > c.endAt) { setMsg(`Activities must be between ${chDay(c.startAt)} and ${chDay(c.endAt)}.`); return; }
           const parts = String(e.time || "").split(":").map(Number).filter(x => !isNaN(x));
           const dur = parts.length ? parts.reduce((s, x) => s * 60 + x, 0) * 1000 * (parts.length === 1 ? 60 : 1) : null;
           try {
-            await ref.child("entrants/" + currentUser.uid + "/entries").push({ m, at, src: e.src || "other", dur: dur || null, note: (e.note || "").slice(0, 80) || null, added: Date.now() });
-            setEntry(null); setMsg(`✓ Added ${chFmt(m, unit)}`);
+            await ref.child("entrants/" + currentUser.uid + "/entries").push({ m, sport: goal ? e.sport : null, at, src: e.src || "other", dur: dur || null, added: Date.now() });
+            setEntry(null); setMsg(`✓ Added ${goal ? CH_KIND[e.sport].label.toLowerCase() + " " : ""}${chFmt(m, unit)}`);
           } catch (er) { setMsg("Couldn't save: " + er.message); }
         }
-        function startRun() {
+        function startRun(sport) {
           if (!navigator.geolocation) { setMsg("This phone can't share its location."); return; }
-          const st = { m: 0, start: Date.now(), dist: makeTriDistance(), watch: null, acc: null, lastPush: 0 };
+          const st = { m: 0, start: Date.now(), dist: makeTriDistance(), watch: null, acc: null, lastPush: 0, sport: sport || "run" };
           try { navigator.wakeLock && navigator.wakeLock.request("screen").then(l => { st.lock = l; }).catch(() => {}); } catch (_) {}
           st.watch = navigator.geolocation.watchPosition(p => {
             const add = st.dist.add({ lat: p.coords.latitude, lng: p.coords.longitude, t: Date.now(), acc: p.coords.accuracy, spd: p.coords.speed });
             if (add > 0) st.m += add;
             st.acc = p.coords.accuracy;
-            setRun({ m: st.m, start: st.start, acc: st.acc });
+            setRun({ m: st.m, start: st.start, acc: st.acc, sport: st.sport });
             if (Date.now() - st.lastPush > 15000) { st.lastPush = Date.now(); ref.child("entrants/" + currentUser.uid + "/live").set({ m: Math.round(st.m), t: firebase.database.ServerValue.TIMESTAMP }).catch(() => {}); }
           }, err => setMsg(err.code === 1 ? "Location is blocked — allow it for this site, then start again." : "GPS: " + err.message), { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
-          runRef.current = st; setRun({ m: 0, start: st.start, acc: null }); setMsg("");
+          runRef.current = st; setRun({ m: 0, start: st.start, acc: null, sport: st.sport }); setMsg("");
         }
         async function stopRun(save) {
           const st = runRef.current; runRef.current = null;
@@ -5297,17 +5394,40 @@ ${html}</body></html>`);
           ref.child("entrants/" + currentUser.uid + "/live").remove().catch(() => {});
           if (!save || !st) return;
           if (st.m < 50) { setMsg("Less than 50 m measured — nothing saved."); return; }
-          if (Date.now() > c.endAt) { setMsg("The challenge ended during this run — it can't be added."); return; }
-          try { await ref.child("entrants/" + currentUser.uid + "/entries").push({ m: Math.round(st.m), at: st.start, src: "gps", dur: Date.now() - st.start, added: Date.now() });
+          if (Date.now() > c.endAt) { setMsg("The challenge ended during this activity — it can't be added."); return; }
+          try { await ref.child("entrants/" + currentUser.uid + "/entries").push({ m: Math.round(st.m), sport: goal ? st.sport : null, at: st.start, src: "gps", dur: Date.now() - st.start, added: Date.now() });
                 setMsg(`✓ Saved ${chFmt(st.m, unit)}`); }
-          catch (e) { setMsg("Couldn't save the run: " + e.message); }
+          catch (e) { setMsg("Couldn't save: " + e.message); }
         }
+
+        const themeBox = theme && phase === "on" ? (
+          <div style={{ ...rowStyle(TM.warn), marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: 1.2, color: TM.warn }}>THIS WEEK</div>
+            <div style={{ fontSize: 18, fontWeight: 900 }}>{theme}</div>
+          </div>
+        ) : null;
+        // everyone's miles together
+        const community = goal && rows.length ? (
+          <div style={{ ...rowStyle(), marginBottom: 12 }}>
+            <div style={TM_LABEL}>Community · {rows.length} {rows.length === 1 ? "athlete" : "athletes"} · {finishers.length} {finishers.length === 1 ? "finisher" : "finishers"}</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {sports.map(s => (
+                <div key={s} style={{ flex: 1, minWidth: 90 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: CH_KIND[s].colour }}>{CH_KIND[s].icon} {CH_KIND[s].label.toUpperCase()}</div>
+                  <div style={{ fontSize: 22, fontWeight: 900 }}>{chDist(rows.reduce((t, r) => t + (r.bySport[s] || 0), 0), unit).toFixed(1)} {unit}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null;
 
         // ── standings (everyone) ──
         const q = find.trim().toLowerCase();
         const shown = rows.filter(r => !q || r.name.toLowerCase().includes(q) || String(r.bib) === q.replace(/^#/, ""));
         const standings = (
           <div>
+            {themeBox}
+            {community}
             {winner && (
               <div style={{ ...rowStyle(TM.warn), marginBottom: 12, textAlign: "center" }}>
                 <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2 }}>🏆 WINNER</div>
@@ -5318,7 +5438,21 @@ ${html}</body></html>`);
             <input value={find} onChange={e => setFind(e.target.value)} placeholder="Find a name or bib number" aria-label="Find a name or bib number" style={{ ...inputS, width: "100%", marginBottom: 10 }} />
             {rows.length === 0 && <div style={{ ...rowStyle(), ...TM_CAPTION }}>Nobody's signed up yet.</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {shown.map(r => (
+              {shown.map(r => goal ? (
+                <div key={r.uid} style={{ ...rowStyle(r.finished ? TM.run : undefined), padding: "10px 12px", outline: me && me.uid === r.uid ? `3px solid ${TM.swim}` : "none" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 17, fontWeight: 800, overflowWrap: "anywhere" }}>{r.name} <span style={{ color: TM.warn }}>#{r.bib}</span></div>
+                    <div style={{ fontSize: 18, fontWeight: 900, whiteSpace: "nowrap", color: r.finished ? TM.run : TM.ink }}>{r.finished ? "✓ FINISHER" : Math.floor(r.pct * 100) + "%"}</div>
+                  </div>
+                  <div style={TM_CAPTION}>{r.division && r.division.name}{r.finished && r.finishedAt ? ` · finished ${chDay(r.finishedAt)}` : ""}{r.live ? " · ● out now" : ""}</div>
+                  <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                    {sports.filter(s => +((r.division && r.division.goals) || {})[s] > 0).map(s => {
+                      const g2 = +r.division.goals[s] * per, p = Math.min(1, (r.bySport[s] || 0) / g2);
+                      return <div key={s} title={CH_KIND[s].label} style={{ flex: 1, height: 8, background: TM.bgAlt, borderRadius: 4, overflow: "hidden" }}><div style={{ width: (p * 100) + "%", height: "100%", background: CH_KIND[s].colour }} /></div>;
+                    })}
+                  </div>
+                </div>
+              ) : (
                 <div key={r.uid} style={{ ...rowStyle(r.place === 1 ? TM.warn : undefined), display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
                                           outline: me && me.uid === r.uid ? `3px solid ${TM.swim}` : "none" }}>
                   <div style={{ width: 42, textAlign: "center", fontSize: 22, fontWeight: 900 }}>{r.place ? (r.place <= 3 ? ["🥇", "🥈", "🥉"][r.place - 1] : r.place) : "–"}</div>
@@ -5334,71 +5468,116 @@ ${html}</body></html>`);
         );
 
         // ── my challenge (athletes; hosts too if they join) ──
+        const canJoin = c.status === "open" && phase !== "ended" && phase !== "unset";
         const myPanel = !currentUser ? (
-          <div style={rowStyle()}>Sign in to sign up and log your runs.</div>
+          <div style={rowStyle()}>Sign in to sign up and log your {goal ? "miles" : "runs"}.</div>
         ) : !me ? (() => {
-          const canJoin = c.status === "open" && phase !== "ended" && phase !== "unset";
           const nm0 = [userProfile && userProfile.firstName, userProfile && userProfile.lastName].filter(Boolean).join(" ") || (userProfile && userProfile.displayName) || "";
+          const dv = joinDiv || (divs.length === 1 ? divs[0].id : null);
           return (
             <div style={rowStyle(TM.warn)}>
-              <div style={{ fontSize: 20, fontWeight: 900 }}>Join the challenge</div>
-              <div style={TM_CAPTION}>{chDay(c.startAt)} – {chDay(c.endAt)} · {(CH_SPORTS.find(s => s[0] === c.sport) || CH_SPORTS[0])[1]} · most {unit === "km" ? "kilometres" : "miles"} wins</div>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>Join {c.name || "the challenge"}</div>
+              <div style={TM_CAPTION}>{chDay(c.startAt)} – {chDay(c.endAt)} · {goal ? "finish your distances at your own pace — indoors or out, in as many sessions as you like" : `${(CH_SPORTS.find(s => s[0] === c.sport) || CH_SPORTS[0])[1]} · most ${unit === "km" ? "kilometres" : "miles"} wins`}</div>
+              {c.regLink && <a href={c.regLink} target="_blank" rel="noopener" style={{ display: "block", ...btnStyle(TM.ink, true), textAlign: "center", textDecoration: "none", marginTop: 10, lineHeight: "40px" }}>1 · Register & pay ↗</a>}
               {canJoin ? (
-                <form onSubmit={e => { e.preventDefault(); const v = e.target.elements.nm.value; if (v.trim()) signUp(v); }} style={{ marginTop: 10 }}>
+                <form onSubmit={e => { e.preventDefault(); const v = e.target.elements; if (v.nm.value.trim()) signUp({ name: v.nm.value, division: dv, pledge: v.pledge ? v.pledge.value : "" }); }} style={{ marginTop: 10 }}>
+                  {goal && divs.length > 1 && (<>
+                    <div style={TM_LABEL}>Choose your challenge</div>
+                    {divs.map(d => (
+                      <button type="button" key={d.id} onClick={() => setJoinDiv(d.id)} aria-pressed={dv === d.id}
+                        style={{ ...btnStyle(TM.ink, dv !== d.id), width: "100%", minHeight: 60, marginBottom: 6, display: "block", textAlign: "left", padding: "8px 14px" }}>
+                        <span style={{ display: "block", fontWeight: 900 }}>{d.name}</span>
+                        <span style={{ display: "block", fontSize: 14, fontWeight: 700 }}>{goalsLine(d)}</span>
+                      </button>
+                    ))}
+                  </>)}
                   <label style={TM_LABEL}>Your name (as it shows on the standings)</label>
                   <input name="nm" defaultValue={nm0} required maxLength={60} style={{ ...inputS, width: "100%" }} />
-                  <button type="submit" style={{ ...btnStyle(TM.warn), width: "100%", marginTop: 10 }}>Sign up & get my bib →</button>
+                  {c.prompt && (<>
+                    <label style={{ ...TM_LABEL, marginTop: 10 }}>{c.prompt}</label>
+                    <input name="pledge" maxLength={140} placeholder="…finish what I start" style={{ ...inputS, width: "100%" }} />
+                  </>)}
+                  <button type="submit" style={{ ...btnStyle(TM.warn), width: "100%", marginTop: 10 }}>{c.regLink ? "2 · " : ""}Sign up & get my bib →</button>
+                  {msg && <div role="status" style={{ fontWeight: 800, marginTop: 8 }}>{msg}</div>}
                 </form>
               ) : <div style={{ marginTop: 8, fontWeight: 700 }}>{phase === "ended" ? "This challenge has finished." : "Sign-ups aren't open yet."}</div>}
             </div>
           );
         })() : (
           <div>
-            <div style={{ ...rowStyle(TM.warn), display: "flex", alignItems: "center", gap: 14 }}>
+            {themeBox}
+            <div style={{ ...rowStyle(me.finished ? TM.run : TM.warn), display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ textAlign: "center", minWidth: 90 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: 1.2 }}>BIB</div>
                 <div style={{ fontSize: 46, fontWeight: 900, lineHeight: 1 }}>{me.bib}</div>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 18, fontWeight: 900, overflowWrap: "anywhere" }}>{me.name}</div>
-                <div style={{ fontSize: 26, fontWeight: 900 }}>{chFmt(me.total, unit)}</div>
-                <div style={TM_CAPTION}>{me.place ? `${chOrd(me.place)} of ${rows.length}` : "No distance yet"} · {me.entries.length} {me.entries.length === 1 ? "activity" : "activities"}</div>
+                {goal ? (<>
+                  <div style={TM_CAPTION}>{me.division && me.division.name}</div>
+                  <div style={{ fontSize: 26, fontWeight: 900, color: me.finished ? TM.run : TM.ink }}>{me.finished ? "✓ Finisher!" : Math.floor(me.pct * 100) + "% complete"}</div>
+                </>) : (<>
+                  <div style={{ fontSize: 26, fontWeight: 900 }}>{chFmt(me.total, unit)}</div>
+                  <div style={TM_CAPTION}>{me.place ? `${chOrd(me.place)} of ${rows.length}` : "No distance yet"} · {me.entries.length} {me.entries.length === 1 ? "activity" : "activities"}</div>
+                </>)}
               </div>
             </div>
+            {goal && me.division && (
+              <div style={{ ...rowStyle(), marginTop: 8 }}>
+                {sports.filter(s => +(me.division.goals || {})[s] > 0).map(s => (
+                  <ChBar key={s} value={me.bySport[s] || 0} goal={+me.division.goals[s] * per} colour={CH_KIND[s].colour} label={`${CH_KIND[s].icon} ${CH_KIND[s].label}`} unit={unit} />
+                ))}
+              </div>
+            )}
+            {me.pledge && <div style={{ ...rowStyle(), marginTop: 8, fontStyle: "italic" }}>“{c.prompt ? c.prompt.replace(/_+\.?\s*$/, "").replace(/\.\.\.$|…$/, "") : "I believe I can"} <b>{me.pledge}</b>”</div>}
             <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
               <button onClick={async () => chSaveOrShare(await drawChallengeBib(c, me), `${c.name || "Challenge"} bib ${me.bib}`, false)} style={{ ...btnStyle(TM.ink, true), minHeight: 42, flex: 1 }}>⬇ Save bib</button>
               <button onClick={async () => chPrintImage(await drawChallengeBib(c, me), `Bib ${me.bib}`)} style={{ ...btnStyle(TM.ink, true), minHeight: 42, flex: 1 }}>🖨 Print bib</button>
-              {phase === "ended" && <button onClick={async () => chSaveOrShare(await drawChallengeCert(c, me, rows.filter(r => r.total > 0).length), `${me.name} - ${c.name || "Challenge"}`, true)}
+              {(goal ? me.finished : phase === "ended") && <button onClick={async () => chSaveOrShare(await drawChallengeCert(c, me, rows.filter(r => r.total > 0).length), `${me.name} - ${c.name || "Challenge"}`, true)}
                 style={{ ...btnStyle(TM.warn), minHeight: 42, flex: "1 1 100%" }}>🏅 My certificate</button>}
+              {goal && me.finished && <button onClick={async () => chSaveOrShare(await drawChallengeBadge(c, me), `${me.name} - finisher badge`, true)}
+                style={{ ...btnStyle(TM.ink), minHeight: 42, flex: "1 1 100%" }}>📣 Share my finisher badge</button>}
             </div>
 
             {phase === "on" && !run && !entry && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
-                <button onClick={() => setEntry({ dist: "", date: new Date().toLocaleDateString("en-CA"), time: "", src: "garmin" })} style={{ ...btnStyle(TM.ink), minHeight: 56 }}>📝 Add a run from my watch or app</button>
-                <button id="ch-start-run" onClick={startRun} style={{ ...btnStyle(TM.run), minHeight: 56 }}>📍 Run now with this phone's GPS</button>
+                <button onClick={() => setEntry({ dist: "", date: new Date().toLocaleDateString("en-CA"), time: "", src: "garmin", sport: sports[sports.length - 1], du: "" })} style={{ ...btnStyle(TM.ink), minHeight: 56 }}>📝 Add {goal ? "an activity" : "a run"} from my watch or app</button>
+                <button id="ch-start-run" onClick={() => startRun("run")} style={{ ...btnStyle(TM.run), minHeight: 56 }}>📍 Run now with this phone's GPS</button>
+                {goal && sports.includes("bike") && <button onClick={() => startRun("bike")} style={{ ...btnStyle(TM.bike), minHeight: 56 }}>🚴 Ride now with this phone's GPS</button>}
               </div>
             )}
-            {phase === "before" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>You're in! Runs count from {chDay(c.startAt)} 12:00 AM.</div>}
-            {phase === "ended" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>The challenge is over — no more runs can be added.</div>}
+            {phase === "before" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>You're in! Activities count from {chDay(c.startAt)} 12:00 AM.</div>}
+            {phase === "ended" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>The challenge is over — no more activities can be added.{goal && me.pledge ? " Look back at your pledge above — what did you prove?" : ""}</div>}
 
             {run && (
-              <div style={{ ...rowStyle(TM.run), marginTop: 14, textAlign: "center" }}>
-                <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2 }}>● RECORDING</div>
+              <div style={{ ...rowStyle(run.sport === "bike" ? TM.bike : TM.run), marginTop: 14, textAlign: "center" }}>
+                <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2 }}>● RECORDING {run.sport === "bike" ? "RIDE" : "RUN"}</div>
                 <div style={{ fontSize: 54, fontWeight: 900, lineHeight: 1.1 }}>{chDist(run.m, unit).toFixed(2)}<span style={{ fontSize: 22 }}> {unit}</span></div>
                 <div style={{ fontSize: 22, fontWeight: 800 }}>{chDur(now - run.start)}</div>
                 <div style={TM_CAPTION}>{run.acc != null ? `GPS ±${Math.round(run.acc)} m` : "Finding GPS…"} · keep this screen open</div>
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   <button onClick={() => stopRun(true)} style={{ ...btnStyle(TM.run), flex: 2, minHeight: 56 }}>■ Finish & save</button>
-                  <button onClick={() => { if (confirm("Throw this run away?")) stopRun(false); }} style={{ ...btnStyle(TM.ink, true), flex: 1, minHeight: 56 }}>Discard</button>
+                  <button onClick={() => { if (confirm("Throw this away?")) stopRun(false); }} style={{ ...btnStyle(TM.ink, true), flex: 1, minHeight: 56 }}>Discard</button>
                 </div>
               </div>
             )}
             {entry && (
               <form onSubmit={e => { e.preventDefault(); saveEntry(entry); }} style={{ ...rowStyle(), marginTop: 14 }}>
-                <div style={{ fontSize: 18, fontWeight: 900 }}>Add a run</div>
+                <div style={{ fontSize: 18, fontWeight: 900 }}>Add {goal ? "an activity" : "a run"}</div>
+                {goal && (
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    {sports.map(s => <button type="button" key={s} onClick={() => setEntry({ ...entry, sport: s, du: s === "swim" ? (entry.du || "yd") : "" })} aria-pressed={entry.sport === s}
+                      style={{ ...btnStyle(CH_KIND[s].colour, entry.sport !== s), flex: 1, minHeight: 46 }}>{CH_KIND[s].icon} {CH_KIND[s].label}</button>)}
+                  </div>
+                )}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                  <label style={{ flex: "1 1 120px" }}><span style={TM_LABEL}>Distance ({unit})</span>
-                    <input value={entry.dist} onChange={e => setEntry({ ...entry, dist: e.target.value })} inputMode="decimal" placeholder={unit === "km" ? "e.g. 8.2" : "e.g. 5.1"} required style={{ ...inputS, width: "100%" }} /></label>
+                  <label style={{ flex: "1 1 120px" }}><span style={TM_LABEL}>Distance</span>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <input value={entry.dist} onChange={e => setEntry({ ...entry, dist: e.target.value })} inputMode="decimal" placeholder={entry.sport === "swim" ? "e.g. 1650" : unit === "km" ? "e.g. 8.2" : "e.g. 5.1"} required style={{ ...inputS, width: "100%", minWidth: 0 }} />
+                      <select value={entry.du || unit} onChange={e => setEntry({ ...entry, du: e.target.value })} aria-label="Unit" style={{ ...inputS, width: 74, padding: "0 4px" }}>
+                        {(entry.sport === "swim" ? ["yd", "m", unit] : [unit]).filter((x, i, a) => a.indexOf(x) === i).map(u => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    </div></label>
                   <label style={{ flex: "1 1 140px" }}><span style={TM_LABEL}>Date</span>
                     <input type="date" value={entry.date} min={c.startDate} max={new Date(Math.min(Date.now(), c.endAt)).toLocaleDateString("en-CA")} onChange={e => setEntry({ ...entry, date: e.target.value })} style={{ ...inputS, width: "100%" }} /></label>
                   <label style={{ flex: "1 1 120px" }}><span style={TM_LABEL}>Time (optional)</span>
@@ -5407,7 +5586,7 @@ ${html}</body></html>`);
                     <select value={entry.src} onChange={e => setEntry({ ...entry, src: e.target.value })} style={{ ...inputS, width: "100%" }}>{CH_SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
                 </div>
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <button type="submit" style={{ ...btnStyle(TM.ink), flex: 2 }}>Save run</button>
+                  <button type="submit" style={{ ...btnStyle(TM.ink), flex: 2 }}>Save</button>
                   <button type="button" onClick={() => setEntry(null)} style={{ ...btnStyle(TM.ink, true), flex: 1 }}>Cancel</button>
                 </div>
               </form>
@@ -5420,7 +5599,7 @@ ${html}</body></html>`);
                 {[...me.entries].sort((a, b) => b.at - a.at).map(x => (
                   <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${TM.line}` }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 800 }}>{chFmt(x.m, unit)}{x.dur ? ` · ${chDur(x.dur)}` : ""}</div>
+                      <div style={{ fontWeight: 800 }}>{goal ? CH_KIND[x.sport].icon + " " : ""}{chFmt(x.m, unit)}{goal && x.sport === "swim" ? ` (${Math.round(x.m / 0.9144)} yd)` : ""}{x.dur ? ` · ${chDur(x.dur)}` : ""}</div>
                       <div style={TM_CAPTION}>{chDay(x.at)} · {CH_SRC_LABEL[x.src] || "Other"}</div>
                     </div>
                     {phase === "on" && <button onClick={() => { if (confirm("Remove this activity?")) ref.child(`entrants/${currentUser.uid}/entries/${x.id}`).remove().catch(e => setMsg(e.message)); }}
@@ -5434,7 +5613,7 @@ ${html}</body></html>`);
               {watchTok ? (<>
                 <div style={{ fontSize: 15, margin: "4px 0" }}>On the watch open <b>Timeathon</b>, press START and enter this code once:</div>
                 <div style={{ fontSize: 38, fontWeight: 900, letterSpacing: 6, textAlign: "center" }}>{watchTok}</div>
-                <div style={TM_CAPTION}>After that, START on the watch begins a run. Hold UP → Finish & save adds it here (and saves it to Garmin Connect). Out of phone range? It sends when you're back. Using another app's run screen instead? Add that run with “Add a run”.</div>
+                <div style={TM_CAPTION}>After that, START on the watch begins a run. Hold UP → Finish & save adds it here (and saves it to Garmin Connect). Out of phone range? It sends when you're back.{goal ? " The watch logs runs — add swims and rides with “Add an activity”." : " Using another app's run screen instead? Add that run with “Add a run”."}</div>
               </>) : (<>
                 <div style={TM_CAPTION}>Run with the free Timeathon app on your Garmin and your runs land here by themselves.</div>
                 <button onClick={async () => {
@@ -5456,6 +5635,7 @@ ${html}</body></html>`);
 
         // ── host setup ──
         const setDates = (sd, ed) => { const b = chBounds(sd, ed); ref.update({ startDate: sd || null, endDate: ed || null, startAt: b.startAt, endAt: b.endAt }).catch(e => setMsg(e.message)); };
+        const themesArr = (Array.isArray(c.themes) ? c.themes : Object.values(c.themes || {})).filter(Boolean);
         const setupTab = (
           <div>
             <label style={TM_LABEL}>Challenge name</label>
@@ -5469,16 +5649,59 @@ ${html}</body></html>`);
                 <label><span style={{ fontSize: 14, fontWeight: 700 }}>Ends (11:59 PM)</span><br />
                   <input type="date" value={c.endDate || ""} min={c.startDate || undefined} onChange={e => setDates(c.startDate, e.target.value)} style={inputS} /></label>
               </div>
-              <div style={TM_CAPTION}>Runs can only be added between these times. After the end nothing more can be added, and certificates unlock.</div>
+              <div style={TM_CAPTION}>Activities can only be added between these times. After the end nothing more can be added.</div>
             </div>
             <div style={{ ...rowStyle(), marginBottom: 12 }}>
-              <div style={TM_LABEL}>What counts</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {CH_SPORTS.map(([k, l]) => <button key={k} onClick={() => set("sport", k)} aria-pressed={(c.sport || "run") === k} style={{ ...btnStyle(TM.ink, (c.sport || "run") !== k), minHeight: 42, padding: "0 12px", fontSize: 15 }}>{l}</button>)}
+              <div style={TM_LABEL}>Format</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[["distance", "Most distance wins"], ["goal", "Finish a set distance"]].map(([k, l]) => (
+                  <button key={k} onClick={() => ref.update(k === "goal" && !divs.length ? { format: k, sports: ["swim", "bike", "run"], divisions: CH_DIV_PRESETS } : { format: k })} aria-pressed={(c.format || "distance") === k}
+                    style={{ ...btnStyle(TM.ink, (c.format || "distance") !== k), minHeight: 44, flex: 1, fontSize: 15 }}>{l}</button>
+                ))}
               </div>
-              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              {goal ? (<>
+                <div style={{ ...TM_LABEL, marginTop: 10 }}>Sports</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["swim", "bike", "run"].map(s => { const on = sports.includes(s); return (
+                    <button key={s} onClick={() => { const n = on ? sports.filter(x => x !== s) : [...sports, s].sort((a, b) => ["swim", "bike", "run"].indexOf(a) - ["swim", "bike", "run"].indexOf(b)); if (n.length) set("sports", n); }}
+                      aria-pressed={on} style={{ ...btnStyle(CH_KIND[s].colour, !on), flex: 1, minHeight: 42 }}>{CH_KIND[s].icon} {CH_KIND[s].label}</button>); })}
+                </div>
+                <div style={{ ...TM_LABEL, marginTop: 10 }}>Divisions — athletes pick one</div>
+                {divs.map((d, i) => (
+                  <div key={d.id || i} style={{ border: `2px solid ${TM.line}`, borderRadius: 6, padding: 8, marginBottom: 6 }}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input defaultValue={d.name} onBlur={e => set(`divisions/${i}/name`, e.target.value.trim() || "Division")} style={{ ...inputS, flex: 1, minWidth: 0 }} />
+                      {divs.length > 1 && <button onClick={() => set("divisions", divs.filter((_, j) => j !== i))} aria-label="Remove division" style={{ ...btnStyle(TM.live, true), width: 44, padding: 0 }}>×</button>}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      {sports.map(s => (
+                        <label key={s} style={{ flex: 1 }}><span style={{ fontSize: 13, fontWeight: 800, color: CH_KIND[s].colour }}>{CH_KIND[s].label} ({unit})</span>
+                          <input defaultValue={(d.goals || {})[s] || ""} inputMode="decimal" onBlur={e => set(`divisions/${i}/goals/${s}`, Math.max(0, parseFloat(e.target.value) || 0))} style={{ ...inputS, width: "100%" }} /></label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <button onClick={() => set("divisions", [...divs, { id: "d" + Date.now().toString(36), name: "New division", goals: {} }])} style={{ ...btnStyle(TM.ink, true), minHeight: 40, fontSize: 15 }}>+ Division</button>
+              </>) : (<>
+                <div style={{ ...TM_LABEL, marginTop: 10 }}>What counts</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {CH_SPORTS.map(([k, l]) => <button key={k} onClick={() => set("sport", k)} aria-pressed={(c.sport || "run") === k} style={{ ...btnStyle(TM.ink, (c.sport || "run") !== k), minHeight: 42, padding: "0 12px", fontSize: 15 }}>{l}</button>)}
+                </div>
+              </>)}
+              <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
                 {[["mi", "Miles"], ["km", "Kilometres"]].map(([k, l]) => <button key={k} onClick={() => set("unit", k)} aria-pressed={unit === k} style={{ ...btnStyle(TM.ink, unit !== k), minHeight: 42, padding: "0 12px", fontSize: 15, flex: 1 }}>{l}</button>)}
               </div>
+            </div>
+            <div style={{ ...rowStyle(), marginBottom: 12 }}>
+              <div style={TM_LABEL}>Sign-up extras</div>
+              <label style={{ fontSize: 14, fontWeight: 700 }}>Pledge question (optional)</label>
+              <input defaultValue={c.prompt || ""} placeholder="If I commit to consistent movement for 31 days, I believe I can ___" onBlur={e => set("prompt", e.target.value.trim() || null)} style={{ ...inputS, width: "100%" }} />
+              <label style={{ fontSize: 14, fontWeight: 700, display: "block", marginTop: 8 }}>Registration / payment link (optional)</label>
+              <input defaultValue={c.regLink || ""} placeholder="https://…" onBlur={e => { const v = e.target.value.trim(); set("regLink", /^https?:\/\//.test(v) ? v : null); }} style={{ ...inputS, width: "100%" }} />
+              <div style={TM_CAPTION}>Shown as step 1 on the sign-up card. Payment happens there; Timeathon doesn't check it.</div>
+              <label style={{ fontSize: 14, fontWeight: 700, display: "block", marginTop: 8 }}>Weekly themes (one per line — week 1 first)</label>
+              <textarea defaultValue={themesArr.join("\n")} rows={4} placeholder={"Week 1: Establish Your Baseline\nWeek 2: Build the Formula"} onBlur={e => set("themes", e.target.value.split("\n").map(x => x.trim()).filter(Boolean))}
+                style={{ ...inputS, width: "100%", padding: 10, minHeight: 100, fontFamily: "inherit" }} />
             </div>
             <div style={{ ...rowStyle(TM.warn), marginBottom: 12 }}>
               <div style={TM_LABEL}>Sign-ups</div>
@@ -5492,16 +5715,17 @@ ${html}</body></html>`);
                   try { await navigator.clipboard.writeText(url); setMsg("Link copied: " + url); } catch (_) { setMsg(url); }
                 }} style={{ ...btnStyle(TM.ink, true), minHeight: 46 }}>📤 Share link</button>
               </div>
-              <div style={TM_CAPTION}>Everyone who signs up gets the next bib number, to save or print. While open, the challenge is listed in Today's races.</div>
+              <div style={TM_CAPTION}>Everyone who signs up gets the next bib number, to save or print. While open, the challenge is listed for athletes on the home screen.</div>
             </div>
             {msg && <div role="status" style={{ fontWeight: 800, margin: "8px 0" }}>{msg}</div>}
-            <div style={TM_LABEL}>Entrants ({rows.length})</div>
+            <div style={TM_LABEL}>Entrants ({rows.length}){goal ? ` · ${finishers.length} finished` : ""}</div>
             {rows.map(r => (
               <details key={r.uid} style={{ ...rowStyle(), marginBottom: 6, padding: "8px 12px" }}>
-                <summary style={{ cursor: "pointer", fontWeight: 800 }}>#{r.bib} {r.name} · {chFmt(r.total, unit)} · {r.entries.length} activities</summary>
+                <summary style={{ cursor: "pointer", fontWeight: 800 }}>#{r.bib} {r.name} · {goal ? `${r.division && r.division.name} · ${r.finished ? "finished" : Math.floor(r.pct * 100) + "%"}` : chFmt(r.total, unit)} · {r.entries.length} activities</summary>
+                {r.pledge && <div style={{ ...TM_CAPTION, fontStyle: "italic", padding: "4px 0" }}>Pledge: {r.pledge}</div>}
                 {[...r.entries].sort((a, b) => b.at - a.at).map(x => (
                   <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: `1px solid ${TM.line}` }}>
-                    <div style={{ flex: 1, fontSize: 15 }}>{chFmt(x.m, unit)}{x.dur ? ` · ${chDur(x.dur)}` : ""} · {chDay(x.at)} · {CH_SRC_LABEL[x.src] || "Other"}</div>
+                    <div style={{ flex: 1, fontSize: 15 }}>{goal ? CH_KIND[x.sport].label + " " : ""}{chFmt(x.m, unit)}{x.dur ? ` · ${chDur(x.dur)}` : ""} · {chDay(x.at)} · {CH_SRC_LABEL[x.src] || "Other"}</div>
                     <button onClick={() => { if (confirm(`Remove ${chFmt(x.m, unit)} from ${r.name}?`)) ref.child(`entrants/${r.uid}/entries/${x.id}`).remove().catch(e => setMsg(e.message)); }}
                       style={{ ...btnStyle(TM.live, true), minHeight: 34, padding: "0 10px", fontSize: 14 }}>Remove</button>
                   </div>
@@ -5513,14 +5737,14 @@ ${html}</body></html>`);
           </div>
         );
 
-        const tabs = isHost ? [["setup", "Setup"], ["standings", "Standings"], ["me", "My runs"]] : [["me", "My challenge"], ["standings", "Standings"]];
+        const tabs = isHost ? [["setup", "Setup"], ["standings", goal ? "Progress" : "Standings"], ["me", goal ? "Mine" : "My runs"]] : [["me", "My challenge"], ["standings", goal ? "Progress" : "Standings"]];
         return (
           <div style={{ padding: "0 16px 60px", maxWidth: 640, margin: "0 auto" }}>
             <button onClick={onBack} style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>← {isHost ? "My races" : "Back"}</button>
             <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: TM.warn, marginTop: 12 }}>CHALLENGE</div>
             <h1 style={{ ...TM_DISPLAY, marginTop: 2, fontSize: 34 }}>{c.name || "Challenge"}</h1>
             <div style={{ fontWeight: 800, color: phase === "on" ? TM.run : TM.inkMuted }}>{phaseLine}</div>
-            <div style={TM_CAPTION}>{(CH_SPORTS.find(s => s[0] === c.sport) || CH_SPORTS[0])[1]} · most {unit === "km" ? "kilometres" : "miles"} wins · {rows.length} {rows.length === 1 ? "entrant" : "entrants"}</div>
+            <div style={TM_CAPTION}>{goal ? divs.map(d => d.name).join(" or ") : `${(CH_SPORTS.find(s => s[0] === c.sport) || CH_SPORTS[0])[1]} · most ${unit === "km" ? "kilometres" : "miles"} wins`} · {rows.length} {rows.length === 1 ? "entrant" : "entrants"}</div>
             <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
               {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ ...btnStyle(TM.ink, tab !== k), minHeight: 42, padding: "0 6px", fontSize: 15, flex: 1 }}>{l}</button>)}
             </div>
@@ -13251,14 +13475,14 @@ ${html}</body></html>`);
                             <button onClick={() => openChallenge(code)} style={{ display: "block", width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: TM.ink }}>
                               <div style={{ fontSize: 20, fontWeight: 900 }}>{c.name || "Challenge"}</div>
                               <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 28, fontWeight: 900 }}>{chFmt(me.total, c.unit)}</span>
-                                <span style={{ fontWeight: 800 }}>{me.place ? `${chOrd(me.place)} of ${count}` : "No distance yet"} · bib #{me.bib}</span>
+                                <span style={{ fontSize: 28, fontWeight: 900, color: me.finished ? TM.run : TM.ink }}>{chIsGoal(c) ? (me.finished ? "✓ Finisher" : Math.floor(me.pct * 100) + "%") : chFmt(me.total, c.unit)}</span>
+                                <span style={{ fontWeight: 800 }}>{chIsGoal(c) ? (me.division && me.division.name) : me.place ? `${chOrd(me.place)} of ${count}` : "No distance yet"} · bib #{me.bib}</span>
                               </div>
                             </button>
                             {on && (
                               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                                 <button onClick={() => openChallenge(code, "run")} style={{ ...btnStyle(TM.run), flex: 1, minHeight: 52 }}>▶ Track my run</button>
-                                <button onClick={() => openChallenge(code, "add")} style={{ ...btnStyle(TM.ink, true), flex: 1, minHeight: 52 }}>+ Add a run</button>
+                                <button onClick={() => openChallenge(code, "add")} style={{ ...btnStyle(TM.ink, true), flex: 1, minHeight: 52 }}>+ {chIsGoal(c) ? "Add activity" : "Add a run"}</button>
                               </div>
                             )}
                             {over && <button onClick={() => openChallenge(code)} style={{ ...btnStyle(TM.warn), width: "100%", minHeight: 46, marginTop: 10 }}>🏅 Results & my certificate</button>}
