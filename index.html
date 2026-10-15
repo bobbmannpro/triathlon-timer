@@ -5161,7 +5161,9 @@ ${html}</body></html>`);
           if (goal) {
             const div = divs.find(d => d.id === e.division) || divs[0] || { goals: {} };
             row.division = div;
-            const g = s => (+((div.goals || {})[s]) || 0) * per;
+            // targets in metres, less 10 m: entries are stored in whole metres, so
+            // logging exactly "13.1 mi" must still count as done
+            const g = s => Math.max(0, (+((div.goals || {})[s]) || 0) * per - 10);
             const parts = sports.filter(s => g(s) > 0);
             row.pct = parts.length ? parts.reduce((t, s) => t + Math.min(1, bySport[s] / g(s)), 0) / parts.length : 0;
             row.finished = parts.length > 0 && parts.every(s => bySport[s] >= g(s));
@@ -5264,7 +5266,7 @@ ${html}</body></html>`);
         w.document.close();
       }
       function ChBar({ value, goal, colour, label, unit }) {
-        const pct = goal > 0 ? Math.min(1, value / goal) : 0;
+        const pct = goal > 0 ? Math.min(1, (value + 10) / goal) : 0;
         return (
           <div style={{ marginTop: 6 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800 }}>
@@ -5447,7 +5449,7 @@ ${html}</body></html>`);
                   <div style={TM_CAPTION}>{r.division && r.division.name}{r.finished && r.finishedAt ? ` · finished ${chDay(r.finishedAt)}` : ""}{r.live ? " · ● out now" : ""}</div>
                   <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
                     {sports.filter(s => +((r.division && r.division.goals) || {})[s] > 0).map(s => {
-                      const g2 = +r.division.goals[s] * per, p = Math.min(1, (r.bySport[s] || 0) / g2);
+                      const g2 = +r.division.goals[s] * per, p = Math.min(1, ((r.bySport[s] || 0) + 10) / g2);
                       return <div key={s} title={CH_KIND[s].label} style={{ flex: 1, height: 8, background: TM.bgAlt, borderRadius: 4, overflow: "hidden" }}><div style={{ width: (p * 100) + "%", height: "100%", background: CH_KIND[s].colour }} /></div>;
                     })}
                   </div>
