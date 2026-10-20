@@ -101,7 +101,7 @@
       "$code": {
         ".read": "auth != null",
         ".write": "auth != null && (data.exists() ? data.child('ownerUid').val() === auth.uid : newData.child('ownerUid').val() === auth.uid)",
-        ".validate": "!newData.exists() || (newData.child('ownerUid').val() === auth.uid && newData.hasChildren(['name']))",
+        ".validate": "!newData.exists() || ((newData.child('ownerUid').val() === auth.uid || (data.exists() && newData.child('ownerUid').val() === data.child('ownerUid').val())) && newData.hasChildren(['name']))",
         "shared": {
           "$uid": {
             ".write": "auth != null && auth.uid === $uid && root.child('photoAlbums').child($code).child('open').val() === true",
