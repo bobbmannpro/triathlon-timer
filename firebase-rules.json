@@ -101,7 +101,15 @@
       "$code": {
         ".read": "auth != null",
         ".write": "auth != null && (data.exists() ? data.child('ownerUid').val() === auth.uid : newData.child('ownerUid').val() === auth.uid)",
-        ".validate": "!newData.exists() || (newData.child('ownerUid').val() === auth.uid && newData.hasChildren(['name']))"
+        ".validate": "!newData.exists() || (newData.child('ownerUid').val() === auth.uid && newData.hasChildren(['name']))",
+        "shared": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('photoAlbums').child($code).child('open').val() === true",
+            "$id": {
+              ".validate": "!newData.exists() || (newData.child('u').isString() && newData.child('t').isString() && newData.child('p').isString() && newData.child('p').val().beginsWith('albums/' + $uid + '/') && newData.child('n').isString() && (!newData.child('by').exists() || (newData.child('by').isString() && newData.child('by').val().length <= 60)))"
+            }
+          }
+        }
       }
     },
     "bikeFeeds": {

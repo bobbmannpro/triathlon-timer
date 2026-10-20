@@ -979,8 +979,16 @@
       // An album's photos in name order (1, 2, … 10), from the stored list.
       function albumPhotoList(photos) {
         if (Array.isArray(photos)) return photos;   // older albums kept an array
-        return Object.entries(photos || {}).map(([id, ph]) => ({ id, name: ph.n, thumb: ph.t, url: ph.u, path: ph.p, w: ph.w, h: ph.h }))
+        return Object.entries(photos || {}).map(([id, ph]) => ({ id, name: ph.n, thumb: ph.t, url: ph.u, path: ph.p, w: ph.w, h: ph.h, by: ph.by || null }))
           .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" }));
+      }
+      // Photos athletes and spectators added themselves: shared/{uid}/{id}. Newest first.
+      function sharedPhotoList(shared) {
+        const out = [];
+        Object.entries(shared || {}).forEach(([uid, by]) => Object.entries(by || {}).forEach(([id, ph]) => {
+          if (ph && ph.u) out.push({ id, uid, name: ph.n, thumb: ph.t, url: ph.u, path: ph.p, w: ph.w, h: ph.h, by: ph.by || null, who: ph.who || "", at: ph.at || 0, shared: true });
+        }));
+        return out.sort((a, b) => b.at - a.at);
       }
 
       // A row of split chips, wrapping; the newest last.
@@ -5287,7 +5295,7 @@ ${html}</body></html>`);
         );
       }
 
-      function Challenge({ code, viewer, currentUser, userProfile, onBack, action }) {
+      function Challenge({ code, viewer, currentUser, userProfile, onBack, action, onPhotos }) {
         const [c, setC] = React.useState(undefined);
         const [tab, setTab] = React.useState(viewer ? "me" : "setup");
         const [msg, setMsg] = React.useState("");
@@ -5309,6 +5317,15 @@ ${html}</body></html>`);
           if (!currentUser) return;
           rtdb.ref("users/" + currentUser.uid + "/challengeWatch/" + code).once("value").then(sn => { if (sn.val()) setWatchTok(String(sn.val())); }).catch(() => {});
         }, [code, currentUser && currentUser.uid]);
+        // The challenge's photo album (code = the challenge code) — made once by the host, open to everyone in it.
+        React.useEffect(() => {
+          if (viewer || !c || !currentUser || c.hostUid !== currentUser.uid) return;
+          rtdb.ref("photoAlbums/" + code).once("value").then(sn => {
+            if (sn.exists()) { if (sn.val().name !== c.name && c.name) sn.ref.update({ name: c.name, raceName: c.name }).catch(() => {}); return; }
+            return rtdb.ref("photoAlbums/" + code).set({ name: c.name || "Challenge", raceName: c.name || "Challenge", ownerUid: currentUser.uid, kind: "challenge", open: true, sid: newPhotoCode(12), updatedAt: Date.now() })
+              .then(() => rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code).set({ name: c.name || "Challenge", sid: code, count: 0, createdAt: Date.now() }));
+          }).catch(() => {});
+        }, [!!c, c && c.name, currentUser && currentUser.uid]);
         // listed in Today's races while open (host's screen keeps it current)
         const dirKey = viewer || !c ? "" : [c.status, c.name, c.startAt, c.endAt].join("|");
         React.useEffect(() => {
@@ -5756,6 +5773,7 @@ ${html}</body></html>`);
             <div style={TM_CAPTION}>{goal ? divs.map(d => d.name).join(" or ") : `${(CH_SPORTS.find(s => s[0] === c.sport) || CH_SPORTS[0])[1]} · most ${unit === "km" ? "kilometres" : "miles"} wins`} · {rows.length} {rows.length === 1 ? "entrant" : "entrants"}</div>
             <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
               {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ ...btnStyle(TM.ink, tab !== k), minHeight: 42, padding: "0 6px", fontSize: 15, flex: 1 }}>{l}</button>)}
+              {onPhotos && currentUser && <button onClick={() => onPhotos(code)} style={{ ...btnStyle(TM.swim, true), minHeight: 42, padding: "0 10px", fontSize: 15 }}>📷</button>}
             </div>
             {tab === "setup" && isHost && setupTab}
             {tab === "me" && myPanel}
@@ -9653,6 +9671,8 @@ ${html}</body></html>`);
         }
         function attachAlbumToRace(race, code) {
           stampRacePhotoCode(race, code);
+          // the album learns the race's code, so people can tag photos with the roster's names
+          if (code && race && race.code) rtdb.ref("photoAlbums/" + code + "/raceCode").set(race.code).catch(() => {});
           persistRaces(savedRaces.map(r => r.id === race.id ? { ...r, photoCode: code || null } : r));
           const ids = resultsForRace(race).map(a => a.id);
           if (ids.length) persistArchiveUpdate(savedArchive.map(a => ids.includes(a.id) ? { ...a, photoCode: code || null } : a));
@@ -9759,7 +9779,7 @@ ${html}</body></html>`);
             const existing = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val());
             if (existing && existing.ownerUid !== currentUser.uid) throw new Error("That code is already used for another album. Tap New code.");
             const name = (d.name || "").trim() || (folder && folder.name) || "Race photos";
-            await rtdb.ref("photoAlbums/" + code).set({ name, raceName: name, folderId: id, ownerUid: currentUser.uid, updatedAt: Date.now() });
+            await rtdb.ref("photoAlbums/" + code).set({ name, raceName: name, folderId: id, ownerUid: currentUser.uid, updatedAt: Date.now(), open: false });
             if (d.editing && d.editing !== code) {
               await rtdb.ref("photoAlbums/" + d.editing).remove().catch(() => {});
               await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + d.editing).remove().catch(() => {});
@@ -9785,8 +9805,9 @@ ${html}</body></html>`);
           const old = d.editing && d.editing !== code
             ? await rtdb.ref("photoAlbums/" + d.editing).once("value").then(sn => sn.val()) : existing;
           const name = (d.name || "").trim() || "Race photos";
-          const rec = { name, raceName: name, ownerUid: currentUser.uid, updatedAt: Date.now(),
-            sid: (old && old.sid) || newPhotoCode(12), photos: (old && !old.folderId && old.photos) || null };
+          const rec = { name, raceName: name, ownerUid: currentUser.uid, updatedAt: Date.now(), open: d.open !== false,
+            sid: (old && old.sid) || newPhotoCode(12), photos: (old && !old.folderId && old.photos) || null,
+            shared: (old && old.shared) || null, raceCode: (old && old.raceCode) || null, kind: (old && old.kind) || null };
           await rtdb.ref("photoAlbums/" + code).set(rec);
           if (d.editing && d.editing !== code) {
             await rtdb.ref("photoAlbums/" + d.editing).remove().catch(() => {});
@@ -9849,10 +9870,47 @@ ${html}</body></html>`);
           setHostAlbums(a => a[code] ? { ...a, [code]: { ...a[code], count } } : a);
           setAlbumUpload({ ...st, failed: [...st.failed], finished: true, added, count });
         }
+        // Anyone signed in adds photos to an open album, under their own name, tagged
+        // with the athlete they're of (so a parent can pull up just their kid).
+        const [sharedUpload, setSharedUpload] = useState(null);   // { done, total, failed }
+        async function addSharedPhotos(code, fileList, by) {
+          if (!currentUser || !fileList || !fileList.length) return;
+          const files = Array.from(fileList).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name)).slice(0, 40);
+          const who = (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || currentUser.email || "";
+          const st = { done: 0, total: files.length, failed: 0 };
+          setSharedUpload({ ...st });
+          const base = "albums/" + currentUser.uid + "/" + code + "/";
+          const meta = { contentType: "image/jpeg", cacheControl: "public, max-age=31536000" };
+          const added = [];
+          let next = 0;
+          async function worker() {
+            while (next < files.length) {
+              const f = files[next++];
+              try {
+                const id = newPhotoCode(10);
+                const big = await shrinkPhoto(f, PHOTO_BIG, 0.86);
+                const small = await shrinkPhoto(f, PHOTO_THUMB, 0.72);
+                const bigRef = storage.ref(base + id + ".jpg"), smallRef = storage.ref(base + id + "_t.jpg");
+                await bigRef.put(big.blob, meta);
+                await smallRef.put(small.blob, meta);
+                const [u, t] = await Promise.all([bigRef.getDownloadURL(), smallRef.getDownloadURL()]);
+                const rec = { n: f.name, u, t, p: base + id, w: big.w, h: big.h, at: Date.now(), by: by || null, who };
+                await rtdb.ref("photoAlbums/" + code + "/shared/" + currentUser.uid + "/" + id).set(rec);
+                added.push({ id, uid: currentUser.uid, name: f.name, thumb: t, url: u, path: base + id, w: big.w, h: big.h, by: by || null, who, at: rec.at, shared: true });
+              } catch (e) { console.warn("Shared photo failed:", f.name, e); st.failed++; }
+              st.done++;
+              setSharedUpload({ ...st });
+            }
+          }
+          await Promise.all([worker(), worker()]);
+          setViewPhotoAlbum(p => p && p.code === code ? { ...p, photos: [...added, ...p.photos], names: by && !p.names.includes(by) ? [...p.names, by].sort((a, b) => a.localeCompare(b)) : p.names } : p);
+          setTimeout(() => setSharedUpload(null), 4000);
+        }
         async function deleteAlbumPhoto(code, ph) {
           if (!currentUser || !ph || !ph.path) return;
           await Promise.all([storage.ref(ph.path + ".jpg").delete(), storage.ref(ph.path + "_t.jpg").delete()].map(pr => pr.catch(() => {})));
-          await rtdb.ref("photoAlbums/" + code + "/photos/" + ph.id).remove();
+          if (ph.shared) await rtdb.ref("photoAlbums/" + code + "/shared/" + ph.uid + "/" + ph.id).remove();
+          else await rtdb.ref("photoAlbums/" + code + "/photos/" + ph.id).remove();
           setViewPhotoAlbum(p => {
             if (!p) return p;
             const photos = p.photos.filter(x => x.id !== ph.id);
@@ -9880,7 +9938,7 @@ ${html}</body></html>`);
         }
         function openAlbumEditor(fields) {
           setAlbumMsg(null);
-          setAlbumDraft({ name: "", link: "", code: newPhotoCode(), raceId: null, editing: null, ...fields });
+          setAlbumDraft({ name: "", link: "", code: newPhotoCode(), raceId: null, editing: null, open: true, ...fields });
           setView("photos");
         }
 
@@ -9911,8 +9969,16 @@ ${html}</body></html>`);
               setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos, drive: true, lightboxIdx: null, loading: false, error: null });
               return;
             }
-            setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos: albumPhotoList(data.photos),
-              mine: data.ownerUid === currentUser.uid, lightboxIdx: null, loading: false, error: null });
+            // names to tag photos with: the race's roster or the challenge's entrants, plus tags already used
+            let names = [];
+            try {
+              if (data.kind === "challenge") { const e = (await rtdb.ref("challenges/" + trimmedCode + "/entrants").once("value")).val() || {}; names = Object.values(e).map(x => x && x.name).filter(Boolean); }
+              else if (data.raceCode) { const a = (await rtdb.ref("liveRaces/" + data.raceCode + "/athletes").once("value")).val() || []; names = asList(a).map(x => x && (x.name || [x.firstName, x.lastName].filter(Boolean).join(" "))).filter(Boolean); }
+            } catch (_) {}
+            const photos = [...sharedPhotoList(data.shared), ...albumPhotoList(data.photos)];
+            photos.forEach(ph => { if (ph.by && !names.includes(ph.by)) names.push(ph.by); });
+            setViewPhotoAlbum({ code: trimmedCode, raceName: data.name || data.raceName || trimmedCode, photos, open: data.open === true,
+              names: names.sort((a, b) => a.localeCompare(b)), tag: "", mine: data.ownerUid === currentUser.uid, lightboxIdx: null, loading: false, error: null });
           } catch(e) {
             setViewPhotoAlbum(function(p) { return p ? Object.assign({}, p, { loading: false, error: (e && e.message && /Drive/.test(e.message)) ? e.message : "Could not load photos. Check your connection and try again." }) : p; });
           }
@@ -15615,6 +15681,12 @@ Start a new race anyway?`)) return;
                           </div>
                           <div style={{ ...TM_CAPTION, marginTop: 6 }}>At least 6 letters or numbers, so nobody can guess their way into the photos.</div>
                         </div>
+                        {!d.link && (
+                          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>
+                            <input type="checkbox" checked={d.open !== false} onChange={e => setAlbumDraft(x => ({ ...x, open: e.target.checked }))} style={{ width: 22, height: 22 }} />
+                            Let athletes and spectators add their own photos
+                          </label>
+                        )}
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button onClick={saveAlbum} disabled={albumBusy} style={{ ...btnStyle(TM.ink), flex: "1 1 160px", opacity: albumBusy ? 0.6 : 1 }}>
                             {albumBusy ? "Saving…" : d.link ? "Check folder & save" : "Save album"}
@@ -15676,6 +15748,10 @@ Start a new race anyway?`)) return;
                               )}
                               <button onClick={() => openAlbumEditor({ name: a.name, link: a.folderId ? "https://drive.google.com/drive/folders/" + a.folderId : "", code, raceId: a.raceId || null, editing: code })}
                                 style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>Edit</button>
+                              {!a.folderId && (
+                                <button onClick={async () => { const cur = (await rtdb.ref("photoAlbums/" + code + "/open").once("value")).val() === true; await rtdb.ref("photoAlbums/" + code + "/open").set(!cur).catch(() => {}); setAlbumMsg({ ok: true, text: !cur ? `“${a.name}” is open — athletes and spectators can add photos.` : `“${a.name}” is closed — only you can add photos.` }); }}
+                                  style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15 }}>👥 Open / close for everyone</button>
+                              )}
                               {a.folderId && (
                                 <a href={"https://drive.google.com/drive/folders/" + a.folderId} target="_blank" rel="noopener noreferrer"
                                   style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 14px", fontSize: 15, display: "inline-flex", alignItems: "center", textDecoration: "none" }}>Open in Drive</a>
@@ -19096,19 +19172,53 @@ Start a new race anyway?`)) return;
                       style={{ ...btnStyle(TM.ink), display: "inline-flex", alignItems: "center", textDecoration: "none", padding: "0 22px" }}>Open the photos →</a>
                     <div style={{ ...TM_CAPTION, maxWidth: 320 }}>Tap a photo there, then ⋮ → Download to save it to your phone.</div>
                   </div>
-                ) : viewPhotoAlbum.photos.length === 0 ? (
-                  <div style={{ textAlign: "center", color: "#3D434B", padding: 40, fontSize: 14 }}>No photos in this album.</div>
-                ) : (
+                ) : (() => {
+                  const va = viewPhotoAlbum;
+                  const canAdd = va.open && currentUser && !va.drive;
+                  const tagOf = f => f.by || "";
+                  const shown = va.tag ? va.photos.filter(f => va.tag === "__none" ? !f.by : tagOf(f) === va.tag) : va.photos;
+                  const addBox = canAdd && (
+                    <div style={{ ...rowStyle(TM.swim), marginBottom: 10 }}>
+                      <div style={{ fontSize: 16, fontWeight: 900 }}>📷 Add your photos</div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+                        <label style={{ fontSize: 14, fontWeight: 700 }}>Who's in them?
+                          <input list="ph-names" value={va.tagNew || ""} onChange={e => setViewPhotoAlbum(p => ({ ...p, tagNew: e.target.value }))} placeholder="Athlete's name (optional)"
+                            style={{ display: "block", minHeight: 42, fontSize: 16, padding: "0 10px", border: `2px solid ${TM.line}`, borderRadius: 6, width: 220, maxWidth: "100%" }} />
+                          <datalist id="ph-names">{va.names.map(n => <option key={n} value={n} />)}</datalist>
+                        </label>
+                        <label style={{ ...btnStyle(TM.swim), minHeight: 46, padding: "0 16px", display: "inline-flex", alignItems: "center", opacity: sharedUpload ? 0.5 : 1, pointerEvents: sharedUpload ? "none" : "auto" }}>
+                          + Choose photos
+                          <input type="file" accept="image/*" multiple style={{ display: "none" }}
+                            onChange={e => { const fl = Array.from(e.target.files || []); e.target.value = ""; addSharedPhotos(va.code, fl, (va.tagNew || "").trim().slice(0, 60)); }} />
+                        </label>
+                      </div>
+                      {sharedUpload && <div role="status" style={{ fontSize: 15, fontWeight: 700, marginTop: 6 }}>{sharedUpload.done < sharedUpload.total ? `Uploading ${sharedUpload.done} of ${sharedUpload.total}… keep this open.` : `✓ Added ${sharedUpload.total - sharedUpload.failed} photo${sharedUpload.total - sharedUpload.failed === 1 ? "" : "s"}.`}{sharedUpload.failed ? ` ${sharedUpload.failed} failed.` : ""}</div>}
+                      <div style={{ ...TM_CAPTION, marginTop: 4 }}>Everyone with this album's code can see what you add. Up to 40 at a time.</div>
+                    </div>
+                  );
+                  const chips = va.names.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                      {[["", "Everyone"], ...va.names.map(n => [n, n]), ["__none", "Untagged"]].map(([v, l]) => (
+                        <button key={v} onClick={() => setViewPhotoAlbum(p => ({ ...p, tag: v }))} aria-pressed={va.tag === v}
+                          style={{ ...btnStyle(TM.ink, va.tag !== v), minHeight: 36, padding: "0 12px", fontSize: 14 }}>{l}{v && v !== "__none" ? ` (${va.photos.filter(f => f.by === v).length})` : ""}</button>
+                      ))}
+                    </div>
+                  );
+                  if (va.photos.length === 0) return (<>{addBox}<div style={{ textAlign: "center", color: "#3D434B", padding: 40, fontSize: 14 }}>No photos in this album yet.</div></>);
+                  return (
                   <>
-                    {viewPhotoAlbum.drive ? (
+                    {addBox}
+                    {chips}
+                    {va.drive ? (
                       <div style={{ ...TM_CAPTION, marginBottom: 8 }}>Tap a photo to see it full size; ↓ saves it to your phone.</div>
                     ) : <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                      <button onClick={() => downloadAllPhotos(viewPhotoAlbum.photos)} style={{ ...btnStyle("#0B3FCC", true), padding: "6px 16px", fontSize: 14 }}>&#8595; Download All ({viewPhotoAlbum.photos.length})</button>
+                      <button onClick={() => downloadAllPhotos(shown)} style={{ ...btnStyle("#0B3FCC", true), padding: "6px 16px", fontSize: 14 }}>&#8595; Download All ({shown.length})</button>
                     </div>}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
-                      {viewPhotoAlbum.photos.map((f, idx) => (
+                      {shown.map((f, idx) => (
                         <div key={f.id || f.name} style={{ position: "relative" }}>
-                          <div onClick={() => setViewPhotoAlbum(p => ({ ...p, lightboxIdx: idx }))}
+                          {(f.by || f.shared) && <div style={{ position: "absolute", top: 4, left: 4, right: 44, background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontSize: 12, fontWeight: 700, borderRadius: 4, padding: "2px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", pointerEvents: "none" }}>{f.by || (f.who ? "from " + f.who : "")}</div>}
+                          <div onClick={() => setViewPhotoAlbum(p => ({ ...p, lightboxIdx: p.photos.indexOf(f) }))}
                             style={{ aspectRatio: "1", borderRadius: 6, overflow: "hidden", cursor: "pointer", background: "#EFEDE8" }}>
                             <img src={f.thumb || f.url} alt={f.name} loading="lazy" referrerPolicy="no-referrer"
                               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
@@ -19119,7 +19229,8 @@ Start a new race anyway?`)) return;
                       ))}
                     </div>
                   </>
-                )}
+                  );
+                })()}
               </div>
 
               {/* Lightbox */}
@@ -19139,7 +19250,7 @@ Start a new race anyway?`)) return;
                       <button onClick={e => { e.stopPropagation(); setViewPhotoAlbum(p => ({ ...p, lightboxIdx: p.lightboxIdx + 1 })); }}
                         style={{ position: "absolute", right: 12, background: "#EFEDE8", border: "none", color: "#0B0D10", fontSize: 32, cursor: "pointer", borderRadius: "50%", width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center" }}>&#8250;</button>
                     )}
-                    {viewPhotoAlbum.mine && vf.path && (
+                    {(viewPhotoAlbum.mine || (vf.shared && currentUser && vf.uid === currentUser.uid)) && vf.path && (
                       <button onClick={e => { e.stopPropagation(); if (window.confirm("Delete this photo from the album?")) deleteAlbumPhoto(viewPhotoAlbum.code, vf); }}
                         style={{ position: "absolute", bottom: 14, left: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 6, color: "#B3001B", fontSize: 14, padding: "6px 14px", cursor: "pointer", zIndex: 1 }}>Delete photo</button>
                     )}
@@ -21106,7 +21217,7 @@ Start a new race anyway?`)) return;
             })()}
 
             {view === "challenge" && chCode && (
-              <Challenge code={chCode} viewer={chViewer || !isHost} currentUser={currentUser} userProfile={userProfile} action={chAction}
+              <Challenge code={chCode} viewer={chViewer || !isHost} currentUser={currentUser} userProfile={userProfile} action={chAction} onPhotos={loadPhotosByCode}
                 onBack={() => { setChCode(null); setChAction(null); setView(roleLanding(effectiveRole)); }} />
             )}
             {view === "timed" && timedCode && (
