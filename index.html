@@ -6055,6 +6055,7 @@ ${html}</body></html>`);
           r.on("value", fn, () => {});
           return () => r.off("value", fn);
         }, [currentUser && currentUser.uid]);
+        const [homeKind, setHomeKind] = useState(null);          // My races: one kind's page (null = all kinds)
         const [pastOpen, setPastOpen] = useState(false);
         const [closeCurConfirm, setCloseCurConfirm] = useState(false);   // My races: closing the race in progress         // My races → Past races list
         const [whenEdit, setWhenEdit] = useState(null);          // { key, date, time, lead } — date editor open on a card
@@ -14404,7 +14405,7 @@ Start a new race anyway?`)) return;
                     <button onClick={() => setWhenEdit(whenEdit && whenEdit.key === r.key ? null : { key: r.key, date: r.when.date || "", time: r.when.time || "", lead: r.when.lead })}
                       aria-expanded={!!(whenEdit && whenEdit.key === r.key)}
                       style={{ ...chipBtn, color: r.startsAt ? TM.ink : TM.swim, borderColor: r.startsAt ? TM.ink : TM.swim }}>📅 {r.startsAt ? eventWhenLabel(r.startsAt) : "Set date & time"}</button>
-                    <button onClick={() => r.setPast(!r.isPast)} style={chipBtn}>{r.isPast ? "↩ Back to saved races" : "Move to past races"}</button>
+                    <button onClick={() => r.setPast(!r.isPast)} style={chipBtn}>{r.isPast ? "↩ Back to in the works" : "Move to past"}</button>
                   </div>
                   {whenEdit && whenEdit.key === r.key && (
                     <div style={{ ...rowStyle(TM.swim), marginTop: 8 }}>
@@ -14487,57 +14488,36 @@ Start a new race anyway?`)) return;
                             )}
                           </div>
                 );
-                if (pastOpen) return (
-                  <div>
-                    <button onClick={() => setPastOpen(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 44, marginTop: 8 }}>← My races</button>
-                    <h1 style={{ ...TM_DISPLAY, marginTop: 14 }}>Past races</h1>
-                    <div style={{ ...TM_CAPTION, marginBottom: 14 }}>Races whose day has gone by, or that you moved here. Open, copy or re-date any of them — a new date brings it back to Saved races.</div>
-                    {pastList.length === 0
-                      ? <div style={{ ...rowStyle(), ...TM_CAPTION }}>No past races yet.</div>
-                      : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{pastList.map(renderCard)}</div>}
-                  </div>
-                );
                 const inProgress = raceInitialized && appMode !== "swim" && appMode !== "bike";
-                return (
-                  <div>
-                    <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
-
-                    <button onClick={() => { setNewRaceKind("triathlon"); setNewRaceName(""); setNewRaceCode(friendlyCode()); setView("newrace"); }}
-                      style={{ ...bleed, marginTop: 20, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
-                               minHeight: 96, padding: "22px 24px", background: TM.ink, color: "#FFFFFF", border: "none",
-                               borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
-                      <span style={{ fontWeight: 900, fontSize: 34, lineHeight: 1 }}>+</span>
-                      <span style={{ flex: 1 }}>
-                        <span style={{ display: "block", fontWeight: 900, fontSize: 27, textTransform: "uppercase", letterSpacing: -0.4 }}>New race</span>
-                        <span style={{ display: "block", fontWeight: 600, fontSize: 15, marginTop: 4 }}>Triathlon, swim meet, bike or run, challenge</span>
-                      </span>
-                      <ArrowIcon />
-                    </button>
-
-                    {inProgress && closeCurConfirm && (
-                      <div role="alertdialog" style={{ ...bleed, padding: "16px 24px", background: TM.bgAlt }}>
-                        <div style={{ fontSize: 17, fontWeight: 800 }}>Close “{saveRaceName || certConfig.eventName || "Current race"}”?</div>
-                        <div style={{ ...TM_CAPTION, margin: "4px 0 10px" }}>{liveRaceCode ? "It stops being live. Times already logged stay in its results; " : ""}{loadedRaceId ? "It stays in your saved races — open it again any time." : "It was never saved, so its setup goes."}</div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={() => { if (liveRaceCode) endLiveRace(liveRaceCode); clearRace(); setCloseCurConfirm(false); }}
-                            style={{ ...btnStyle(TM.live), minHeight: 46, flex: 1 }}>Close race</button>
-                          <button onClick={() => setCloseCurConfirm(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 46, flex: 1 }}>Keep it</button>
-                        </div>
+                const curName = saveRaceName || certConfig.eventName || "Current race";
+                // the race on screen right now, if it's one of this kind
+                const curKind = inProgress ? "triathlon" : null;
+                const kindOrder = ["triathlon", "swim", "bike", "timed", "challenge"];
+                const KIND_BLURB = { triathlon: "Swim, bike, run · splits, GPS, certificates", swim: "Events, heats, lane timers, team scores",
+                                     bike: "Live map of a ride or a run", timed: "Set time per leg, most distance wins", challenge: "Most miles in a month · bibs & standings" };
+                const byKind = k => ({ up: upcoming.filter(r => r.kind === k), past: pastList.filter(r => r.kind === k) });
+                const liveBar = inProgress && (
+                  closeCurConfirm ? (
+                    <div role="alertdialog" style={{ ...bleed, padding: "16px 24px", background: TM.bgAlt }}>
+                      <div style={{ fontSize: 17, fontWeight: 800 }}>Close “{curName}”?</div>
+                      <div style={{ ...TM_CAPTION, margin: "4px 0 10px" }}>{liveRaceCode ? "It stops being live. Times already logged stay in its results; " : ""}{loadedRaceId ? "It stays in your saved races — open it again any time." : "It was never saved, so its setup goes."}</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => { if (liveRaceCode) endLiveRace(liveRaceCode); clearRace(); setCloseCurConfirm(false); }}
+                          style={{ ...btnStyle(TM.live), minHeight: 46, flex: 1 }}>Close race</button>
+                        <button onClick={() => setCloseCurConfirm(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 46, flex: 1 }}>Keep it</button>
                       </div>
-                    )}
-                    {inProgress && !closeCurConfirm && (
-                      <div style={{ ...bleed, position: "relative" }}>
+                    </div>
+                  ) : (
+                    <div style={{ ...bleed, position: "relative" }}>
                       <button onClick={() => setView(clockStarted ? "race" : "setup")}
                         style={{ width: "100%", display: "flex", alignItems: "center", gap: 16,
                                  minHeight: 80, padding: "18px 48px 18px 24px", background: clockRunning ? TM.live : TM.bgAlt,
                                  color: clockRunning ? "#FFFFFF" : TM.ink, border: "none", borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
                         <span style={{ flex: 1 }}>
                           <span style={{ display: "block", fontWeight: 800, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase" }}>
-                            {clockRunning ? "● Live now" : liveRaceCode ? `● Live · ${liveRaceCode}` : "In progress"}
+                            {clockRunning ? "● Live now" : liveRaceCode ? `● Live · ${liveRaceCode}` : "Open now · triathlon"}
                           </span>
-                          <span style={{ display: "block", fontWeight: 900, fontSize: 22, textTransform: "uppercase", marginTop: 2, overflowWrap: "anywhere" }}>
-                            {saveRaceName || certConfig.eventName || "Current race"}
-                          </span>
+                          <span style={{ display: "block", fontWeight: 900, fontSize: 22, textTransform: "uppercase", marginTop: 2, overflowWrap: "anywhere" }}>{curName}</span>
                         </span>
                         <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44, padding: "0 16px", borderRadius: 6, fontWeight: 900, fontSize: 17,
                                        background: clockRunning ? "#FFFFFF" : TM.ink, color: clockRunning ? TM.live : "#FFFFFF" }}>Resume →</span>
@@ -14545,93 +14525,105 @@ Start a new race anyway?`)) return;
                       <button onClick={() => setCloseCurConfirm(true)} aria-label="Close this race"
                         style={{ position: "absolute", top: 4, right: 6, width: 36, height: 36, border: "none", background: "transparent",
                                  color: clockRunning ? "#FFFFFF" : TM.ink, fontSize: 22, fontWeight: 900, cursor: "pointer" }}>×</button>
-                      </div>
-                    )}
-
-                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>Saved races</h2>
-                    {upcoming.length === 0 ? (
-                      <div style={{ ...rowStyle(), ...TM_CAPTION }}>No races in the works. Start a new race{pastList.length ? ", or bring one back from Past races" : " — you can save it from Setup"}.</div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                        {upcoming.map(renderCard)}
-                      </div>
-                    )}
-
-                    <button onClick={() => { const m = buildSampleMeet(); openSwim({ ...m, id: undefined }); }}
-                      style={{ ...rowStyle(RACE_KINDS.swim.colour), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink, marginTop: 10 }}>
-                      <span style={{ flex: 1 }}>
-                        <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>🧪 Sample swim meet</span>
-                        <span style={{ display: "block", ...TM_CAPTION }}>16 events, 40 made-up swimmers, heats already seeded — for trying things out</span>
-                      </span>
-                      <ArrowIcon size={24} />
-                    </button>
-
-                    <button onClick={() => { setPastOpen(true); window.scrollTo(0, 0); }}
-                      style={{ ...rowStyle(TM.ink), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 72, cursor: "pointer", textAlign: "left", color: TM.ink, marginTop: 10 }}>
-                      <span style={{ flex: 1 }}>
-                        <span style={{ display: "block", fontSize: 19, fontWeight: 900 }}>🗂 Past races</span>
-                        <span style={{ display: "block", ...TM_CAPTION }}>{pastList.length === 0 ? "None yet" : `${pastList.length} race${pastList.length === 1 ? "" : "s"}`}</span>
-                      </span>
-                      <ArrowIcon size={24} />
-                    </button>
-
-                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>Finished races</h2>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {[
-                        ["triathlon", "Triathlon results", savedArchive.length, () => { selectMode("triathlon"); setView("archive"); }],
-                        ["swim", "Swim meet results", swimArchive.length, () => { selectMode("swim"); setView("swim"); setSwimView("archive"); }],
-                      ].map(([kind, label, n, go]) => (
-                        <button key={kind} onClick={go}
-                          style={{ ...rowStyle(RACE_KINDS[kind].colour), display: "flex", alignItems: "center", gap: 10, width: "100%",
-                                   minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
-                          <span style={{ flex: 1 }}>
-                            <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>{label}</span>
-                            <span style={{ display: "block", ...TM_CAPTION }}>{n === 0 ? "None yet" : `${n} finished`}</span>
-                          </span>
-                          <ArrowIcon size={24} />
-                        </button>
-                      ))}
                     </div>
+                  )
+                );
+                const menuBtn = (label, sub, go, colour, icon) => (
+                  <button key={label} onClick={go}
+                    style={{ ...rowStyle(colour), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
+                    <span style={{ flex: 1 }}>
+                      <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>{icon ? icon + " " : ""}{label}</span>
+                      {sub && <span style={{ display: "block", ...TM_CAPTION }}>{sub}</span>}
+                    </span>
+                    <ArrowIcon size={24} />
+                  </button>
+                );
+                const newOf = k => { setNewRaceKind(k); setNewRaceName(""); setNewRaceCode(friendlyCode()); if (k === "bike") setNewRaceSport("bike"); setView("newrace"); };
 
-                    <h2 style={{ ...TM_H2, marginTop: 30, marginBottom: 12 }}>More</h2>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <button onClick={() => { selectMode("swim"); setView("swim"); setSwimView("files"); }}
-                        style={{ ...rowStyle(RACE_KINDS.swim.colour), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
-                        <span style={{ flex: 1 }}>
-                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>📁 Swim meet import / export</span>
-                          <span style={{ display: "block", ...TM_CAPTION }}>Athletes from Team Manager, events, entries, program, results</span>
-                        </span>
-                        <ArrowIcon size={24} />
+                // ── one kind: new, open now, in the works, past, results, photos, tools ──
+                if (homeKind) {
+                  const k = homeKind, K = RACE_KINDS[k], { up, past } = byKind(k);
+                  const n = x => `${x} race${x === 1 ? "" : "s"}`;
+                  return (
+                    <div>
+                      <button onClick={() => { setHomeKind(null); setPastOpen(false); }} style={{ ...btnStyle(TM.ink, true), minHeight: 44, marginTop: 8 }}>← All races</button>
+                      <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: K.colour, marginTop: 14 }}>{KIND_BLURB[k]}</div>
+                      <h1 style={{ ...TM_DISPLAY, marginTop: 2 }}>{K.label}</h1>
+
+                      <button onClick={() => newOf(k)}
+                        style={{ ...bleed, marginTop: 14, width: "calc(100% + 32px)", display: "flex", alignItems: "center", gap: 16,
+                                 minHeight: 84, padding: "18px 24px", background: K.colour, color: "#FFFFFF", border: "none", borderRadius: 0, cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ fontWeight: 900, fontSize: 34, lineHeight: 1 }}>+</span>
+                        <span style={{ flex: 1, display: "block", fontWeight: 900, fontSize: 24, textTransform: "uppercase", letterSpacing: -0.4 }}>New {k === "bike" ? "ride or run" : K.label.toLowerCase()}</span>
+                        <ArrowIcon />
                       </button>
-                      <button onClick={() => { selectMode("triathlon"); setView("manual"); }}
-                        style={{ ...rowStyle(), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
-                        <span style={{ flex: 1 }}>
-                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>Manual entry</span>
-                          <span style={{ display: "block", ...TM_CAPTION }}>Type in times from a race that already happened</span>
-                        </span>
-                        <ArrowIcon size={24} />
-                      </button>
-                      <button onClick={() => { setAlbumDraft(null); setAlbumMsg(null); setView("photos"); }}
-                        style={{ ...rowStyle(), display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 64, cursor: "pointer", textAlign: "left", color: TM.ink }}>
-                        <span style={{ flex: 1 }}>
-                          <span style={{ display: "block", fontSize: 17, fontWeight: 800 }}>📷 Photo albums</span>
-                          <span style={{ display: "block", ...TM_CAPTION }}>Share race photos with parents by code</span>
-                        </span>
-                        <ArrowIcon size={24} />
-                      </button>
-                      <div style={{ ...rowStyle() }}>
-                        <label htmlFor="photo-code" style={{ ...TM_LABEL }}>View photos by code</label>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <input id="photo-code" value={photoCodeInput}
-                            onChange={e => setPhotoCodeInput(normCode(e.target.value))}
-                            placeholder="Type photo code"
-                            onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
-                            style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
-                                     padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none" }} />
-                          <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
-                            style={{ ...btnStyle(TM.ink), minHeight: 46 }}>View</button>
+                      {curKind === k && liveBar}
+
+                      {pastOpen ? (<>
+                        <h2 style={{ ...TM_H2, marginTop: 26, marginBottom: 4 }}>Past {K.label.toLowerCase()}s</h2>
+                        <div style={{ ...TM_CAPTION, marginBottom: 12 }}>Race day has gone by, or you moved them here. A new date brings one back to In the works.</div>
+                        <button onClick={() => setPastOpen(false)} style={{ ...btnStyle(TM.ink, true), minHeight: 40, marginBottom: 12, fontSize: 15 }}>← Back to current</button>
+                        {past.length === 0 ? <div style={{ ...rowStyle(), ...TM_CAPTION }}>No past {K.label.toLowerCase()}s yet.</div>
+                          : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{past.map(renderCard)}</div>}
+                      </>) : (<>
+                        <h2 style={{ ...TM_H2, marginTop: 26, marginBottom: 4 }}>In the works</h2>
+                        <div style={{ ...TM_CAPTION, marginBottom: 12 }}>Races you're building, testing or about to run. They move to Past once race day has gone by.</div>
+                        {up.length === 0 ? (
+                          <div style={{ ...rowStyle(), ...TM_CAPTION }}>Nothing in the works. Start a new one above{past.length ? ", or bring one back from Past" : ""}.</div>
+                        ) : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{up.map(renderCard)}</div>}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
+                          {menuBtn(`Past ${K.label.toLowerCase()}s`, past.length ? n(past.length) : "None yet", () => { setPastOpen(true); window.scrollTo(0, 0); }, TM.ink, "🗂")}
+                          {k === "triathlon" && menuBtn("Results", savedArchive.length ? `${savedArchive.length} finished` : "None yet", () => { selectMode("triathlon"); setView("archive"); }, K.colour, "📊")}
+                          {k === "swim" && menuBtn("Results", swimArchive.length ? `${swimArchive.length} finished` : "None yet", () => { selectMode("swim"); setView("swim"); setSwimView("archive"); }, K.colour, "📊")}
+                          {(k === "triathlon" || k === "bike" || k === "challenge") && menuBtn("Photo library", "Albums parents and athletes open by code", () => { setAlbumDraft(null); setAlbumMsg(null); setView("photos"); }, K.colour, "📷")}
+                          {k === "swim" && menuBtn("Import / export", "Athletes from Team Manager, events, entries, program, results", () => { selectMode("swim"); setView("swim"); setSwimView("files"); }, K.colour, "📁")}
+                          {k === "swim" && menuBtn("Sample swim meet", "16 events, 40 made-up swimmers, heats seeded — for trying things out", () => { const m = buildSampleMeet(); openSwim({ ...m, id: undefined }); }, K.colour, "🧪")}
+                          {k === "triathlon" && menuBtn("Manual entry", "Type in times from a race that already happened", () => { selectMode("triathlon"); setView("manual"); }, K.colour, "✍")}
                         </div>
-                      </div>
+                        {(k === "triathlon" || k === "bike" || k === "challenge") && (
+                          <div style={{ ...rowStyle(), marginTop: 14 }}>
+                            <label htmlFor="photo-code" style={{ ...TM_LABEL }}>View photos by code</label>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <input id="photo-code" value={photoCodeInput}
+                                onChange={e => setPhotoCodeInput(normCode(e.target.value))}
+                                placeholder="Type photo code"
+                                onKeyDown={e => { if (e.key === "Enter" && photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                                style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6,
+                                         padding: "0 12px", color: TM.ink, fontWeight: 800, letterSpacing: 1.2, outline: "none" }} />
+                              <button onClick={() => { if (photoCodeInput.trim()) loadPhotosByCode(photoCodeInput); }}
+                                style={{ ...btnStyle(TM.ink), minHeight: 46 }}>View</button>
+                            </div>
+                          </div>
+                        )}
+                      </>)}
+                    </div>
+                  );
+                }
+
+                // ── home: one tile per kind ──
+                return (
+                  <div>
+                    <h1 style={{ ...TM_DISPLAY, marginTop: 8 }}>My races</h1>
+                    <div style={{ ...TM_CAPTION, marginTop: 4, marginBottom: 14 }}>Pick a kind of race to build one, run one, or look back.</div>
+                    {liveBar}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: inProgress ? 14 : 0 }}>
+                      {kindOrder.map(k => {
+                        const K = RACE_KINDS[k], { up, past } = byKind(k);
+                        const bits = [];
+                        if (curKind === k) bits.push(clockRunning || liveRaceCode ? "● live now" : "open now");
+                        if (up.length) bits.push(`${up.length} in the works`);
+                        if (past.length) bits.push(`${past.length} past`);
+                        return (
+                          <button key={k} onClick={() => { setHomeKind(k); setPastOpen(false); window.scrollTo(0, 0); }}
+                            style={{ ...rowStyle(K.colour), display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 86, cursor: "pointer", textAlign: "left", color: TM.ink }}>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ display: "block", fontSize: 22, fontWeight: 900, color: K.colour }}>{K.label}</span>
+                              <span style={{ display: "block", fontSize: 15, fontWeight: 700 }}>{bits.length ? bits.join(" · ") : KIND_BLURB[k]}</span>
+                            </span>
+                            <ArrowIcon />
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );
