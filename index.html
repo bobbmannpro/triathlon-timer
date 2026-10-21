@@ -2604,9 +2604,10 @@
       // Connection lights. Each side writes a heartbeat (server time) every
       // second; the other side shows green only while the latest heartbeat is
       // under HEARTBEAT_STALE_MS old by the shared clock, re-checked 4× a
-      // second — so a dropped phone or host goes grey within ~2 s on both ends,
-      // even on the side that lost signal and can't hear anything.
-      const HEARTBEAT_STALE_MS = 2200;
+      // second — so a dropped phone or host goes grey within ~3.5 s on both ends,
+      // even on the side that lost signal and can't hear anything. One late
+      // beat (a busy phone, a slow write) doesn't flip the light.
+      const HEARTBEAT_STALE_MS = 3500;
       SERVER_CLOCK.connected = false;
       try { rtdb.ref(".info/connected").on("value", sn => { SERVER_CLOCK.connected = !!sn.val(); }); } catch (_) {}
       function heartbeatFresh(at) { return !!at && SERVER_CLOCK.connected && serverNow() - at < HEARTBEAT_STALE_MS; }
@@ -2633,7 +2634,10 @@
           if (!best || rtt < best.rtt) best = { rtt, off: v - (t0 + t1) / 2 };
         }
         ref.remove().catch(() => {});
-        SERVER_CLOCK.offset = best.off; SERVER_CLOCK.err = Math.max(1, Math.round(best.rtt / 2)); SERVER_CLOCK.synced = Date.now();
+        const err = Math.max(1, Math.round(best.rtt / 2));
+        // A re-sync on a slow moment must not replace a tighter recent fix.
+        const keepOld = SERVER_CLOCK.synced && Date.now() - SERVER_CLOCK.synced < 15 * 60000 && SERVER_CLOCK.err && SERVER_CLOCK.err < err;
+        if (!keepOld) { SERVER_CLOCK.offset = best.off; SERVER_CLOCK.err = err; SERVER_CLOCK.synced = Date.now(); }
         return SERVER_CLOCK.err;
       }
       // When an input actually happened (finger down, key down), in epoch ms —
@@ -6976,6 +6980,11 @@ ${html}</body></html>`);
         const [swimEditEvt, setSwimEditEvt] = useState(null);      // eventNum being edited
         const [swimEditForm, setSwimEditForm] = useState(null);   // { ok, text } after importing/exporting a meet file
         const [swimResultsEvent, setSwimResultsEvent] = useState(null);
+        // Results tab opens on the latest event that has a time in it, so the host sees something straight away.
+        const swimAutoResultsEvent = (() => {
+          const done = (swimMeet.events || []).filter(ev => (ev.heats || []).some(h => (h.lanes || []).some(l => l.finalMs != null)));
+          return done.length ? done[done.length - 1].eventNum : null;
+        })();
         const [swimResultsTab, setSwimResultsTab] = useState("results"); // "results" | "scores"
         const [swimAddEventOpen, setSwimAddEventOpen] = useState(false);
         const [swimNewEvent, setSwimNewEvent] = useState({ gender:"Girls", ageGroup:"Open", distance:100, stroke:"Freestyle", heats:1, lanes:8 });
@@ -8744,7 +8753,11 @@ ${html}</body></html>`);
 
         async function openRegistration() {
           if (!currentUser) return;
-          if (!loadedRaceId) { setShowSaveBeforeReg(true); return; }
+          if (!loadedRaceId) {
+            // Named in step 1 → just save it and open; only ask when there's no name yet.
+            if ((saveRaceName || "").trim()) { await saveAndOpenRegistration(saveRaceName); return; }
+            setShowSaveBeforeReg(true); return;
+          }
           // The code chosen in step 1, saved with the race so it sticks.
           const code = customRaceCode || registrationCode || generateRaceCode();
           forwardOldCode(registrationCode, code);
@@ -18651,7 +18664,7 @@ Start a new race anyway?`)) return;
                                         const kb = keiserBikes[b] || {}, ped = fresh(b) && kb.cadence > 0;
                                         return (
                                           <label key={b} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700 }}>
-                                            <span style={{ width: 150, flexShrink: 0 }}>{ped ? `🟢 ${kb.cadence} rpm` : "⚪ not moving"}</span>
+                                            <span style={{ width: 190, flexShrink: 0 }}>{bikeName(b)} · {ped ? `🟢 ${kb.cadence} rpm` : "⚪ still"}</span>
                                             <input key={"pn" + b} defaultValue={bikeNames[b] || ""} placeholder="Bike number" onChange={e => setBikeName(b, e.target.value)}
                                               onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                                               style={{ flex: 1, minWidth: 0, minHeight: 40, fontSize: 16, padding: "0 10px", border: "2px solid #C9C5BC", borderRadius: 6 }} />
@@ -20388,7 +20401,10 @@ Start a new race anyway?`)) return;
                               {!swimLiveCode ? (
                                 <button style={{ ...btnStyle("#04613F"), fontSize:14, padding:"8px 20px" }} onClick={async () => {
                                   const savedMeet = swimSavedMeets.find(m => m.id === swimMeet._id);
-                                  if (!swimMeet._id || !savedMeet) { setSwimSaveBeforeName(n => n || swimMeet.meetName || ""); setSwimShowSaveBefore(true); return; }
+                                  if (!swimMeet._id || !savedMeet) {
+                                    if ((swimMeet.meetName || "").trim()) { saveAndStartLiveSession(swimMeet.meetName); return; }
+                                    setSwimSaveBeforeName(n => n || swimMeet.meetName || ""); setSwimShowSaveBefore(true); return;
+                                  }
                                   const code = savedMeet.code || swimMeet.code || generateSwimCode();
                                   // swimLive is writable by any signed-in user, so never
                                   // take over a code another host's meet is using.
@@ -20531,10 +20547,10 @@ Start a new race anyway?`)) return;
                           <div style={{ textAlign:"center", padding:"40px 0", color:"#3D434B" }}>No events. Import or create events in Setup.</div>
                         ) : (
                           <div>
-                            {/* Event selector */}
+                            {/* Event selector — opens on the latest event with times in it */}
                             <div style={S.card}>
                               <div style={S.label}>Select Event</div>
-                              <select value={swimResultsEvent || ""} onChange={e => setSwimResultsEvent(parseInt(e.target.value))}
+                              <select value={swimResultsEvent || swimAutoResultsEvent || ""} onChange={e => setSwimResultsEvent(parseInt(e.target.value))}
                                 style={{...S.input}}>
                                 <option value="">-- choose event --</option>
                                 {swimMeet.events.map(ev => (
@@ -20574,8 +20590,8 @@ Start a new race anyway?`)) return;
                             })()}
 
                             {swimResultsTab === "results" && (() => {
-                              const selEv = resultEvents(swimMeet.events).find(e => e.eventNum === swimResultsEvent);
-                              if (!selEv) return <div style={{ color:"#3D434B", textAlign:"center", padding:24 }}>Select an event above to view results.</div>;
+                              const selEv = resultEvents(swimMeet.events).find(e => e.eventNum === (swimResultsEvent || swimAutoResultsEvent));
+                              if (!selEv) return <div style={{ color:"#3D434B", textAlign:"center", padding:24 }}>No times yet — pick an event above once a heat has been swum.</div>;
 
                               const allSwimmers = selEv.heats.flatMap(h => h.lanes.map(sw => ({...sw, heatNum: h.heatNum})));
                               const finishers = allSwimmers.filter(s => s.finalMs != null && !s.dq && !s.scratch).sort((a,b) => a.finalMs - b.finalMs);
@@ -21014,13 +21030,15 @@ Start a new race anyway?`)) return;
                 setSwimLaneSession(null);
                 setSwimLaneConnecting(true);
                 const ref = rtdb.ref(`swimLive/${code}`);
+                let had = false;
                 const fn = snap => {
                   setSwimLaneConnecting(false);
                   if (!snap.exists()) {
                     setSwimLaneSession(null);
-                    setSwimLaneError("Code not found. Check with the host.");
+                    setSwimLaneError(had ? "The host ended the live session. Thanks for timing!" : "Code not found. Check with the host.");
                     return;
                   }
+                  had = true;
                   setSwimLaneError("");
                   setSwimLaneSession(snap.val());
                 };
