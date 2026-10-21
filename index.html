@@ -4676,13 +4676,16 @@ ${html}</body></html>`);
         }, [code]);
         // Listed in Today's races while sign-ups are open or it's live.
         const firstWave = (race && ttList(race.waves)[0]) || {};
-        const dirKey = viewer || !race ? "" : [race.status, race.name, race.date, firstWave.time, race.liveLeadMin, race.listed].join("|");
+        // Over once every wave has run its last leg: drops out of Today's races and the header says finished.
+        const ttOver = !!race && (() => { const ws = ttList(race.waves).length ? ttList(race.waves) : [{}]; const n = Date.now() + (TT_BT.offset || 0);
+          return ws.length > 0 && ws.every((_, w) => { const st = ttWaveState(race, w, n); return st.started && st.done; }); })();
+        const dirKey = viewer || !race ? "" : [race.status, race.name, race.date, firstWave.time, race.liveLeadMin, race.listed, ttOver].join("|");
         React.useEffect(() => {
           if (viewer || !race || !currentUser || race.hostUid !== currentUser.uid) return;
           const wi = eventWhen(race.date, firstWave.time, race.liveLeadMin);
           rtdb.ref("users/" + currentUser.uid + "/timedRaces/" + code).update({ name: race.name || "Timed Tri", date: race.date || null, time: firstWave.time || null,
             lead: race.liveLeadMin == null ? null : race.liveLeadMin, startsAt: wi.startsAt }).catch(() => {});
-          if ((race.status === "signup" || race.status === "live") && race.listed !== false) {
+          if ((race.status === "signup" || race.status === "live") && race.listed !== false && !ttOver) {
             const w = wi;
             rtdb.ref("raceDirectory/" + code).set({ kind: "timed", hostUid: currentUser.uid, name: race.name || "Timed Tri",
               hostName: (userProfile && (userProfile.displayName || [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" "))) || "",
@@ -5140,7 +5143,7 @@ ${html}</body></html>`);
           <div style={{ padding: "0 16px 60px" }}>
             <button onClick={onBack} style={{ ...btnStyle(TM.ink, true), marginTop: 8 }}>← My races</button>
             <h1 style={{ ...TM_DISPLAY, marginTop: 10, fontSize: 34 }}>{race.name || "Timed Tri"}</h1>
-            <div style={TM_CAPTION}>Timed Tri · code {code} · {live ? "● live" : race.status === "signup" ? "sign-ups open" : "hidden"}{race.date ? ` · ${new Date(race.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</div>
+            <div style={TM_CAPTION}>Timed Tri · code {code} · {ttOver && live ? "finished" : live ? "● live" : race.status === "signup" ? "sign-ups open" : "hidden"}{race.date ? ` · ${new Date(race.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</div>
             <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
               {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ ...btnStyle(TM.ink, tab !== k), minHeight: 42, padding: "0 6px", fontSize: 14, flex: 1 }}>{l}</button>)}
             </div>
@@ -5325,9 +5328,10 @@ ${html}</body></html>`);
         );
       }
 
-      function Challenge({ code, viewer, currentUser, userProfile, onBack, action, onPhotos }) {
+      function Challenge({ code, viewer, currentUser, userProfile, onBack, action, onPhotos, role }) {
         const [c, setC] = React.useState(undefined);
-        const [tab, setTab] = React.useState(viewer ? "me" : "setup");
+        // Hosts land on Setup, athletes on their own card, spectators on the standings.
+        const [tab, setTab] = React.useState(viewer ? (role === "spectator" ? "standings" : "me") : "setup");
         const [msg, setMsg] = React.useState("");
         const [find, setFind] = React.useState("");
         const [entry, setEntry] = React.useState(null);        // manual entry form
@@ -21323,7 +21327,7 @@ Start a new race anyway?`)) return;
             })()}
 
             {view === "challenge" && chCode && (
-              <Challenge code={chCode} viewer={chViewer || !isHost} currentUser={currentUser} userProfile={userProfile} action={chAction} onPhotos={loadPhotosByCode}
+              <Challenge code={chCode} viewer={chViewer || !isHost} currentUser={currentUser} userProfile={userProfile} action={chAction} onPhotos={loadPhotosByCode} role={effectiveRole}
                 onBack={() => { setChCode(null); setChAction(null); setView(roleLanding(effectiveRole)); }} />
             )}
             {view === "timed" && timedCode && (
