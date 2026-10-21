@@ -14008,6 +14008,8 @@ Start a new race anyway?`)) return;
             else { try { localStorage.removeItem("tm-watching"); } catch (_) {} }
           }).catch(() => {});
         }, [authLoading, effectiveRole]);
+        // Back on the Watch home by choice (not the first paint) → forget it, so the next refresh stays home.
+        useEffect(() => { if (view === "spectate" && watchResumeRef.current) { try { localStorage.removeItem("tm-watching"); } catch (_) {} } }, [view]);
         const watchLinkRef = useRef(false);
         useEffect(() => {
           if (watchLinkRef.current || authLoading) return;
