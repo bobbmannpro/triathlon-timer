@@ -13412,6 +13412,8 @@ ${html}</body></html>`);
         }
 
         function openRaceAsViewer(kind, c) {
+          // Remembered so a refresh mid-race lands back in the race, not on the Watch home.
+          try { localStorage.setItem("tm-watching", JSON.stringify({ kind, code: c, at: Date.now() })); } catch (_) {}
           if (kind === "timed") { setTimedCode(c); setTimedViewer(true); setView("timed"); return; }
           if (kind === "challenge") { setChCode(c); setChViewer(!(currentUser && chSaved && chSaved[c])); setView("challenge"); return; }
           if (kind === "triathlon") {
@@ -13988,6 +13990,20 @@ Start a new race anyway?`)) return;
           try { const u = new URL(location.href); u.searchParams.delete("timed"); history.replaceState(history.state, "", u.pathname + u.search + u.hash); } catch (_) {}
           setTimedCode(c); setTimedViewer(!(currentUser && timedSaved && timedSaved[c])); setView("timed");
         }, [authLoading]);
+        // Spectator refreshed (or reopened the app) during a race they were watching: go straight back in.
+        const watchResumeRef = useRef(false);
+        useEffect(() => {
+          if (watchResumeRef.current || authLoading || effectiveRole !== "spectator") return;
+          if (/[?&](watch|timed|challenge|bike|host)=/.test(location.search)) return;
+          watchResumeRef.current = true;
+          let w = null; try { w = JSON.parse(localStorage.getItem("tm-watching") || "null"); } catch (_) {}
+          if (!w || !w.code || Date.now() - (w.at || 0) > 8 * 3600e3) return;
+          rtdb.ref("raceDirectory/" + w.code).once("value").then(sn => {
+            const r = sn.val();
+            if (r && r.status === "live" && !(r.liveAt && Date.now() < r.liveAt)) openRaceAsViewer(r.kind || w.kind, w.code);
+            else { try { localStorage.removeItem("tm-watching"); } catch (_) {} }
+          }).catch(() => {});
+        }, [authLoading, effectiveRole]);
         const watchLinkRef = useRef(false);
         useEffect(() => {
           if (watchLinkRef.current || authLoading) return;
