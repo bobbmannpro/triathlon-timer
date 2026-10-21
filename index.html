@@ -1990,6 +1990,7 @@
       function calcSwimPace(ms, dist, unit) {
         if (!ms || !dist || dist <= 0) return null;
         const secsPerHundred = (ms / 1000) / dist * 100;
+        if (secsPerHundred < 35) return null;   // faster than any swimmer: the leg wasn't really swum
         const mins = Math.floor(secsPerHundred / 60);
         const secs = Math.floor(secsPerHundred % 60);
         return `${mins}:${String(secs).padStart(2, "0")} /100${unit === "meters" ? "m" : "y"}`;
@@ -1997,12 +1998,15 @@
 
       function calcBikeMph(ms, dist, unit) {
         if (!ms || !dist || dist <= 0) return null;
-        return `${(dist / (ms / 3600000)).toFixed(1)} ${unit === "km" ? "km/h" : "mph"}`;
+        const v = dist / (ms / 3600000);
+        if (v > (unit === "km" ? 110 : 70)) return null;   // a leg logged in seconds, not a real ride
+        return `${v.toFixed(1)} ${unit === "km" ? "km/h" : "mph"}`;
       }
 
       function calcRunPace(ms, dist, unit) {
         if (!ms || !dist || dist <= 0) return null;
         const ppu = (ms / 60000) / dist;
+        if (ppu < (unit === "km" ? 1.8 : 3)) return null;   // faster than any human: the leg wasn't really run
         const mins = Math.floor(ppu);
         const secs = Math.floor((ppu - mins) * 60);
         return `${mins}:${String(secs).padStart(2, "0")} /${unit === "km" ? "km" : "mi"}`;
@@ -7864,7 +7868,7 @@ ${html}</body></html>`);
                 if (r.started && !na.started && !lp.started) { na = { ...na, started: true, startOffset: r.startOffset ?? na.startOffset }; changed = true; }
                 // a phone that logged the last split finished the race, whether or not its
                 // finished flag survived this screen's own heartbeat
-                if (!na.finished && na.splits[SEGMENTS.length - 1] != null && (r.finished || (lp.splits == null || lp.splits[SEGMENTS.length - 1] == null))) { na = { ...na, finished: true }; changed = true; }
+                if (!na.finished && !na.dnf && na.splits[SEGMENTS.length - 1] != null) { na = { ...na, finished: true }; changed = true; }
                 return na;
               });
               return changed ? next : prev;
@@ -17033,7 +17037,7 @@ Start a new race anyway?`)) return;
                         </div>
                       );
                     })()}
-                    {liveRace && liveRace.status === "live" && (
+                    {liveRace && liveRace.status === "live" && asList(liveRace.courses).some(c => c && (courseHasLaps(c) || c.bikeType === "spin")) && (
                       <>
                         <button onClick={() => startSpectatorCount(liveRace)} disabled={lapGeo.busy}
                           style={{ ...btnStyle(TM.ink), width: "100%", marginBottom: lapGeo.msg ? 8 : 14, opacity: lapGeo.busy ? 0.6 : 1 }}>
