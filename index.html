@@ -4551,6 +4551,8 @@ ${html}</body></html>`);
           </div>
         );
       }
+      // Next bib: one past the highest handed out, so self sign-ups and host adds never clash.
+      function ttNextBib(list) { return Math.max(0, ...list.map(a => +(a && a.bib) || 0)) + 1; }
       function ttTotal(a) { return TT_SCORED.reduce((s, k) => s + (+(a.dist && a.dist[k]) || 0), 0); }
 
       // ── Bluetooth: bikes (FTMS Indoor Bike Data), treadmills (FTMS Treadmill Data), foot pods (RSC) ──
@@ -4828,9 +4830,14 @@ ${html}</body></html>`);
                     </div>
                     <button disabled={!ok} onClick={async () => {
                       const id = "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-                      const a = { name: f.name.trim(), gender: f.gender, age: +f.age, wave: f.wave, uid: currentUser.uid, selfSignup: true, at: Date.now(),
+                      const a = { name: f.name.trim(), gender: f.gender, age: +f.age, wave: f.wave, uid: currentUser.uid, selfSignup: true, at: Date.now(), bib: ttNextBib(athletes),
                         bike: ttFreeMachine(race, f.wave, "bike", race.bikes), tread: ttFreeMachine(race, f.wave, "tread", race.treads) };
-                      try { await ref.child("athletes/" + id).set(a); setSignup(null); }
+                      try {
+                        await ref.child("athletes/" + id).set(a); setSignup(null);
+                        // Remembered on the account so it shows under My races on the athlete's home.
+                        const w = eventWhen(race.date, (waves[f.wave] || {}).time, race.liveLeadMin);
+                        rtdb.ref("users/" + currentUser.uid + "/timedEntries/" + code).set({ name: race.name || "Timed Tri", startsAt: w.startsAt || null, at: Date.now() }).catch(() => {});
+                      }
                       catch (e) { setMsg("Couldn't sign you up: " + e.message); }
                     }} style={{ ...btnStyle(TM.ink), width: "100%", marginTop: 10, opacity: ok ? 1 : 0.5 }}>Sign up →</button>
                     {msg && <div style={{ fontWeight: 700, marginTop: 6 }}>{msg}</div>}
@@ -4952,7 +4959,7 @@ ${html}</body></html>`);
                 <select value={newAth.gender} onChange={e => setNewAth(x => ({ ...x, gender: e.target.value }))} style={{ ...inputS, flex: "1 1 90px", color: newAth.gender ? TM.ink : TM.inkMuted }}><option value="">Gender…</option><option>Male</option><option>Female</option><option>Non-binary</option></select>
                 <input value={newAth.age} onChange={e => setNewAth(x => ({ ...x, age: e.target.value.replace(/\D/g, "") }))} placeholder="Age" inputMode="numeric" style={{ ...inputS, width: 70 }} />
                 <select value={newAth.wave} onChange={e => setNewAth(x => ({ ...x, wave: +e.target.value }))} style={{ ...inputS, width: 100 }}>{waves.map((_, w) => <option key={w} value={w} disabled={waveFull(w)}>{waveShort(w)}{waveFull(w) ? " (full)" : ""}</option>)}</select>
-                <button disabled={!newAth.name.trim() || !newAth.gender} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: athletes.length + 1,
+                <button disabled={!newAth.name.trim() || !newAth.gender} onClick={() => { const id = "a" + Date.now().toString(36); set(`athletes/${id}`, { name: newAth.name.trim(), gender: newAth.gender, age: newAth.age === "" ? "" : +newAth.age, wave: newAth.wave, bib: ttNextBib(athletes),
                   bike: ttFreeMachine(race, newAth.wave, "bike", race.bikes), tread: ttFreeMachine(race, newAth.wave, "tread", race.treads) }); setNewAth(x => ({ ...x, name: "", age: "", gender: "" })); }}
                   style={{ ...btnStyle(TM.ink), minHeight: 44, padding: "0 14px", fontSize: 15 }}>Add</button>
               </div>
@@ -6657,6 +6664,14 @@ ${html}</body></html>`);
         }, [joinRace?.code, joinAthIdx, !!(joinLiveData && joinLiveData.waypoints)]);
 
         const [joinedRaces, setJoinedRaces] = useState({});
+        const [myTimedEntries, setMyTimedEntries] = useState({});   // timed tris this account signed up for (users/{uid}/timedEntries)
+        useEffect(() => {
+          if (!currentUser) { setMyTimedEntries({}); return; }
+          const r = rtdb.ref("users/" + currentUser.uid + "/timedEntries");
+          const fn = sn => setMyTimedEntries(sn.val() || {});
+          r.on("value", fn, () => setMyTimedEntries({}));
+          return () => r.off("value", fn);
+        }, [currentUser && currentUser.uid]);
         // Races this account watched (spectators/parents), with the kids they marked as theirs.
         const [watchedRaces, setWatchedRaces] = useState({});
         const [myKids, setMyKids] = useState({});
@@ -13599,6 +13614,9 @@ ${html}</body></html>`);
           return () => { live = false; clearInterval(t); };
         }, [showToday]);
 
+        // Live is judged when the list is drawn, not when it was fetched, so a race
+        // scheduled to go live in a minute flips to ● LIVE on time.
+        const liveNowOf = r => r.status === "live" && !(r.liveAt && Date.now() < r.liveAt) && !(r.endsAt && Date.now() > r.endsAt);
         async function pickTodayRace(r, mode) {
           setTodayBusy(r.code);
           if (mode === "join" && r.kind !== "timed" && r.kind !== "challenge") { setJoinCode(r.code); await joinRaceByCode(r.code); setTodayBusy(null); return; }
@@ -13688,13 +13706,13 @@ ${html}</body></html>`);
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                             <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: k.colour }}>{k.label}</span>
-                            {r.liveNow
+                            {liveNowOf(r)
                               ? <span style={{ background: TM.live, color: "#FFFFFF", fontSize: 14, fontWeight: 900, letterSpacing: 1.2, padding: "1px 8px", borderRadius: 4 }}>● LIVE</span>
                               : <span style={{ border: `2px solid ${TM.ink}`, fontSize: 14, fontWeight: 800, letterSpacing: 0.4, padding: "0 8px", borderRadius: 4 }}>{r.status === "registration" ? "SIGN-UPS OPEN" : "UPCOMING"}</span>}
                           </span>
                           <span style={{ display: "block", fontSize: 19, fontWeight: 900, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || "Race"}</span>
                           {r.endsAt ? <span style={{ display: "block", fontSize: 15, fontWeight: 800 }}>{eventWhenLabel(r.startsAt, false)} – {eventWhenLabel(r.endsAt, false)}</span>
-                            : r.startsAt && <span style={{ display: "block", fontSize: 15, fontWeight: 800 }}>{r.liveNow && r.startsAt < Date.now() ? "Started " : "Starts "}{eventWhenLabel(r.startsAt)}</span>}
+                            : r.startsAt && <span style={{ display: "block", fontSize: 15, fontWeight: 800 }}>{liveNowOf(r) && r.startsAt < Date.now() ? "Started " : "Starts "}{eventWhenLabel(r.startsAt)}</span>}
                           {r.hostName && <span style={{ display: "block", ...TM_CAPTION }}>Hosted by {r.hostName}</span>}
                         </span>
                         {todayBusy === r.code ? <span style={{ fontWeight: 800 }}>…</span> : <ArrowIcon />}
@@ -15166,7 +15184,7 @@ Start a new race anyway?`)) return;
                             <div style={TM_CAPTION}>{w.hostName ? `${w.hostName} · ` : ""}Code {w.code}{w.at ? ` · ${new Date(w.at).toLocaleDateString()}` : ""}</div>
                             {(w.kids || []).length > 0 && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>⭐ {w.kids.join(", ")}</div>}
                             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                              <button onClick={() => openRaceAsViewer("triathlon", w.code)} style={{ ...btnStyle((todayRaces || []).some(r => r.code === w.code && r.liveNow) ? TM.live : TM.ink), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>{(todayRaces || []).some(r => r.code === w.code && r.liveNow) ? "● Watch live →" : "Results →"}</button>
+                              <button onClick={() => openRaceAsViewer("triathlon", w.code)} style={{ ...btnStyle((todayRaces || []).some(r => r.code === w.code && liveNowOf(r)) ? TM.live : TM.ink), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>{(todayRaces || []).some(r => r.code === w.code && liveNowOf(r)) ? "● Watch live →" : "Results →"}</button>
                               {racePhotoCodes[w.code] ? (
                                 <button onClick={() => loadPhotosByCode(racePhotoCodes[w.code])} style={{ ...btnStyle(TM.swim, true), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>📷 Photos</button>
                               ) : null}
@@ -15970,6 +15988,27 @@ Start a new race anyway?`)) return;
               {/* ── JOIN ── */}
               {view === "join" && (
                 <div style={{ paddingTop: 8, maxWidth: 480, margin: "0 auto" }}>
+
+                  {/* Timed tris I've signed up for */}
+                  {Object.keys(myTimedEntries).length > 0 && registrationStep === "code" && !joinRace && (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: TM.run, marginBottom: 10 }}>My Timed Tris</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {Object.entries(myTimedEntries).sort((a, b) => (b[1].startsAt || b[1].at || 0) - (a[1].startsAt || a[1].at || 0)).map(([c, e]) => (
+                          <div key={c} style={{ background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 14, color: "#0B0D10", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name || "Timed Tri"}</div>
+                              <div style={{ fontSize: 14, color: "#3D434B", marginTop: 2 }}>{e.startsAt ? eventWhenLabel(e.startsAt) + " · " : ""}CODE: <span style={{ color: "#04613F" }}>{c}</span></div>
+                            </div>
+                            <button onClick={() => { setTimedCode(c); setTimedViewer(true); setView("timed"); }} style={{ ...btnStyle((todayRaces || []).some(r => r.code === c && liveNowOf(r)) ? TM.live : "#04613F"), padding: "6px 14px", fontSize: 14 }}>
+                              {(todayRaces || []).some(r => r.code === c && liveNowOf(r)) ? "● Live →" : "Open →"}</button>
+                            <button aria-label="Remove" onClick={() => { if (currentUser) rtdb.ref("users/" + currentUser.uid + "/timedEntries/" + c).remove().catch(() => {}); }}
+                              style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 4px" }}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* My Races */}
                   {Object.keys(joinedRaces).length > 0 && registrationStep === "code" && !joinRace && (
