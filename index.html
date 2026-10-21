@@ -6078,6 +6078,8 @@ ${html}</body></html>`);
         const [closeCurConfirm, setCloseCurConfirm] = useState(false);   // My races: closing the race in progress         // My races → Past races list
         const [whenEdit, setWhenEdit] = useState(null);          // { key, date, time, lead } — date editor open on a card
         useEffect(() => { if (view !== "myraces") { setPastOpen(false); setWhenEdit(null); } }, [view]);
+        // leaving a screen closes the photo album viewer, so it never sits over the next one
+        useEffect(() => { setViewPhotoAlbum(null); }, [view]);
         useEffect(() => {
           if (!currentUser) { setTimedSaved({}); return; }
           const r = rtdb.ref("users/" + currentUser.uid + "/timedRaces");
@@ -6431,7 +6433,7 @@ ${html}</body></html>`);
             });
             return n;
           }));
-          setCourseLibMsg(`✓ Using “${c.name}” — ${libLegSummary(c)}. Leg distances updated.`);
+          setCourseLibMsg(`✓ Using “${c.name}”${libLegSummary(c) ? " — " + libLegSummary(c) + ". Leg distances updated." : c.waypoints && c.waypoints.length ? ` — ${c.waypoints.length} split pins placed.` : "."}`);
           setTimeout(() => setCourseLibMsg(""), 7000);
         }
         function renameLibraryCourse(c) {
@@ -16206,6 +16208,9 @@ Start a new race anyway?`)) return;
                                 ? "Laps and splits are logged at the course — no GPS needed."
                                 : joinGpsActive ? joinGpsStatus : (joinGpsStatus || "Starting GPS…")}
                             </div>
+                            {!joinGpsActive && !watchToken && ((joinLiveData || joinRace)?.courseMap !== false || asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")) && (
+                              <button onClick={startGpsTracking} style={{ ...btnStyle(TM.run), minHeight: 40, padding: "0 12px", fontSize: 15, flexShrink: 0 }}>▶ Start GPS</button>
+                            )}
                             {(() => { const hrDev = btDevices.find(d => d.readings.heartRate != null); return hrDev ? <span style={{ fontSize: 14, color: "#04613F", fontWeight: 700, flexShrink: 0 }}>❤️ {hrDev.readings.heartRate}</span> : null; })()}
                             <div style={{ fontSize: 14, color: "#3D434B" }}>
                               {rosterWithSignups(joinLiveData || joinRace)[joinAthIdx]?.name}
