@@ -603,6 +603,14 @@
         if (kindAt(seg) === "run" && course.runByLaps) return plan(course.runMiles, course.runLap, gapFor(course.runMinLapSec, 30));
         return null;
       }
+      // Does an athlete's phone need GPS in this race? Only with split pins placed
+      // (and the map on) or a bike leg counted in GPS miles. Lap-counted races and
+      // hand-timed races never ask for location.
+      function raceNeedsGps(r) {
+        if (!r) return false;
+        if (asList(r.courses).some(c => c && c.bikeType === "distance")) return true;
+        return r.courseMap !== false && asList(r.waypoints).some(w => w && w.lat != null && w.lng != null && w.enabled !== false);
+      }
       function courseHasLaps(c) { return !!(c && (c.swimByLaps || c.bikeType === "laps" || c.bikeType === "spin" || c.runByLaps)); }
       // What one tap is on this leg: a mile on a spin bike, a lap everywhere else.
       function tapWord(course, seg, plural = true) {
@@ -6631,12 +6639,11 @@ ${html}</body></html>`);
         // Auto-start GPS immediately when athlete is identified — no consent gate
         useEffect(() => {
           // No GPS when the host turned the course map off (unless the bike counts GPS miles).
-          const jr = joinRace || {};
-          const needGps = jr.courseMap !== false || asList(jr.courses).some(c => c && c.bikeType === "distance");
+          const needGps = raceNeedsGps(joinLiveData || joinRace);
           if (joinRace && joinAthIdx !== null && !joinGpsActive && !watchToken && needGps) {
             startGpsTracking();
           }
-        }, [joinRace?.code, joinAthIdx]);
+        }, [joinRace?.code, joinAthIdx, !!(joinLiveData && joinLiveData.waypoints)]);
 
         const [joinedRaces, setJoinedRaces] = useState({});
         // Races this account watched (spectators/parents), with the kids they marked as theirs.
@@ -8888,8 +8895,10 @@ ${html}</body></html>`);
             raceRoutes
           };
           try {
-            const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
+            const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000));
             await Promise.race([rtdb.ref("liveRaces/" + code).set(payload), timeout]);
+            // going live counts as saving: the race shows up under In the works and can be reopened
+            if (!loadedRaceId) { try { saveRace(saveRaceName || certConfig.eventName || "Race"); } catch (_) {} }
             return true;
           } catch(e) {
             console.error("publishLiveRace failed:", e.message);
@@ -11044,6 +11053,7 @@ ${html}</body></html>`);
         const [keiserPairFor, setKeiserPairFor] = useState(null);   // race screen: athlete index choosing a bike
         useTicker(keiserPairFor !== null, 1000);                     // pedaling / stopped / asleep labels age on their own
         const keiserBaseRef = useRef({});                         // athleteId → { base, last, acc } trip distance at bike start
+        useEffect(() => { if (/[?&]qa=1/.test(location.search)) window.__tmQA = { setKeiserBikes, setKeiserScan }; }, []);
         async function startKeiserScan() {
           if (!btSupported) { setKeiserScan("Bluetooth needs Chrome on Android."); return; }
           if (!navigator.bluetooth.requestLEScan) {
@@ -16231,11 +16241,11 @@ Start a new race anyway?`)) return;
                           {!joinMeFinished && <div style={{ display: "flex", alignItems: "center", gap: 8, background: joinGpsActive ? "#EFEDE8" : "#EFEDE8", border: `2px solid ${joinGpsActive ? "#C9C5BC" : "#C9C5BC"}`, borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
                             <div style={{ width: 8, height: 8, borderRadius: "50%", background: joinGpsActive ? "#04613F" : "#3D434B", boxShadow: joinGpsActive ? "0 0 0 0 rgba(11,13,16,0.18)" : "none", animation: joinGpsActive ? "gpsping 1.4s ease-out infinite" : "none", flexShrink: 0 }} />
                             <div style={{ fontSize: 14, color: joinGpsActive ? "#04613F" : "#3D434B", flex: 1 }}>
-                              {(joinLiveData || joinRace)?.courseMap === false && !asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")
+                              {!raceNeedsGps(joinLiveData || joinRace)
                                 ? "Laps and splits are logged at the course — no GPS needed."
                                 : joinGpsActive ? joinGpsStatus : (joinGpsStatus || "Starting GPS…")}
                             </div>
-                            {!joinGpsActive && !watchToken && ((joinLiveData || joinRace)?.courseMap !== false || asList((joinLiveData || joinRace)?.courses).some(c => c && c.bikeType === "distance")) && (
+                            {!joinGpsActive && !watchToken && raceNeedsGps(joinLiveData || joinRace) && (
                               <button onClick={startGpsTracking} style={{ ...btnStyle(TM.run), minHeight: 40, padding: "0 12px", fontSize: 15, flexShrink: 0 }}>▶ Start GPS</button>
                             )}
                             {(() => { const hrDev = btDevices.find(d => d.readings.heartRate != null); return hrDev ? <span style={{ fontSize: 14, color: "#04613F", fontWeight: 700, flexShrink: 0 }}>❤️ {hrDev.readings.heartRate}</span> : null; })()}
