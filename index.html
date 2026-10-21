@@ -7862,7 +7862,9 @@ ${html}</body></html>`);
                   }
                 }
                 if (r.started && !na.started && !lp.started) { na = { ...na, started: true, startOffset: r.startOffset ?? na.startOffset }; changed = true; }
-                if (r.finished && !na.finished && !lp.finished && na.splits[SEGMENTS.length - 1] != null) { na = { ...na, finished: true }; changed = true; }
+                // a phone that logged the last split finished the race, whether or not its
+                // finished flag survived this screen's own heartbeat
+                if (!na.finished && na.splits[SEGMENTS.length - 1] != null && (r.finished || (lp.splits == null || lp.splits[SEGMENTS.length - 1] == null))) { na = { ...na, finished: true }; changed = true; }
                 return na;
               });
               return changed ? next : prev;
@@ -10597,8 +10599,9 @@ ${html}</body></html>`);
                 } else if (wp.action === "split") {
                   const live = asList(snap.val().athletes)[joinAthIdx] || {};
                   const prev = wp.segIdx === 0 ? (live.startOffset || 0) : ((live.splits || [])[wp.segIdx - 1] || 0);
-                  athRef.child(`splits/${wp.segIdx}`).set(Math.max(clockMs, prev)).catch(console.error);
-                  if (wp.segIdx === 4) athRef.update({ finished: true }).catch(console.error);
+                  const upd = { [`splits/${wp.segIdx}`]: Math.max(clockMs, prev) };
+                  if (wp.segIdx === SEGMENTS.length - 1) upd.finished = true;
+                  athRef.update(upd).catch(console.error);
                 }
                 nextWpIdx = wi + 1;
                 setJoinNextSeg(nextWpIdx);
