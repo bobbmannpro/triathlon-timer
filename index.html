@@ -9490,7 +9490,7 @@ ${html}</body></html>`);
                     startOffset: a.startOffset ?? null,
                     splits: Array.from({ length: segs.length }, (_, idx) => a.splits?.[idx] ?? null),
                     started: a.started || false,
-                    finished: a.finished || false,
+                    finished: !!a.finished || a.splits?.[segs.length - 1] != null,
                     dnf: !!a.dnf
                   }));
                   if (liveAthletes.length > 0) setAthletes(liveAthletes);
