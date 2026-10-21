@@ -6567,6 +6567,7 @@ ${html}</body></html>`);
         const bikeSegTriggeredRef = useRef(false);
         const joinFollowingRef = useRef(true);
         const joinCurSegRef = useRef(0);
+        const joinWpsRef = useRef(null);   // the live race's split pins, read on every GPS fix
         const wakeLockRef = useRef(null);
         const joinRaceCodeRef = useRef(null);
         const joinAthIdxRef = useRef(null);
@@ -8123,6 +8124,7 @@ ${html}</body></html>`);
           setHostAthIdx(resolved);
         }, [liveRaceCode, athletes, currentUser, userProfile]);
 
+        useEffect(() => { const w = (joinLiveData && joinLiveData.waypoints) || (joinRace && joinRace.waypoints); joinWpsRef.current = w ? asList(w) : null; }, [joinLiveData && joinLiveData.waypoints, joinRace && joinRace.waypoints]);
         // Sync joinCurSegRef and imperatively update marker/trail color when segment changes
         useEffect(() => {
           if (joinAthIdx === null || !joinLiveData?.athletes?.[joinAthIdx]) return;
@@ -10432,6 +10434,7 @@ ${html}</body></html>`);
           setJoinGpsStatus("Acquiring GPS signal…");
           acquireWakeLock();
           const triggered = new Set();
+          let pinLeg = { leg: -1, startedInside: false, left: false };
           let nextWpIdx = 0;
           let prevLat = null, prevLng = null, prevT = 0, totalDistMi = 0;
           let rejected = 0;
@@ -10554,16 +10557,31 @@ ${html}</body></html>`);
                 }
               } catch(_) {}
             }
-            allWps.forEach((wp, wi) => {
-              if (triggered.has(wi)) return;
-              if (haversineM(lat, lng, wp.lat, wp.lng) >= wp.radiusM) return;
+            // Split pins, the rule the Garmin watch uses too: only the pin that ends the
+            // leg the athlete is on counts. The swim ends on coming BACK into its pin
+            // (the swim usually starts right beside T1); any other leg that begins
+            // inside its own end pin (Bike Out sitting on transition) ends on LEAVING
+            // it; otherwise a leg ends on entering its pin. Pins are re-read from the
+            // live race on every fix, so pins the host places late still count.
+            const wpsNow = (joinWpsRef.current || allWps).filter(wp => wp.lat != null && wp.lng != null && wp.enabled !== false);
+            wpsNow.forEach((wp, wi) => {
+              if (triggered.has(wp.id || wi)) return;
+              const inside = haversineM(lat, lng, wp.lat, wp.lng) < (wp.radiusM || 30);
+              if (wp.action === "split") {
+                const cur = joinCurSegRef.current;
+                if (wp.segIdx !== cur) return;
+                if (pinLeg.leg !== cur) pinLeg = { leg: cur, startedInside: inside, left: !inside };
+                if (!inside) pinLeg.left = true;
+                const fire = cur === 0 ? (inside && pinLeg.left) : pinLeg.startedInside ? !inside : inside;
+                if (!fire) return;
+              } else if (!inside) return;
               // Skip T2 (bike→run transition) GPS trigger when using a trainer — handled by distance
               if (wp.action === "split" && wp.segIdx === slotOf("bike")) {
                 const myAth = rosterWithSignups(joinLiveData || joinRace)[joinAthIdx];
                 const myCourse = (joinRace.courses || []).find(c => c.id === myAth?.courseId) || (joinRace.courses || [])[0];
                 if ((myCourse?.bikeType || "gps") !== "gps") return;
               }
-              triggered.add(wi);
+              triggered.add(wp.id || wi);
               if (wp.action === "marker") {
                 nextWpIdx = wi + 1;
                 setJoinNextSeg(nextWpIdx);
@@ -10577,7 +10595,9 @@ ${html}</body></html>`);
                   athRef.update({ startOffset: raceNow(), started: true }).catch(console.error);
                   raceStartedForMe = true;
                 } else if (wp.action === "split") {
-                  athRef.child(`splits/${wp.segIdx}`).set(clockMs).catch(console.error);
+                  const live = asList(snap.val().athletes)[joinAthIdx] || {};
+                  const prev = wp.segIdx === 0 ? (live.startOffset || 0) : ((live.splits || [])[wp.segIdx - 1] || 0);
+                  athRef.child(`splits/${wp.segIdx}`).set(Math.max(clockMs, prev)).catch(console.error);
                   if (wp.segIdx === 4) athRef.update({ finished: true }).catch(console.error);
                 }
                 nextWpIdx = wi + 1;
@@ -15109,7 +15129,7 @@ Start a new race anyway?`)) return;
                             <div style={TM_CAPTION}>{w.hostName ? `${w.hostName} · ` : ""}Code {w.code}{w.at ? ` · ${new Date(w.at).toLocaleDateString()}` : ""}</div>
                             {(w.kids || []).length > 0 && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>⭐ {w.kids.join(", ")}</div>}
                             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                              <button onClick={() => openRaceAsViewer("triathlon", w.code)} style={{ ...btnStyle(TM.ink), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>Results →</button>
+                              <button onClick={() => openRaceAsViewer("triathlon", w.code)} style={{ ...btnStyle((todayRaces || []).some(r => r.code === w.code && r.liveNow) ? TM.live : TM.ink), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>{(todayRaces || []).some(r => r.code === w.code && r.liveNow) ? "● Watch live →" : "Results →"}</button>
                               {racePhotoCodes[w.code] ? (
                                 <button onClick={() => loadPhotosByCode(racePhotoCodes[w.code])} style={{ ...btnStyle(TM.swim, true), minHeight: 44, flex: "1 1 120px", fontSize: 15 }}>📷 Photos</button>
                               ) : null}
