@@ -4652,7 +4652,7 @@ ${html}</body></html>`);
         return kind;
       }
 
-      function TimedTri({ code, viewer, currentUser, userProfile, onBack }) {
+      function TimedTri({ code, viewer, currentUser, userProfile, onBack, role }) {
         const [race, setRace] = React.useState(undefined);
         const [tab, setTab] = React.useState(viewer ? "standings" : "setup");
         const [, tick] = React.useState(0);
@@ -4798,6 +4798,13 @@ ${html}</body></html>`);
                 const f = signup || { name: [userProfile && userProfile.firstName, userProfile && userProfile.lastName].filter(Boolean).join(" "), gender: (userProfile && userProfile.gender) || "",
                   age: userProfile && userProfile.birthday ? String(Math.floor((Date.now() - new Date(userProfile.birthday + "T12:00:00")) / 31557600000)) : "", wave: null };
                 const ok = f.name.trim() && f.gender && f.age !== "" && f.wave != null && !waveFull(f.wave);
+                // Spectators are here to watch: one line, with the form a tap away.
+                if (role === "spectator" && !signup) return (
+                  <div style={{ ...rowStyle(TM.run), marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ flex: 1, fontWeight: 700 }}>Racing in this one?</span>
+                    <button onClick={() => setSignup(f)} style={{ ...btnStyle(TM.ink, true), minHeight: 44 }}>Sign up →</button>
+                  </div>
+                );
                 return (
                   <div style={{ ...rowStyle(TM.run), marginTop: 12 }}>
                     <div style={{ fontWeight: 900, fontSize: 18 }}>Sign up</div>
@@ -5107,7 +5114,7 @@ ${html}</body></html>`);
                       <span style={TM_CAPTION}>{!d.connected ? "reconnecting…" : fresh ? (d.kind === "bike" ? `${l.w ?? "–"} W · ${l.rpm ?? "–"} rpm · ${l.kmh != null ? l.kmh.toFixed(1) : "–"} km/h` : `${l.kmh != null ? l.kmh.toFixed(1) : "–"} km/h`) : "no data — pedal / start the belt"}</span>
                     </div>
                     <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>Number
-                      <input defaultValue={d.label} onChange={e => { d.label = e.target.value; ttSetLabel(id, e.target.value); tick(x => x + 1); }} placeholder={d.kind === "bike" ? "e.g. 3" : "e.g. T2"} style={{ ...inputS, width: 90 }} />
+                      <input defaultValue={d.label} onChange={e => { d.label = e.target.value; ttSetLabel(id, e.target.value); tick(x => x + 1); }} placeholder={d.kind === "bike" ? "e.g. 3" : "e.g. 2"} style={{ ...inputS, width: 90 }} />
                       <span style={TM_CAPTION}>{who.length ? "→ " + who.join(", ") : "not assigned"}</span>
                     </label>
                   </div>
@@ -13989,7 +13996,7 @@ Start a new race anyway?`)) return;
         // code box and the live view. Anyone signed in keeps Profile.
         useEffect(() => {
           if (!effectiveRole || effectiveRole === "host") return;
-          const allowed = effectiveRole === "timer" ? ["swimlane", "profile"]
+          const allowed = effectiveRole === "timer" ? ["swimlane", "profile", "timed", "challenge", "watch", "swimwatch", "bike"]
             : effectiveRole === "athlete"
             ? ["join", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed", "challenge"]
             : ["spectate", "watch", "swimwatch", "swimlane", "bike", "profile", "lapcount", "timed", "challenge"];
@@ -16264,7 +16271,7 @@ Start a new race anyway?`)) return;
                             {(() => { const hrDev = btDevices.find(d => d.readings.heartRate != null); return hrDev ? <span style={{ fontSize: 14, color: "#04613F", fontWeight: 700, flexShrink: 0 }}>❤️ {hrDev.readings.heartRate}</span> : null; })()}
                             <div style={{ fontSize: 14, color: "#3D434B" }}>
                               {rosterWithSignups(joinLiveData || joinRace)[joinAthIdx]?.name}
-                              <button onClick={() => setJoinAthIdx(null)} style={{ fontSize: 14, color: "#3D434B", background: "none", border: "none", cursor: "pointer", padding: "0 0 0 6px" }}>change</button>
+                              <button onClick={() => setJoinAthIdx(null)} style={{ fontSize: 14, color: "#3D434B", background: "none", border: "none", cursor: "pointer", padding: "0 0 0 10px", textDecoration: "underline" }}>not you? change</button>
                             </div>
                           </div>}
 
@@ -17465,8 +17472,8 @@ Start a new race anyway?`)) return;
 
                   <SetupSection title="Athletes" color="#04613F"
                     open={setupStep === 3}
-                    summary={athletes.length === 0 ? "Nobody added yet"
-                      : `${athletes.length} racing${registrationOpen ? " · sign-ups open" : ""}`}>
+                    summary={(() => { const named = athletes.filter(a => (a.name || "").trim()).length;
+                      return named === 0 ? "Nobody added yet" : `${named} racing${registrationOpen ? " · sign-ups open" : ""}`; })()}>
                   {athletes.map((ath, i) => (
                     <div key={ath.id} data-drag-idx={i}
                       onDragOver={e => onDragOver(e, i)} onDrop={e => onDrop(e, i)}
@@ -21281,7 +21288,7 @@ Start a new race anyway?`)) return;
                 onBack={() => { setChCode(null); setChAction(null); setView(roleLanding(effectiveRole)); }} />
             )}
             {view === "timed" && timedCode && (
-              <TimedTri code={timedCode} viewer={timedViewer || !isHost} currentUser={currentUser} userProfile={userProfile}
+              <TimedTri code={timedCode} viewer={timedViewer || !isHost} currentUser={currentUser} userProfile={userProfile} role={effectiveRole}
                 onBack={() => { setTimedCode(null); setView(roleLanding(effectiveRole)); }} />
             )}
 
