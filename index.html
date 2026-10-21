@@ -14000,7 +14000,8 @@ Start a new race anyway?`)) return;
           if (!w || !w.code || Date.now() - (w.at || 0) > 8 * 3600e3) return;
           rtdb.ref("raceDirectory/" + w.code).once("value").then(sn => {
             const r = sn.val();
-            if (r && r.status === "live" && !(r.liveAt && Date.now() < r.liveAt)) openRaceAsViewer(r.kind || w.kind, w.code);
+            const on = r && ((r.status === "live" && !(r.liveAt && Date.now() < r.liveAt)) || (r.kind === "challenge" && (!r.endsAt || Date.now() < r.endsAt)));
+            if (on) openRaceAsViewer(r.kind || w.kind, w.code);
             else { try { localStorage.removeItem("tm-watching"); } catch (_) {} }
           }).catch(() => {});
         }, [authLoading, effectiveRole]);
