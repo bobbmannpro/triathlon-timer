@@ -1338,9 +1338,12 @@
       const STICKY_COL = (bg) => ({ position: "sticky", left: 0, zIndex: 2, background: bg, minWidth: 140, maxWidth: 190,
                                     boxShadow: "6px 0 6px -4px rgba(11,13,16,0.18)" });
 
+      const KIND_NAMES = { triathlon: "triathlon", swim: "swim meet", bike: "bike / run", timed: "timed tri", challenge: "challenge" };
       function RaceKindStep({ kind, onKind, name, onName, nameId = "race-name", lockedHint,
-                              code, onCode, codeStatus, codeLocked, onChangeLocked, listed, onListed, extra }) {
+                              code, onCode, codeStatus, codeLocked, onChangeLocked, listed, onListed, extra, fixed }) {
         const [changing, setChanging] = React.useState(false);
+        // Came in from one kind's page: show that kind as a single row, the full list only on "Change".
+        const [showKinds, setShowKinds] = React.useState(!fixed);
         const [draft, setDraft] = React.useState("");
         const [changeErr, setChangeErr] = React.useState("");
         const [changeBusy, setChangeBusy] = React.useState(false);
@@ -1353,9 +1356,19 @@
           ["timed",     TM.run,  "Timed Tri", "Set time per leg — most distance wins. Waves, bikes & treadmills"],
           ["challenge", TM.warn, "Challenge", "Most miles in a month — sign up, get a bib, log runs, live standings"],
         ];
+        const chosen = kinds.find(x => x[0] === kind) || kinds[0];
         return (
           <div>
-            <div role="radiogroup" aria-label="Kind of race" style={{ marginLeft: -16, marginRight: -16 }}>
+            {!showKinds && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, background: chosen[1], color: "#FFFFFF", padding: "14px 16px", borderRadius: 8 }}>
+                <span style={{ flex: 1 }}>
+                  <span style={{ display: "block", fontWeight: 900, fontSize: 24, textTransform: "uppercase", letterSpacing: -0.4, lineHeight: 1 }}>{chosen[2]}</span>
+                  <span style={{ display: "block", fontWeight: 600, fontSize: 14, marginTop: 5, opacity: 0.9 }}>{chosen[3]}</span>
+                </span>
+                {onKind && <button onClick={() => setShowKinds(true)} style={{ ...btnStyle("#FFFFFF", true), color: "#FFFFFF", borderColor: "#FFFFFF", minHeight: 40, padding: "0 12px", fontSize: 14 }}>Change</button>}
+              </div>
+            )}
+            {showKinds && <div role="radiogroup" aria-label="Kind of race" style={{ marginLeft: -16, marginRight: -16 }}>
               {kinds.map(([k, col, title, sub]) => {
                 const on = kind === k;
                 return (
@@ -1375,7 +1388,7 @@
                 );
               })}
               <div style={{ borderTop: `2px solid ${TM.line}` }} />
-            </div>
+            </div>}
             {extra}
             {TUTORIALS[KIND_TUT[kind]] && (
               <div style={{ marginTop: 12 }}>
@@ -14802,14 +14815,14 @@ Start a new race anyway?`)) return;
 
               {/* ── NEW RACE: step 1 of the wizard, the only place a kind is chosen ── */}
               {view === "newrace" && (
-                <WizardFrame step={1} titles={["What kind of race?", "Who's racing?", "Distances", "Details", "Course"]}
-                  title="What kind of race?"
+                <WizardFrame step={1} titles={[`New ${KIND_NAMES[newRaceKind] || "race"}`, "Who's racing?", "Distances", "Details", "Course"]}
+                  title={`New ${KIND_NAMES[newRaceKind] || "race"}`}
                   onJump={() => {}}
                   onBack={() => setView("myraces")}
                   onNext={() => startRaceOfKind(newRaceKind, newRaceName, newRaceCode)}
                   nextDisabled={codeBlocksNext}
                   nextHint={codeBlocksNext && codeStatus !== "checking" ? "Pick a code that's available first" : null}>
-                  <RaceKindStep kind={newRaceKind} onKind={setNewRaceKind} name={newRaceName} onName={setNewRaceName} nameId="new-race-name"
+                  <RaceKindStep fixed kind={newRaceKind} onKind={setNewRaceKind} name={newRaceName} onName={setNewRaceName} nameId="new-race-name"
                     code={newRaceCode} onCode={setNewRaceCode} codeStatus={codeStatus}
                     extra={newRaceKind === "bike" ? <BikeRunChooser value={newRaceSport} onChange={setNewRaceSport} /> : null} />
                 </WizardFrame>
