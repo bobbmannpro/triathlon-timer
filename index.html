@@ -13593,7 +13593,10 @@ ${html}</body></html>`);
           const t = setInterval(load, 60000);
           return () => { live = false; clearInterval(t); };
         }, [currentUser && currentUser.uid, view]);
-        function openChallenge(code, action) { setChAction(action || null); setChCode(code); setChViewer(true); setView("challenge"); }
+        function openChallenge(code, action) {
+          try { localStorage.setItem("tm-watching", JSON.stringify({ kind: "challenge", code, at: Date.now() })); } catch (_) {}
+          setChAction(action || null); setChCode(code); setChViewer(true); setView("challenge");
+        }
         const [todayBusy, setTodayBusy] = useState(null);
         const showToday = view === "spectate" || (view === "join" && !joinRace) || (view === "swimlane" && !swimLaneSession);
         useEffect(() => {
