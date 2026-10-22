@@ -721,7 +721,9 @@
             prevT = t; prevD = d;
           });
           const dist = marks.length * p.lap, el = marks[marks.length - 1] - start;
-          return { items, avg: el > 0 ? `Average ${(dist / (el / 3600000)).toFixed(1)} ${speed}` : "" };
+          const v = el > 0 ? dist / (el / 3600000) : 0;
+          // A leg logged in seconds (a test, a mis-tap) isn't a real ride: no 400 mph averages.
+          return { items, avg: v > 0 && v <= (speed === "km/h" ? 110 : 70) ? `Average ${v.toFixed(1)} ${speed}` : "" };
         }
         let prev = start;
         const items = marks.map((t, k) => { const it = { label: `${kindAt(seg) === "swim" ? "Length" : "Lap"} ${k + 1}`, ms: t - prev }; prev = t; return it; });
@@ -802,7 +804,7 @@
                 style={{ border: `2px solid ${TM.line}`, borderRadius: 8, overflow: "hidden", background: "#FFFFFF" }}>
                 <div style={{ background: TM.ink, color: "#FFFFFF", padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                   <span style={{ fontWeight: 900, fontSize: 17, letterSpacing: 0.5 }}>{f.label}</span>
-                  <span style={{ fontSize: 14, fontWeight: 700 }}>{f.rows.length && !f.waiting.length && f.rows.every(r => r.a && r.a.finished) ? "Final standings" : "Live standings"}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>{f.rows.length && !f.waiting.length && f.rows.every(r => r.a && (r.a.finished || r.a.dnf)) ? "Final standings" : "Live standings"}</span>
                 </div>
                 {f.rows.length === 0 && !f.waiting.length && !(f.dnf || []).length && (
                   <div style={{ padding: "10px 12px", fontSize: 15, fontWeight: 600, color: TM.inkMuted }}>Nobody's been sent off yet.</div>
@@ -6695,7 +6697,7 @@ ${html}</body></html>`);
         const [kidPickerOpen, setKidPickerOpen] = useState(false);            // normalised name → name, remembered across races
         const [racePhotoCodes, setRacePhotoCodes] = useState({}); // race code → photo album code (or "" if none)
         const [registrationStep, setRegistrationStep] = useState("code");
-        const [regProfile, setRegProfile] = useState({ firstName: "", lastName: "", gender: "Male", ageGroup: "", dob: "" });
+        const [regProfile, setRegProfile] = useState({ firstName: "", lastName: "", gender: "", ageGroup: "", dob: "" });
         const [claimPick, setClaimPick] = useState(null);   // roster index tapped before "This is me"
         const [claimSel, setClaimSel] = useState([]);        // sign-up screen: roster ids picked (a parent can pick several)
         const [regCourseId, setRegCourseId] = useState(null);
@@ -8556,11 +8558,16 @@ ${html}</body></html>`);
                             splits: Array.from({ length: segs.length }, (_, i) => a.splits?.[i] ?? null)
                           }));
                         }
-                        setJoinRace({ ...jd, code });
-                        if (athIdx !== null && athIdx !== undefined) setJoinAthIdx(athIdx);
                         const me = athIdx != null ? asList(jd.athletes)[athIdx] : null;
                         const joinOver = (me && (me.finished || me.dnf)) || !raceStillGoing(joinSnap.val());
-                        if (!joinOver) setView("join");
+                        if (joinOver) {
+                          // Finished or over: open on the home screen, not yesterday's race (it stays under My races).
+                          localStorage.removeItem("tri-active-join"); localStorage.removeItem("tri-gps-trail");
+                          throw new Error("join-over");
+                        }
+                        setJoinRace({ ...jd, code });
+                        if (athIdx !== null && athIdx !== undefined) setJoinAthIdx(athIdx);
+                        setView("join");
                         // Restore GPS trail
                         try {
                           const trailRaw = localStorage.getItem("tri-gps-trail");
@@ -15405,59 +15412,15 @@ Start a new race anyway?`)) return;
                       </div>
                     </div>
 
-                    {/* Age Groups */}
+                    {/* Age Groups — the same editor and saved sets as race setup */}
                     <div style={{ marginBottom: 14, background: "#EFEDE8", border: "2px solid #C9C5BC", borderRadius: 8, padding: "14px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B" }}>Age Groups</div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button onClick={() => setManualAgeGroups(["8 and under","9-10","11-12","13-14","15 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Youth</button>
-                          <button onClick={() => setManualAgeGroups(["20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60 and over"])} style={{ ...btnStyle("#3D434B", true), padding: "3px 8px", fontSize: 14 }}>Adult 5yr</button>
-                          <button onClick={() => setManualAgeGroups(g => [...g, "0-10"])} style={{ ...btnStyle("#04613F", true), padding: "3px 8px", fontSize: 14 }}>+ Group</button>
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {manualAgeGroups.map((ag, agIdx) => {
-                          const s = parseAgeGroupStruct(ag);
-                          function updateAg(type, a, b) {
-                            const newLabel = ageGroupLabel(type, a, b);
-                            setManualAgeGroups(g => g.map(item => item === ag ? newLabel : item));
-                            setManualAthletes(prev => prev.map(ath => ath.ageGroup === ag ? { ...ath, ageGroup: newLabel } : ath));
-                          }
-                          return (
-                            <div key={agIdx} style={{ display: "flex", alignItems: "center", gap: 6, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "6px 10px" }}>
-                              <select value={s.type} onChange={e => updateAg(e.target.value, s.a, s.b)}
-                                style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 8px", color: "#0B3FCC", fontSize: 14, outline: "none", cursor: "pointer" }}>
-                                <option value="range">Age Range</option>
-                                <option value="under">And Under</option>
-                                <option value="over">And Over</option>
-                              </select>
-                              {s.type === "range" ? (
-                                <>
-                                  <NumInput type="number" value={s.a} min={0} max={s.b - 1} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
-                                    style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
-                                  <span style={{ color: "#3D434B", fontSize: 14 }}>–</span>
-                                  <NumInput type="number" value={s.b} min={s.a + 1} max={199} onChange={e => updateAg(s.type, s.a, Math.max(s.a + 1, +e.target.value))}
-                                    style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
-                                </>
-                              ) : (
-                                <>
-                                  <NumInput type="number" value={s.a} min={0} max={199} onChange={e => updateAg(s.type, Math.max(0, +e.target.value), s.b)}
-                                    style={{ background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "4px 6px", color: "#0B0D10", fontSize: 14, width: 52, outline: "none", textAlign: "center" }} />
-                                  <span style={{ fontSize: 14, color: "#3D434B" }}>{s.type === "under" ? "and under" : "and over"}</span>
-                                </>
-                              )}
-                              <div style={{ flex: 1, textAlign: "right", fontSize: 14, color: "#3D434B", fontStyle: "italic" }}>{ag}</div>
-                              {manualAgeGroups.length > 1 && (
-                                <button onClick={() => {
-                                  const remaining = manualAgeGroups.filter(g => g !== ag);
-                                  setManualAthletes(prev => prev.map(a => a.ageGroup === ag ? { ...a, ageGroup: remaining[0] } : a));
-                                  setManualAgeGroups(remaining);
-                                }} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 16, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>&times;</button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", color: "#3D434B", marginBottom: 10 }}>Age Groups</div>
+                      <AgeGroupEditor groups={manualAgeGroups} uid={currentUser && currentUser.uid} colour="#0B3FCC"
+                        onChange={(g, renamed) => {
+                          setManualAgeGroups(g);
+                          if (renamed) setManualAthletes(prev => prev.map(a => a.ageGroup === renamed[0] ? { ...a, ageGroup: renamed[1] } : a));
+                          else setManualAthletes(prev => prev.map(a => g.includes(a.ageGroup) ? a : { ...a, ageGroup: g[0] }));
+                        }} />
                     </div>
 
                     {/* Athletes */}
@@ -16161,14 +16124,16 @@ Start a new race anyway?`)) return;
                       </div>
                       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
                         <select value={regProfile.gender} onChange={e => setRegProfile(p => ({ ...p, gender: e.target.value }))}
-                          style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none", cursor: "pointer" }}>
+                          style={{ flex: 1, background: "#FFFFFF", border: `2px solid ${regProfile.gender ? "#C9C5BC" : "#B3001B"}`, borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none", cursor: "pointer" }}>
+                          <option value="">Gender…</option>
                           <option value="Male">Male</option>
                           <option value="Female">Female</option>
                           <option value="Non-binary">Non-binary</option>
                           <option value="Prefer not to say">Prefer not to say</option>
                         </select>
                         <select value={regProfile.ageGroup} onChange={e => setRegProfile(p => ({ ...p, ageGroup: e.target.value }))}
-                          style={{ flex: 1, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none", cursor: "pointer" }}>
+                          style={{ flex: 1, background: "#FFFFFF", border: `2px solid ${regProfile.ageGroup ? "#C9C5BC" : "#B3001B"}`, borderRadius: 6, padding: "10px 12px", color: "#0B0D10", fontSize: 14, outline: "none", cursor: "pointer" }}>
+                          <option value="">Age group…</option>
                           {(regRaceData.ageGroups || ageGroups).map(ag => <option key={ag} value={ag}>{ag}</option>)}
                         </select>
                       </div>
@@ -16228,11 +16193,12 @@ Start a new race anyway?`)) return;
                       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                         <button onClick={() => { setRegistrationStep("code"); setRegError(""); setRegRaceData(null); }}
                           style={{ ...btnStyle("#3D434B", true), padding: "10px 18px", fontSize: 14 }}>Back</button>
+                        {(() => { const incomplete = !regProfile.firstName.trim() || !regProfile.lastName.trim() || !regProfile.gender || !regProfile.ageGroup; return (
                         <button onClick={() => registerForRace(regRaceData.code, regProfile, regCourseId)}
-                          disabled={regWorking || !regProfile.firstName.trim() || !regProfile.lastName.trim()}
-                          style={{ ...btnStyle("#04613F"), flex: 1, padding: "12px", fontSize: 14, letterSpacing: 1, opacity: (regWorking || !regProfile.firstName.trim() || !regProfile.lastName.trim()) ? 0.5 : 1 }}>
-                          {regWorking ? "Joining…" : "Join Race"}
-                        </button>
+                          disabled={regWorking || incomplete}
+                          style={{ ...btnStyle("#04613F"), flex: 1, padding: "12px", fontSize: 14, letterSpacing: 1, opacity: (regWorking || incomplete) ? 0.5 : 1 }}>
+                          {regWorking ? "Joining…" : incomplete ? "Pick gender & age group" : "Join Race"}
+                        </button>); })()}
                       </div>
                     </div>
                   )}
@@ -16250,7 +16216,7 @@ Start a new race anyway?`)) return;
                             {joinLiveData?.clockRunning && <span style={{ color: "#04613F", marginLeft: 8 }}>● LIVE</span>}
                           </div>
                         </div>
-                        <button onClick={() => { setJoinRace(null); setJoinAthIdx(null); stopGpsTracking(); joinGpsTrailRef.current = []; setJoinGpsTrail([]); setJoinLiveData(null); localStorage.removeItem("tri-active-join"); try { localStorage.removeItem("tri-gps-trail"); } catch(_) {} }} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, color: "#3D434B", fontSize: 14, cursor: "pointer", padding: "5px 10px", flexShrink: 0, marginLeft: 8 }}>Leave</button>
+                        <button onClick={() => { setRegistrationStep("code"); setRegRaceData(null); setJoinRace(null); setJoinAthIdx(null); stopGpsTracking(); joinGpsTrailRef.current = []; setJoinGpsTrail([]); setJoinLiveData(null); localStorage.removeItem("tri-active-join"); try { localStorage.removeItem("tri-gps-trail"); } catch(_) {} }} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 4, color: "#3D434B", fontSize: 14, cursor: "pointer", padding: "5px 10px", flexShrink: 0, marginLeft: 8 }}>Leave</button>
                       </div>
 
                       {joinAthIdx === null ? (
@@ -16313,10 +16279,10 @@ Start a new race anyway?`)) return;
                                 <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1.2, color: me.dnf ? TM.live : TM.run }}>{me.dnf ? "DID NOT FINISH" : "🏁 FINISHED"}</div>
                                 <div className="tm-metric" style={{ fontSize: 48, letterSpacing: 0, color: me.dnf ? TM.live : TM.ink, lineHeight: 1.1 }}>{me.dnf ? "DNF" : chip != null ? fmtSplit(chip) : "—"}</div>
                                 {place && <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{place <= 3 ? ["🥇","🥈","🥉"][place - 1] + " " : ""}{ord(place)} in {feed.label}</div>}
-                                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                                {!me.dnf && <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                                   <button onClick={() => openCertShare(joinLiveData, me, "share")} style={{ ...btnStyle(TM.ink), flex: 1, fontSize: 16 }}>📤 Share certificate</button>
                                   <button onClick={() => openCertShare(joinLiveData, me, "save")} style={{ ...btnStyle(TM.ink, true), flex: 1, fontSize: 16 }}>⬇ Save certificate</button>
-                                </div>
+                                </div>}
                               </div>
                             );
                           })()}
@@ -17103,7 +17069,7 @@ Start a new race anyway?`)) return;
                 })() : [];
                 const watchMedals = ["🥇", "🥈", "🥉"];
                 const wFinished = rankedWatchAthletes.filter(a => a.finished && !a.dnf).length;
-                const wOnCourse = rankedWatchAthletes.filter(a => a.started && !a.finished).length;
+                const wOnCourse = rankedWatchAthletes.filter(a => a.started && !a.finished && !a.dnf).length;
                 return (
                   <div style={{ paddingTop: 8 }}>
                     {liveRace && liveRace.photoCode && (
@@ -20425,7 +20391,10 @@ Start a new race anyway?`)) return;
                                     })}
                                   </div>
                                   {ev.heats.every(h => !h.lanes.some(l => l.name)) && (ev.entries || []).length > 0 && (
-                                    <div style={{ ...TM_CAPTION, marginTop: 6 }}>Not seeded yet — tap 🌱 Seed on this event in Setup.</div>
+                                    <div style={{ ...TM_CAPTION, marginTop: 6, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                      <span>Not seeded yet — heats and lanes aren't set.</span>
+                                      <button onClick={() => seedAllEvents()} style={{ ...btnStyle(TM.swim), minHeight: 40, padding: "0 12px", fontSize: 14 }}>🌱 Seed every event now</button>
+                                    </div>
                                   )}
                                 </div>
                               ))}
@@ -21120,7 +21089,8 @@ Start a new race anyway?`)) return;
                 let had = false;
                 const fn = snap => {
                   setSwimLaneConnecting(false);
-                  if (!snap.exists()) {
+                  // A node with no host data is one this phone's own heartbeat re-created after the host removed it.
+                  if (!snap.exists() || !(snap.val() && (snap.val().hostUid || snap.val().meetName))) {
                     setSwimLaneSession(null);
                     setSwimLaneError(had ? "The host ended the live session. Thanks for timing!" : "Code not found. Check with the host.");
                     return;
