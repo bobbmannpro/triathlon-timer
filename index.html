@@ -2490,6 +2490,77 @@
           document.head.appendChild(sc);
         });
       }
+      function loadXLSX() {
+        if (window.XLSX) return Promise.resolve(window.XLSX);
+        return new Promise((res, rej) => {
+          const sc = document.createElement("script");
+          sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+          sc.onload = () => res(window.XLSX); sc.onerror = () => rej(new Error("Couldn't open Excel files right now — save the sheet as CSV and import that."));
+          document.head.appendChild(sc);
+        });
+      }
+      // A .csv with quoted cells → rows of strings.
+      function parseCsvText(text) {
+        const rows = []; let row = [], cell = "", q = false;
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i];
+          if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+          else if (ch === '"') q = true;
+          else if (ch === ",") { row.push(cell); cell = ""; }
+          else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+          else cell += ch;
+        }
+        if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+        return rows;
+      }
+      function rosterRowsToObjects(rows) {
+        const hi = rows.findIndex(r => r.some(c => String(c ?? "").trim() !== ""));
+        if (hi < 0) return [];
+        const headers = rows[hi].map(h => String(h ?? "").trim().toLowerCase());
+        return rows.slice(hi + 1).filter(r => r.some(c => String(c ?? "").trim() !== "")).map(r => { const o = {}; headers.forEach((h, i) => { if (h) o[h] = r[i] ?? ""; }); return o; });
+      }
+      // Rows of a roster file (.xlsx / .xls / .csv) as objects keyed by lower-case header.
+      async function readRosterFile(file) {
+        if (/\.(xlsx|xlsm|xls)$/i.test(file.name)) {
+          const XLSX = await loadXLSX();
+          const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          return rosterRowsToObjects(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }));
+        }
+        return rosterRowsToObjects(parseCsvText(await file.text()));
+      }
+      function rosterIsoDate(v) {
+        if (v == null || v === "") return "";
+        if (v instanceof Date) return isNaN(v) ? "" : new Date(v.getTime() - v.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+        const t = String(v).trim();
+        let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+        m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+        if (m) { let y = +m[3]; if (y < 100) y += y > new Date().getFullYear() % 100 ? 1900 : 2000; return `${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`; }
+        const d = new Date(t); return isNaN(d) ? "" : d.toISOString().slice(0, 10);
+      }
+      // One spreadsheet row → the fields a race athlete needs. Headers are matched loosely
+      // ("First name", "first", "Given name" all work), so a report from work imports as is.
+      function rosterRowToAthlete(o) {
+        const keys = Object.keys(o);
+        const pick = (...names) => { for (const nm of names) { const k = keys.find(h => h.replace(/[^a-z#]/g, "") === nm); if (k != null && String(o[k]).trim() !== "") return o[k]; } return ""; };
+        const str = v => String(v ?? "").trim();
+        let firstName = str(pick("firstname", "first", "givenname", "athletefirst")), lastName = str(pick("lastname", "last", "surname", "familyname", "athletelast"));
+        let name = str(pick("name", "fullname", "athlete", "athletename", "participant", "member", "swimmer", "runner", "rider"));
+        if (!firstName && name) {
+          if (name.includes(",")) { const [l, f] = name.split(",").map(x => x.trim()); firstName = f; lastName = l; }
+          else { const parts = name.split(/\s+/); firstName = parts[0] || ""; lastName = parts.slice(1).join(" "); }
+        }
+        name = [firstName, lastName].filter(Boolean).join(" ") || name;
+        const g = str(pick("gender", "sex", "mf")).toLowerCase();
+        const gender = /^(m|male|boy|boys|men|man)$/.test(g) ? "Male" : /^(f|female|girl|girls|women|woman)$/.test(g) ? "Female" : /non|nb|^x$/.test(g) ? "Non-binary" : "";
+        const dob = rosterIsoDate(pick("dateofbirth", "dob", "birthday", "birthdate", "born", "birth"));
+        return { name, firstName, lastName, gender, dob,
+          ageGroup: str(pick("agegroup", "division", "group", "agediv")), age: str(pick("age")),
+          email: str(pick("email", "parentemail", "guardianemail", "emailaddress", "parentsemail", "contactemail")),
+          bib: str(pick("bib", "bibnumber", "racenumber", "number", "#", "bib#")), course: str(pick("course", "distance", "race", "category", "event")),
+          team: str(pick("team", "club", "school", "gym", "organization")) };
+      }
+      const ROSTER_TEMPLATE_CSV = "First name,Last name,Gender,Date of birth,Age group,Email,Bib,Course,Team\nZoe,Grant,Female,2016-01-20,,zoe@example.com,,,\nJamie,Grant,Female,2014-05-09,,parent@example.com,,,\nMia,Lopez,Female,2017-03-04,,,,,\n";
       async function fileFromZip(file) {
         const JSZip = await loadJSZip();
         const zip = await JSZip.loadAsync(file);
@@ -10109,7 +10180,69 @@ ${html}</body></html>`);
           setEditingAthleteData(null);
         }
         const csvInputRef = useRef(null);
+        const [rosterImport, setRosterImport] = useState(null);   // { file, items } under review before they join the roster
+        async function handleRosterFile(e) {
+          const file = e.target.files[0]; e.target.value = ""; if (!file) return;
+          try {
+            const objs = await readRosterFile(file);
+            if (!objs.length) { alert("That file has no rows under its header row."); return; }
+            if (["swim", "run"].every(k => k in objs[0]) && !("first name" in objs[0] || "first" in objs[0])) { importResultsObjects(objs); return; }
+            const lib = allRaceAthletes();
+            const findSaved = key => savedAthletes.find(a => normName(athleteName(a) || a.name) === key) || lib.find(a => normName(a.name) === key) || null;
+            const inRace = new Set(athletes.map(a => normName(athleteName(a) || a.name)).filter(Boolean));
+            const byAge = age => ageGroups.find(g => { const r = parseAgeRange(g); return r && age >= r.min && age <= r.max; }) || "";
+            const items = objs.map(rosterRowToAthlete).filter(r => r.name).map(r => {
+              const key = normName(r.name);
+              const saved = key ? findSaved(key) : null;
+              let match = "new";
+              if (saved) {
+                const dobSame = r.dob && saved.dob && r.dob === saved.dob, mailSame = r.email && saved.email && r.email.toLowerCase() === String(saved.email).toLowerCase();
+                const dobDiff = r.dob && saved.dob && r.dob !== saved.dob;
+                match = dobSame || mailSame ? "same" : dobDiff ? "differs" : "check";
+              }
+              const dob = r.dob || (saved && saved.dob) || "";
+              const ageGroup = resolveAgeGroup(dob, ageGroups) || (ageGroups.includes(r.ageGroup) ? r.ageGroup : "") || (r.age && byAge(+r.age)) || (saved && ageGroups.includes(saved.ageGroup) ? saved.ageGroup : "") || ageGroups[0];
+              return { ...r, dob, ageGroup, gender: r.gender || (saved && saved.gender) || "", email: r.email || (saved && saved.email) || "", saved, match, same: match === "same" || match === "check", already: inRace.has(key), skip: false };
+            });
+            setRosterImport({ file: file.name, items });
+          } catch (err) { alert(err.message || "Couldn't read that file."); }
+        }
+        function confirmRosterImport() {
+          const items = (rosterImport?.items || []).filter(x => !x.already && !x.skip);
+          setAthletes(a => {
+            const used = new Set(a.map(x => String(x.raceNumber || "")));
+            let next = Math.max(0, ...a.map(x => x.raceNumber || 0));
+            const out = [...a];
+            items.forEach((x, i) => {
+              const base = freshAthlete(x.name, Date.now() + i, x.gender || "Male", x.ageGroup || ageGroups[0], courses[0]?.id || null);
+              if (x.firstName) { base.firstName = x.firstName; base.lastName = x.lastName; }
+              base.dob = x.dob || ""; base.email = x.email || ""; if (x.team) base.team = x.team;
+              if (x.saved && x.same && x.saved.uid) base.uid = x.saved.uid;   // the account they already claimed
+              let bib = x.bib && /^\d+$/.test(x.bib) && !used.has(x.bib) ? +x.bib : null;
+              if (bib == null) { bib = ++next; while (used.has(String(bib))) bib = ++next; } else next = Math.max(next, bib);
+              used.add(String(bib)); base.raceNumber = bib;
+              if (x.course) { const c = courses.find(c => normName(c.name) === normName(x.course)); if (c) base.courseId = c.id; }
+              out.push(base);
+            });
+            return out;
+          });
+          setRosterImport(null);
+        }
+        function downloadRosterTemplate() {
+          const blob = new Blob([ROSTER_TEMPLATE_CSV], { type: "text/csv" });
+          const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "timeathon-roster-template.csv"; document.body.appendChild(a); a.click(); a.remove();
+        }
         const logoInputRef = useRef(null);
+        function importResultsObjects(objs) {
+          const mmss = s => { if (!s || !String(s).trim()) return null; const [m, sec] = String(s).trim().split(":").map(Number); return ((m || 0) * 60 + (sec || 0)) * 1000; };
+          const newAthletes = objs.map((o, idx) => {
+            const sw = mmss(o.swim), t1 = mmss(o.t1), bk = mmss(o.bike), t2 = mmss(o.t2), rn = mmss(o.run);
+            const s0 = sw, s1 = (s0 != null && t1 != null ? s0 + t1 : null), s2 = (s1 != null && bk != null ? s1 + bk : null), s3 = (s2 != null && t2 != null ? s2 + t2 : null), s4 = (s3 != null && rn != null ? s3 + rn : null);
+            return { id: Date.now() + idx, email: String(o.email || o["parent email"] || ""), name: String(o.name || `Athlete ${idx + 1}`), gender: String(o.gender || "Male"), ageGroup: String(o["age group"] || ageGroups[0] || "9-10"),
+              courseId: courses[0]?.id || null, raceNumber: idx + 1, startOffset: 0, splits: [s0, s1, s2, s3, s4], started: true, finished: s4 != null };
+          }).filter(a => a.name);
+          if (newAthletes.length > 0) { setAthletes(newAthletes); setClockStarted(true); setClockRunning(false); setView("results"); }
+        }
         function handleCSVImport(e) {
           const file = e.target.files[0]; if (!file) return;
           const reader = new FileReader();
@@ -17615,9 +17748,11 @@ Start a new race anyway?`)) return;
                   <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                     <button onClick={() => { setEmailKind("watch"); setView("email"); }} style={btnStyle(TM.ink, true)}>✉ Email families</button>
                     <button onClick={() => { setAthletePickerSearch(""); setShowAthletePicker(true); }} style={btnStyle("#04613F", true)}>+ Add Athlete</button>
-                    <button onClick={() => csvInputRef.current.click()} style={btnStyle("#04613F", true)}>&#8679; Import from CSV</button>
-                    <input ref={csvInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCSVImport} />
+                    <button onClick={() => csvInputRef.current.click()} style={btnStyle("#04613F", true)}>&#8679; Import roster (Excel / CSV)</button>
+                    <button onClick={downloadRosterTemplate} style={btnStyle(TM.ink, true)}>⬇ Roster template</button>
+                    <input ref={csvInputRef} type="file" accept=".xlsx,.xls,.xlsm,.csv" style={{ display: "none" }} onChange={handleRosterFile} />
                   </div>
+                  <div style={{ ...TM_CAPTION, marginTop: 6 }}>A sheet with First name, Last name, Gender, Date of birth and Email (plus Bib, Course, Team if you have them). Anyone already in your athletes is matched to their saved profile.</div>
                   </SetupSection>
 
                   <SetupSection title="Let Athletes Sign Themselves Up" color="#04613F"
@@ -17655,6 +17790,57 @@ Start a new race anyway?`)) return;
                   </SetupSection>
 
                   {/* Athlete picker modal */}
+                  {rosterImport && (() => {
+                    const items = rosterImport.items, adding = items.filter(x => !x.already && !x.skip).length;
+                    const noGender = items.some(x => !x.already && !x.skip && !x.gender);
+                    const upd = (i, patch) => setRosterImport(r => ({ ...r, items: r.items.map((x, j) => j === i ? { ...x, ...patch } : x) }));
+                    const cell = { padding: "6px 8px", fontSize: 14, borderBottom: `1px solid ${TM.line}`, verticalAlign: "top" };
+                    const sel = { minHeight: 36, fontSize: 14, border: `2px solid ${TM.line}`, borderRadius: 6, background: "#FFFFFF" };
+                    return (
+                      <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.94)", zIndex: 300, overflowY: "auto", padding: "16px" }}>
+                        <div style={{ background: "#EFEDE8", border: "2px solid #04613F", borderRadius: 8, padding: "18px 16px", maxWidth: 820, margin: "0 auto" }}>
+                          <div style={{ fontSize: 20, fontWeight: 900 }}>Import {items.length} from {rosterImport.file}</div>
+                          <div style={{ ...TM_CAPTION, marginTop: 4 }}>Names that match someone you already have are linked to that saved profile (account, birthday, email) when "Same person" is ticked. Untick anyone you don't want in this race.</div>
+                          <div style={{ overflowX: "auto", marginTop: 12 }}>
+                            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 640 }}>
+                              <thead><tr>{["", "Name", "Gender", "Birthday", "Age group", "Email", "Match"].map(h => <th key={h} style={{ ...cell, textAlign: "left", fontSize: 12, letterSpacing: 1, color: TM.inkMuted }}>{h}</th>)}</tr></thead>
+                              <tbody>
+                                {items.map((x, i) => (
+                                  <tr key={i} style={{ opacity: x.already || x.skip ? 0.45 : 1 }}>
+                                    <td style={cell}><input type="checkbox" checked={!x.already && !x.skip} disabled={x.already} onChange={e => upd(i, { skip: !e.target.checked })} /></td>
+                                    <td style={{ ...cell, fontWeight: 800 }}>{x.name}{x.team ? <div style={{ fontSize: 12, fontWeight: 500, color: TM.inkMuted }}>{x.team}</div> : null}</td>
+                                    <td style={cell}><select value={x.gender} onChange={e => upd(i, { gender: e.target.value })} style={{ ...sel, borderColor: x.gender ? TM.line : TM.live }}><option value="">Gender…</option><option>Male</option><option>Female</option><option>Non-binary</option></select></td>
+                                    <td style={cell}>{x.dob || <span style={{ color: TM.inkMuted }}>—</span>}</td>
+                                    <td style={cell}><select value={x.ageGroup} onChange={e => upd(i, { ageGroup: e.target.value })} style={sel}>{ageGroups.map(g => <option key={g} value={g}>{g}</option>)}</select></td>
+                                    <td style={{ ...cell, wordBreak: "break-all" }}>{x.email || <span style={{ color: TM.inkMuted }}>—</span>}</td>
+                                    <td style={cell}>
+                                      {x.already ? <span style={{ fontWeight: 700 }}>Already in this race</span>
+                                        : !x.saved ? <span style={{ color: TM.run, fontWeight: 700 }}>New</span>
+                                        : (
+                                          <div>
+                                            <div style={{ fontSize: 13, color: x.match === "differs" ? TM.live : TM.inkMuted }}>
+                                              {x.match === "same" ? "✓ Matches saved " : x.match === "differs" ? "Saved with a different birthday: " : "Same name as saved "}<b>{athleteName(x.saved) || x.saved.name}</b>{x.saved.dob ? ` (born ${x.saved.dob})` : ""}
+                                            </div>
+                                            <label style={{ display: "flex", gap: 6, alignItems: "center", fontWeight: 700, marginTop: 2 }}>
+                                              <input type="checkbox" checked={!!x.same} onChange={e => upd(i, { same: e.target.checked })} /> Same person
+                                            </label>
+                                          </div>
+                                        )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                            <button onClick={confirmRosterImport} disabled={!adding || noGender} style={{ ...btnStyle("#04613F"), flex: 1, opacity: adding && !noGender ? 1 : 0.5 }}>
+                              {noGender ? "Pick a gender for everyone" : `Add ${adding} to the race`}</button>
+                            <button onClick={() => setRosterImport(null)} style={{ ...btnStyle(TM.ink, true) }}>Cancel</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {showAthletePicker && (() => {
                     const roster = allRaceAthletes();
                     const filtered = athletePickerSearch.trim()
