@@ -17560,9 +17560,7 @@ Start a new race anyway?`)) return;
                           style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 8px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
                         <input value={ath.lastName || ""} onChange={e => updateLastName(i, e.target.value)} placeholder="Last"
                           style={{ flex: 1, minWidth: 0, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "8px 8px", color: "#0B0D10", fontSize: 14, outline: "none" }} />
-                        {athletes.length > 1 && (
-                          <button onClick={() => removeAthlete(i)} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
-                        )}
+                        <button onClick={() => removeAthlete(i)} aria-label="Remove athlete" style={{ background: "none", border: "none", color: "#3D434B", fontSize: 18, cursor: "pointer", padding: "0 6px" }}>&times;</button>
                       </div>
                       <div style={{ display: "flex", gap: 8, marginLeft: 46, flexWrap: "wrap" }}>
                         <select value={ath.gender} onChange={e => updateGender(i, e.target.value)}
