@@ -14091,6 +14091,24 @@ Start a new race anyway?`)) return;
           localStorage.setItem("swim-saved-meets", JSON.stringify(meets));
           if (currentUser) rtdb.ref("users/"+currentUser.uid+"/swimMeets").set(meets).catch(console.error);
         }
+
+        // A saved meet keeps itself saved: seeding, entries and every heat's times land in the
+        // "In the works" copy as they happen, so reopening the meet later shows the meet as run.
+        const swimAutosaveRef = useRef(null);
+        useEffect(() => {
+          if (!swimMeet || !swimMeet._id) return;
+          const existing = (swimSavedMeets || []).find(m => m.id === swimMeet._id);
+          if (!existing) return;
+          clearTimeout(swimAutosaveRef.current);
+          swimAutosaveRef.current = setTimeout(() => {
+            const entry = { ...existing, meetName: swimMeet.meetName || existing.meetName, pool: swimMeet.pool, lanes: swimMeet.lanes || 8,
+              events: swimMeet.events, meetEntries: swimMeet.meetEntries || [], teams: swimMeet.teams || [], relays: swimMeet.relays || [],
+              date: swimMeet.date || null, startTime: swimMeet.startTime || null, facility: swimMeet.facility || null,
+              ageUpDate: swimMeet.ageUpDate || null, anyAge: !!swimMeet.anyAge, liveLeadMin: swimMeet.liveLeadMin ?? null };
+            if (JSON.stringify(entry) !== JSON.stringify(existing)) persistSwimMeets(swimSavedMeets.map(m => m.id === entry.id ? entry : m));
+          }, 1500);
+          return () => clearTimeout(swimAutosaveRef.current);
+        }, [swimMeet]);
         // A Timeathon meet file: events from the host, a team's entries
         // from a coach, or the seeded program. Returns a message to show.
         async function importMeetJson(file) {
@@ -20495,6 +20513,8 @@ Start a new race anyway?`)) return;
                                     </button>
                                     <button style={{ ...btnStyle("#B3001B", true), padding:"4px 10px", fontSize:14 }} onClick={() => {
                                       rtdb.ref(`swimLive/${swimLiveCode}`).remove().catch(console.error); unlistRace(swimLiveCode);
+                                      // Not live any more: a reload must not bring the session back.
+                                      persistSwimMeets(swimSavedMeets.map(m => m.code === swimLiveCode ? { ...m, live: false } : m));
                                       setSwimLiveCode(null);
                                     }}>
                                       Stop
