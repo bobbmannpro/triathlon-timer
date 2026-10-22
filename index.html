@@ -14120,7 +14120,8 @@ Start a new race anyway?`)) return;
             return;
           }
           if (kind === "swim") {
-            const hasWork = swimMeet.meetName || swimMeet.events.length > 0;
+            // A saved meet keeps itself saved, so only unsaved work needs the "save it first?" stop.
+            const hasWork = !swimMeet._id && (swimMeet.meetName || swimMeet.events.length > 0);
             setView("swim");
             if (hasWork) { setSwimView("home"); setSwimConfirmNewMeet(true); return; }
             setSwimMeet({ meetName: nm, pool: "25y", events: [], code: cd });
@@ -14532,7 +14533,7 @@ Start a new race anyway?`)) return;
                 <button onClick={goRoleHome} aria-label="Back"
                   style={{ ...btnStyle(TM.ink, true), minWidth: 46, padding: "0 12px", fontSize: 22 }}>←</button>
               ) : null}
-              <button onClick={() => { if (isHost) setView("myraces"); else goRoleHome(); }}
+              <button onClick={() => { if (isHost) { setHomeKind(null); setPastOpen(false); setView("myraces"); window.scrollTo(0, 0); } else goRoleHome(); }}
                 aria-label="Timeathon home"
                 style={{ background: "none", border: "none", padding: 0, cursor: "pointer", minWidth: 0,
                          display: "flex", alignItems: "center", gap: 8 }}>
@@ -14960,7 +14961,9 @@ Start a new race anyway?`)) return;
                         if (up.length) bits.push(`${up.length} in the works`);
                         if (past.length) bits.push(`${past.length} past`);
                         return (
-                          <button key={k} onClick={() => { setHomeKind(k); setPastOpen(false); window.scrollTo(0, 0); }}
+                          <button key={k} onClick={() => { setHomeKind(k); setPastOpen(false); window.scrollTo(0, 0);
+                              // The top row follows the kind you picked: swim tabs for swim meets, tri tabs for triathlons.
+                              if (k === "triathlon" || k === "swim" || k === "bike") selectMode(k); }}
                             style={{ ...rowStyle(K.colour), display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 86, cursor: "pointer", textAlign: "left", color: TM.ink }}>
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <span style={{ display: "block", fontSize: 22, fontWeight: 900, color: K.colour }}>{K.label}</span>
