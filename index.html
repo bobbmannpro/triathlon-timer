@@ -193,11 +193,11 @@
           </linearGradient>
         </defs>
         <g transform="translate(27,34)">
-          <path d="M-24 -29 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" opacity="0.55" class="spl-hand" data-turns="2"/>
-          <path d="M-24 0 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" opacity="0.78" class="spl-hand" data-turns="3"/>
-          <path d="M-24 29 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" class="spl-hand" data-turns="4"/>
-          <path d="M5 0 L34 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="7.5" class="spl-hand" data-turns="1"/>
-          <circle cx="5" cy="0" r="6.5" fill="#FFFFFF" stroke="url(#spl)" stroke-width="3.5"/>
+          <path d="M-24 -29 L5 0" fill="none" stroke="#0B3FCC" stroke-linecap="round" stroke-width="6" class="spl-hand" data-turns="2"/>
+          <path d="M-24 0 L5 0" fill="none" stroke="#B44A00" stroke-linecap="round" stroke-width="6" class="spl-hand" data-turns="3"/>
+          <path d="M-24 29 L5 0" fill="none" stroke="#04613F" stroke-linecap="round" stroke-width="6" class="spl-hand" data-turns="4"/>
+          <path d="M5 0 L34 0" fill="none" stroke="#0B0D10" stroke-linecap="round" stroke-width="7.5" class="spl-hand" data-turns="1"/>
+          <circle cx="5" cy="0" r="6.5" fill="#FFFFFF" stroke="#0B0D10" stroke-width="3.5"/>
         </g>
       </svg>
       <div id="splash-logo">TIMEATHON</div>
@@ -211,9 +211,10 @@
       (function () {
         var hands = document.querySelectorAll("#splash-mark .spl-hand");
         if (!hands.length) return;
-        var LOOP = 3600, REST = 0.12, END = 0.86;
+        var LOOP = 3000, REST = 0.12, END = 0.86;
+        window.__splashStart = performance.now(); window.__splashLoop = LOOP; window.__splashEnd = END;
         var ease = function (t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
-        var t0 = performance.now();
+        var t0 = window.__splashStart;
         function frame(now) {
           var splash = document.getElementById("splash");
           if (!splash) return;
@@ -23143,7 +23144,13 @@ Start a new race anyway?`)) return;
       }
       ReactDOM.createRoot(document.getElementById("root")).render(<Boundary><App /></Boundary>);
       const splash = document.getElementById("splash");
-      if (splash) { splash.classList.add("hide"); setTimeout(() => splash.remove(), 350); }
+      if (splash) {
+        // Let the hands finish their spin and land in the logo, then fade.
+        const loop = window.__splashLoop || 3000, end = window.__splashEnd || 0.86;
+        const f = ((performance.now() - (window.__splashStart || 0)) % loop) / loop;
+        const wait = f < end ? (end - f) * loop : 0;
+        setTimeout(() => { splash.classList.add("hide"); setTimeout(() => splash.remove(), 350); }, wait);
+      }
     </script>
   </body>
 </html>
