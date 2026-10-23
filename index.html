@@ -193,22 +193,10 @@
           </linearGradient>
         </defs>
         <g transform="translate(27,34)">
-          <path d="M-24 -29 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" opacity="0.55">
-            <animateTransform attributeName="transform" type="rotate" values="0 5 0; 0 5 0; 720 5 0; 720 5 0" keyTimes="0; 0.12; 0.86; 1"
-              calcMode="spline" keySplines="0 0 1 1; 0.45 0 0.15 1; 0 0 1 1" dur="3.6s" repeatCount="indefinite"/>
-          </path>
-          <path d="M-24 0 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" opacity="0.78">
-            <animateTransform attributeName="transform" type="rotate" values="0 5 0; 0 5 0; 1080 5 0; 1080 5 0" keyTimes="0; 0.12; 0.86; 1"
-              calcMode="spline" keySplines="0 0 1 1; 0.45 0 0.15 1; 0 0 1 1" dur="3.6s" repeatCount="indefinite"/>
-          </path>
-          <path d="M-24 29 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6">
-            <animateTransform attributeName="transform" type="rotate" values="0 5 0; 0 5 0; 1440 5 0; 1440 5 0" keyTimes="0; 0.12; 0.86; 1"
-              calcMode="spline" keySplines="0 0 1 1; 0.45 0 0.15 1; 0 0 1 1" dur="3.6s" repeatCount="indefinite"/>
-          </path>
-          <path d="M5 0 L34 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="7.5">
-            <animateTransform attributeName="transform" type="rotate" values="0 5 0; 0 5 0; 360 5 0; 360 5 0" keyTimes="0; 0.12; 0.86; 1"
-              calcMode="spline" keySplines="0 0 1 1; 0.45 0 0.15 1; 0 0 1 1" dur="3.6s" repeatCount="indefinite"/>
-          </path>
+          <path d="M-24 -29 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" opacity="0.55" class="spl-hand" data-turns="2"/>
+          <path d="M-24 0 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" opacity="0.78" class="spl-hand" data-turns="3"/>
+          <path d="M-24 29 L5 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="6" class="spl-hand" data-turns="4"/>
+          <path d="M5 0 L34 0" fill="none" stroke="url(#spl)" stroke-linecap="round" stroke-width="7.5" class="spl-hand" data-turns="1"/>
           <circle cx="5" cy="0" r="6.5" fill="#FFFFFF" stroke="url(#spl)" stroke-width="3.5"/>
         </g>
       </svg>
@@ -217,6 +205,29 @@
       <div id="splash-sub">SWIM &nbsp;·&nbsp; BIKE &nbsp;·&nbsp; RUN</div>
       <div id="splash-dot"></div>
     </div>
+    <script>
+      // Loading screen: each hand rests in the logo, spins its own number of turns around the
+      // pivot, eases back into place with the others, rests, and loops — until the app takes over.
+      (function () {
+        var hands = document.querySelectorAll("#splash-mark .spl-hand");
+        if (!hands.length) return;
+        var LOOP = 3600, REST = 0.12, END = 0.86;
+        var ease = function (t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+        var t0 = performance.now();
+        function frame(now) {
+          var splash = document.getElementById("splash");
+          if (!splash) return;
+          var f = ((now - t0) % LOOP) / LOOP;
+          var k = f < REST ? 0 : f > END ? 1 : ease((f - REST) / (END - REST));
+          for (var i = 0; i < hands.length; i++) {
+            var turns = +hands[i].getAttribute("data-turns") || 1;
+            hands[i].setAttribute("transform", "rotate(" + (k * turns * 360) + " 5 0)");
+          }
+          requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      })();
+    </script>
     <!-- Brand gradients defined once; every logo instance references them by id. -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <defs>
