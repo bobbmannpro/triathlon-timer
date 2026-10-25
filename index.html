@@ -11739,6 +11739,23 @@ ${html}</body></html>`);
           };
         }
 
+        // "Ride now": no wizard. A free ride under the rider's own profile, named by the clock,
+        // published and started in one tap. It can be renamed when it's finished.
+        function quickRide(sport) {
+          let riders = bikeRiders, rider = riders[0];
+          if (!rider) {
+            const me = (userProfile && [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" ")) || (currentUser && currentUser.email || "").split("@")[0] || "Me";
+            rider = { ...newBikeRider(), name: me }; riders = [rider]; persistBikeRiders(riders);
+          }
+          const d = new Date();
+          const label = `${sport === "run" ? "Run" : "Ride"} · ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+          const feed = { ...newBikeFeed(), eventName: label, sport, riderId: rider.id, rideMode: "free", snapProfile: sport === "run" ? "hiking-mountain" : "trekking",
+            date: d.toLocaleDateString("en-CA"), time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`, liveLeadMin: 0 };
+          persistBikeFeeds([feed, ...bikeFeedList]);
+          publishBikeMeta(feed, riders);
+          selectMode("bike"); setBikeRideCode(feed.code); setView("bike"); setBikeView("ride");
+          setTimeout(() => startBikeRide(feed), 300);
+        }
         function persistBikeFeeds(list) {
           setBikeFeedList(list);
           try { localStorage.setItem("bike-feeds", JSON.stringify(list)); } catch(_) {}
@@ -12197,13 +12214,13 @@ ${html}</body></html>`);
           const seg = pts.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}">${p[3] ? `<time>${new Date(p[3] * 1000).toISOString()}</time>` : ""}</trkpt>`).join("\n");
           return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Timeathon" xmlns="http://www.topografix.com/GPX/1/1">\n<metadata><name>${esc(name)}</name>${t0 ? `<time>${new Date(t0 * 1000).toISOString()}</time>` : ""}</metadata>\n<trk><name>${esc(name)}</name><type>${feed && feed.sport === "run" ? "running" : "cycling"}</type><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>\n`;
         }
-        async function downloadRideGpx(code, name) {
+        async function downloadRideGpx(code, name, opts) {
           try {
             const pts = await bikeTrackPts(code);
             if (pts.length < 2) { alert("No route recorded for this ride."); return; }
             const blob = new Blob([buildGpx(name || "Timeathon ride", pts)], { type: "application/gpx+xml" });
             const file = new File([blob], `${(name || "ride").replace(/[^\w\- ]+/g, "").trim() || "ride"}.gpx`, { type: "application/gpx+xml" });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name || "Ride" }); return; }
+            if (!(opts && opts.download) && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name || "Ride" }); return; }
             const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
             setTimeout(() => URL.revokeObjectURL(a.href), 4000);
           } catch (e) { if (e && e.name !== "AbortError") alert("Couldn't make the GPX file: " + (e.message || e)); }
@@ -14929,6 +14946,15 @@ Start a new race anyway?`)) return;
                         <ArrowIcon />
                       </button>
                       {curKind === k && liveBar}
+                      {k === "bike" && (
+                        <div style={{ marginTop: 14 }}>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <button onClick={() => quickRide("bike")} style={{ ...btnStyle(K.colour), flex: "1 1 160px", minHeight: 64, fontSize: 20 }}>▶ Ride now</button>
+                            <button onClick={() => quickRide("run")} style={{ ...btnStyle(TM.run), flex: "1 1 160px", minHeight: 64, fontSize: 20 }}>▶ Run now</button>
+                          </div>
+                          <div style={{ ...TM_CAPTION, marginTop: 6 }}>Just go — no route, no date. It records and shares live under your name; name it when you finish. Use "New ride or run" for a planned route or an event.</div>
+                        </div>
+                      )}
 
                       {pastOpen ? (<>
                         <h2 style={{ ...TM_H2, marginTop: 26, marginBottom: 4 }}>Past {K.label.toLowerCase()}s</h2>
@@ -22592,10 +22618,12 @@ Start a new race anyway?`)) return;
                           </label>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button onClick={finishBikeDone} style={{ ...btnStyle("#04613F"), padding: "0 18px" }}>Done</button>
+                            <button onClick={() => { downloadRideGpx(bikeDone.code, bikeDoneOpts.name || bikeDone.name, { download: true }); setTimeout(() => window.open("https://connect.garmin.com/modern/import-data", "_blank"), 600); }}
+                              style={{ ...btnStyle("#0B3FCC"), padding: "0 14px" }}>⌚ Send to Garmin Connect</button>
                             <button onClick={() => downloadRideGpx(bikeDone.code, bikeDoneOpts.name || bikeDone.name)} style={{ ...btnStyle("#0B3FCC", true), padding: "0 14px" }}>⬇ GPX for Strava / Garmin / TrainingPeaks</button>
                           </div>
                           <div style={{ fontSize: 14, color: "#3D434B", marginTop: 10 }}>
-                            Used the Timeathon watch app? It saved this {RW.ride} as a Garmin activity, so it's already on its way to Garmin Connect — and to Strava or TrainingPeaks if they're linked there.
+                            <b>Send to Garmin Connect</b> saves the GPX file and opens Garmin's Import Data page — drop the file there and it shows up as an activity (Garmin only takes files on its website, not in the phone app). Used the Timeathon watch app? It saved this {RW.ride} as a Garmin activity, so it's already on its way to Garmin Connect — and to Strava or TrainingPeaks if they're linked there.
                           </div>
                         </div>
                       )}
