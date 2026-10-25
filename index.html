@@ -7534,7 +7534,7 @@ ${html}</body></html>`);
         const [bikeWatchSeen, setBikeWatchSeen] = useState(0);
         // After Complete Ride: what to keep (the route as a course, the ride itself).
         const [bikeDone, setBikeDone] = useState(null);       // { code, name, distM, elapsedMs }
-        const [bikeDoneOpts, setBikeDoneOpts] = useState({ saveRoute: true, leg: "bike", name: "", keepRide: false });
+        const [bikeDoneOpts, setBikeDoneOpts] = useState({ saveRoute: true, leg: "bike", name: "", keepRide: true });
         const [bikeDoneMsg, setBikeDoneMsg] = useState("");
         // The rider's map fills the screen while riding.
         const [bikeRideFull, setBikeRideFull] = useState(false);
@@ -12238,13 +12238,18 @@ ${html}</body></html>`);
             if (!o.keepRide) {
               persistBikeFeeds(bikeFeedList.filter(x => x.code !== d.code));
               rtdb.ref(`bikeFeeds/${d.code}`).remove().catch(console.error);
-              unlistRace(d.code);
-              if (bikeWatchPairRef.current) unpairBikeWatch();
-              setBikeRideCode(null);
+            } else {
+              // Finished: the ride keeps its map and stats as a record and can't be ridden again.
+              const name = (o.name || "").trim();
+              persistBikeFeeds(bikeFeedList.map(x => x.code === d.code ? { ...x, eventName: name || x.eventName, finishedAt: Date.now(), past: true, summary: { distM: d.distM || 0, elapsedMs: d.elapsedMs || 0 } } : x));
+              rtdb.ref(`bikeFeeds/${d.code}/meta`).update({ finishedAt: Date.now(), ...(name ? { eventName: name } : {}) }).catch(() => {});
             }
+            unlistRace(d.code);
+            if (bikeWatchPairRef.current) unpairBikeWatch();
+            setBikeRideCode(null);
             setBikeDoneMsg(o.saveRoute
-              ? `✓ Route saved as “${(o.name || "").trim() || "Ride route"}” — find it under Setup → Saved courses.${o.keepRide ? "" : " The ride itself wasn't kept."}`
-              : (o.keepRide ? "✓ Ride kept in My Races." : "✓ Done. Nothing was kept."));
+              ? `✓ Route saved as “${(o.name || "").trim() || "Ride route"}” — find it under Setup → Saved courses.${o.keepRide ? " The ride is under Bike / Run → Past with its map and stats." : " The ride itself wasn't kept."}`
+              : (o.keepRide ? "✓ Ride saved — find it under Bike / Run → Past with its map and stats." : "✓ Done. Nothing was kept."));
             setBikeDone(null);
           } catch (e) { console.error(e); alert("Something went wrong: " + (e.message || e)); }
         }
@@ -14772,8 +14777,11 @@ Start a new race anyway?`)) return;
                   ...bikeFeedList.map(f => ({ key: "b" + f.code, kind: "bike", name: f.eventName || bikeRiderFor(f)?.name || "Untitled ride",
                     when: { date: f.date, time: f.time, lead: f.liveLeadMin }, created: f.createdAt || 0, past: f.past,
                     setWhen: w => bikeWhen(f, w), setPast: v => persistBikeFeeds(bikeFeedList.map(x => x.code === f.code ? { ...x, past: v } : x)),
-                    meta: `${bikeRiderFor(f)?.name || "No rider yet"} · code ${f.code}`,
-                    open: () => openBike(f), del: () => { persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code)); rtdb.ref(`bikeFeeds/${f.code}`).remove().catch(console.error); } })),
+                    meta: f.finishedAt
+                      ? `✓ ${f.sport === "run" ? "Run" : "Ride"} done · ${f.summary ? `${(f.summary.distM / (f.units === "km" ? 1000 : 1609.344)).toFixed(2)} ${f.units === "km" ? "km" : "mi"} · ${fmtSplit(f.summary.elapsedMs || 0)}` : ""} · ${bikeRiderFor(f)?.name || ""} · code ${f.code}`
+                      : `${bikeRiderFor(f)?.name || "No rider yet"} · code ${f.code}`,
+                    open: () => { if (f.finishedAt) { selectMode("bike"); setBikeWatchCode(f.code); setView("bike"); setBikeView("feed"); } else openBike(f); },
+                    del: () => { persistBikeFeeds(bikeFeedList.filter(x => x.code !== f.code)); rtdb.ref(`bikeFeeds/${f.code}`).remove().catch(console.error); } })),
                 ];
                 // Past races: moved there by hand, or the race day has gone by. Races saved
                 // before this list existed (13 Oct 2026) and never given a date start there too.
@@ -21882,8 +21890,11 @@ Start a new race anyway?`)) return;
                           <div style={{ ...S.row, flexWrap:"wrap", gap:6, marginTop:10 }}>
                             <button onClick={() => { setBikeDraft({ ...newBikeFeed(), ...f }); setBikeSetupStep(0); setBikeView("setup"); }}
                               style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>⚙️ Edit</button>
-                            <button onClick={() => { setBikeRideCode(f.code); setBikeView("ride"); }}
-                              style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>📡 {f.sport === "run" ? "Run" : "Ride"}</button>
+                            {f.finishedAt
+                              ? <button onClick={() => { setBikeWatchCode(f.code); setBikeView("feed"); }}
+                                  style={{ ...btnStyle("#04613F"), padding:"6px 12px", fontSize:14 }}>📊 Results</button>
+                              : <button onClick={() => { setBikeRideCode(f.code); setBikeView("ride"); }}
+                                  style={{ ...btnStyle("#04613F", true), padding:"6px 12px", fontSize:14 }}>📡 {f.sport === "run" ? "Run" : "Ride"}</button>}
                             <button onClick={() => { setBikeWatchCode(f.code); setBikeView("feed"); }}
                               style={{ ...btnStyle("#8A5A00", true), padding:"6px 12px", fontSize:14 }}>👀 Follow</button>
                             <button onClick={() => {
@@ -22614,7 +22625,7 @@ Start a new race anyway?`)) return;
                           )}
                           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, marginBottom: 12 }}>
                             <input type="checkbox" checked={bikeDoneOpts.keepRide} onChange={e => setBikeDoneOpts(o => ({ ...o, keepRide: e.target.checked }))} />
-                            Keep this {RW.ride} in My Races
+                            Keep this {RW.ride} — map and stats stay under Bike / Run → Past (untick to throw it away)
                           </label>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button onClick={finishBikeDone} style={{ ...btnStyle("#04613F"), padding: "0 18px" }}>Done</button>
@@ -22732,6 +22743,13 @@ Start a new race anyway?`)) return;
                             if (code.length < 4) { alert("Enter the follow code for this ride first."); return; }
                             startBikeRide(feed || { ...newBikeFeed(), code }, resume);
                           };
+                          if (!bikeRiding && feed && feed.finishedAt) return (
+                            <div style={{ ...S.card, textAlign: "center" }}>
+                              <div style={{ fontWeight: 800, fontSize: 16 }}>This {RW.ride} is finished.</div>
+                              <div style={{ fontSize: 14, color: "#3D434B", margin: "4px 0 10px" }}>Its map and stats are saved. Start a new one from Bike / Run → Ride now.</div>
+                              <button onClick={() => { setBikeWatchCode(feed.code); setBikeView("feed"); }} style={{ ...btnStyle("#04613F"), padding: "0 18px" }}>📊 See the results</button>
+                            </div>
+                          );
                           if (!bikeRiding) return (
                             <div style={{ ...S.row, gap:8, flexWrap:"wrap", justifyContent:"center" }}>
                               <button onClick={() => begin(false)}
