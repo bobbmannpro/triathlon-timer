@@ -1582,6 +1582,114 @@
       const bikeCrumbSpacing = (distM) =>
         Math.max(BIKE_CRUMB_MIN_M, Math.min(BIKE_CRUMB_MAX_M, distM / BIKE_CRUMB_TARGET));
 
+      // ── Structured workouts ───────────────────────────────────────────────────
+      // A workout is a list of blocks; a block is a step or { repeat, steps }.
+      // A step: { kind: warmup|work|recover|cooldown, by: time|dist, amt (s or m),
+      //           paceLo, paceHi (s per mile/km, either may be null) }.
+      const WK_KINDS = { warmup: "Warm-up", work: "Interval", recover: "Recovery", cooldown: "Cool-down", easy: "Easy" };
+      const WK_M = { mi: 1609.344, km: 1000 };
+      // raw/du are what was typed ("1:30" in "min", "800" in "m") so the editor shows it back.
+      function wkSetAmt(s, raw, du) {
+        const t = String(raw).trim(), n = parseFloat(t) || 0;
+        let by = "dist", amt;
+        if (du === "min") { by = "time"; const m = t.match(/^(\d+):(\d{1,2})$/); amt = m ? (+m[1]) * 60 + (+m[2]) : Math.round(n * 60); }
+        else amt = du === "m" ? n : n * WK_M[du];
+        return { ...s, raw: t, du, by, amt };
+      }
+      const wkSetPace = (s, lo, hi) => ({ ...s, pLo: lo, pHi: hi, paceLo: wkParsePace(lo), paceHi: wkParsePace(hi) });
+      const wkNewStep = (kind = "work", raw, du) => wkSetAmt({ kind, pLo: "", pHi: "", paceLo: null, paceHi: null },
+        raw ?? (kind === "work" ? "800" : kind === "recover" ? "2" : "10"), du ?? (kind === "work" ? "m" : "min"));
+      const wkNew = () => ({ id: "wk" + Date.now().toString(36), name: "", units: "mi", blocks: [wkNewStep("warmup"), { repeat: 4, steps: [wkNewStep("work"), wkNewStep("recover")] }, wkNewStep("cooldown")] });
+      // Flatten repeats into the run order, numbering intervals "2 of 6".
+      function wkExpand(w) {
+        const out = [];
+        (w.blocks || []).forEach(b => {
+          if (b.repeat) {
+            const n = Math.max(1, b.repeat | 0);
+            for (let r = 1; r <= n; r++) (b.steps || []).forEach(s => out.push({ ...s, label: `${WK_KINDS[s.kind] || "Step"} ${r} of ${n}` }));
+          } else out.push({ ...b, label: WK_KINDS[b.kind] || "Step" });
+        });
+        return out.filter(s => s.amt > 0);
+      }
+      const wkClock = s => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+      // "7:30" → 450 s; "" → null
+      function wkParsePace(t) {
+        const m = String(t || "").trim().match(/^(\d{1,2})(?::(\d{1,2}))?$/);
+        return m ? (+m[1]) * 60 + (+(m[2] || 0)) : null;
+      }
+      function wkAmtText(s, units) {
+        if (s.by === "time") return s.amt % 60 ? wkClock(s.amt) : `${s.amt / 60} min`;
+        // Track distances (400 m, 800 m, 1200 m…) read in metres; miles/km otherwise.
+        if (s.amt < 5000 && Math.round(s.amt) % 100 === 0) return `${Math.round(s.amt)} m`;
+        return `${+(s.amt / WK_M[units]).toFixed(2)} ${units}`;
+      }
+      function wkPaceText(s, units) {
+        const { paceLo: a, paceHi: b } = s;
+        if (a == null && b == null) return "";
+        if (a != null && b != null && a !== b) return `${wkClock(Math.min(a, b))}–${wkClock(Math.max(a, b))} /${units}`;
+        return `${wkClock(a ?? b)} /${units}`;
+      }
+      const wkStepText = (s, units) => [wkAmtText(s, units), wkPaceText(s, units) && "at " + wkPaceText(s, units)].filter(Boolean).join(" ");
+      // Spoken form: "800 meters at 7 30 to 7 45 per mile".
+      function wkSpeech(s, units) {
+        const unitWord = units === "km" ? "kilometer" : "mile";
+        let amt;
+        if (s.by === "time") { const m = Math.floor(s.amt / 60), sec = s.amt % 60; amt = (m ? `${m} minute${m === 1 ? "" : "s"}` : "") + (sec ? ` ${sec} seconds` : ""); }
+        else amt = (s.amt < 5000 && Math.round(s.amt) % 100 === 0) ? `${Math.round(s.amt)} meters` : `${+(s.amt / WK_M[units]).toFixed(2)} ${unitWord}s`;
+        const p = x => `${Math.floor(x / 60)} ${String(x % 60).padStart(2, "0")}`;
+        const { paceLo: a, paceHi: b } = s;
+        const pace = a == null && b == null ? "" : (a != null && b != null && a !== b) ? ` at ${p(Math.min(a, b))} to ${p(Math.max(a, b))} per ${unitWord}` : ` at ${p(a ?? b)} per ${unitWord}`;
+        return amt.trim() + pace;
+      }
+      function wkSummary(w) {
+        const st = wkExpand(w);
+        const sec = st.filter(s => s.by === "time").reduce((t, s) => t + s.amt, 0);
+        const m = st.filter(s => s.by === "dist").reduce((t, s) => t + s.amt, 0);
+        return [`${st.length} steps`, sec ? `${Math.round(sec / 60)} min` : "", m ? `${+(m / WK_M[w.units || "mi"]).toFixed(2)} ${w.units || "mi"}` : ""].filter(Boolean).join(" · ");
+      }
+      function wkSay(text) {
+        try {
+          if (!window.speechSynthesis) return;
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(text); u.rate = 1.05;
+          window.speechSynthesis.speak(u);
+        } catch (_) {}
+        try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (_) {}
+      }
+
+      // TrainingPeaks, Garmin Connect and Strava all take .tcx. Unlike GPX it
+      // carries laps (one per workout step), heart rate and the sport.
+      // pts: [lat, lng, km/h, unix s, alt?, hr?]; laps: [{ label, start (ms), ms, distM, rest }]
+      function buildTcx(name, pts, sport, laps, totals) {
+        const esc = x => String(x || "").replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
+        const iso = ms => new Date(ms).toISOString();
+        const P = pts.filter(p => p[3]).sort((a, b) => a[3] - b[3]);
+        if (P.length < 2) return null;
+        let cum = 0;
+        const tp = P.map((p, i) => { if (i) cum += haversineM(P[i - 1][0], P[i - 1][1], p[0], p[1]); return { p, t: p[3] * 1000, d: cum }; });
+        const t0 = tp[0].t, tEnd = tp[tp.length - 1].t;
+        const L = (laps && laps.length) ? laps : [{ label: name, start: t0, ms: (totals && totals.elapsedMs) || (tEnd - t0), distM: (totals && totals.distM) || cum }];
+        const pt = x => {
+          const alt = x.p[4], hr = x.p[5];
+          return `<Trackpoint><Time>${iso(x.t)}</Time><Position><LatitudeDegrees>${x.p[0]}</LatitudeDegrees><LongitudeDegrees>${x.p[1]}</LongitudeDegrees></Position>`
+            + (alt != null && alt !== "" ? `<AltitudeMeters>${alt}</AltitudeMeters>` : "")
+            + `<DistanceMeters>${x.d.toFixed(1)}</DistanceMeters>`
+            + (hr > 0 ? `<HeartRateBpm><Value>${hr}</Value></HeartRateBpm>` : "")
+            + `</Trackpoint>`;
+        };
+        const lapXml = L.map((l, i) => {
+          const end = i + 1 < L.length ? L[i + 1].start : Infinity;
+          const mine = tp.filter(x => x.t >= (i ? l.start : -Infinity) && x.t < end);
+          const hrs = mine.map(x => x.p[5]).filter(h => h > 0);
+          return `<Lap StartTime="${iso(l.start)}"><TotalTimeSeconds>${(l.ms / 1000).toFixed(1)}</TotalTimeSeconds><DistanceMeters>${(l.distM || 0).toFixed(1)}</DistanceMeters><Calories>0</Calories>`
+            + (hrs.length ? `<AverageHeartRateBpm><Value>${Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length)}</Value></AverageHeartRateBpm><MaximumHeartRateBpm><Value>${Math.max(...hrs)}</Value></MaximumHeartRateBpm>` : "")
+            + `<Intensity>${l.rest ? "Resting" : "Active"}</Intensity><TriggerMethod>Manual</TriggerMethod>`
+            + (mine.length ? `<Track>${mine.map(pt).join("")}</Track>` : "")
+            + `<Notes>${esc(l.label)}</Notes></Lap>`;
+        }).join("\n");
+        return `<?xml version="1.0" encoding="UTF-8"?>\n<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n<Activities><Activity Sport="${sport === "run" ? "Running" : "Biking"}"><Id>${iso(L[0].start)}</Id>\n${lapXml}\n<Notes>${esc(name)} (Timeathon)</Notes></Activity></Activities>\n</TrainingCenterDatabase>\n`;
+      }
+
       // ── Basemaps ─────────────────────────────────────────────────────────────
       // All Esri: its ArcGIS Online tile services are keyless. CARTO used to be
       // here but now serves an "API KEY REQUIRED" watermark tile to keyless
@@ -5425,6 +5533,16 @@
           try { return JSON.parse(localStorage.getItem("bike-riders") || "[]"); } catch(_) { return []; }
         });
         const [bikeRiderDraft, setBikeRiderDraft] = useState(null);
+        // Structured workouts (a coach's run: warm-up, intervals, cool-down), picked
+        // before a run and called out step by step while it records.
+        const [workouts, setWorkouts] = useState(() => {
+          try { return JSON.parse(localStorage.getItem("workouts") || "[]"); } catch(_) { return []; }
+        });
+        const [workoutDraft, setWorkoutDraft] = useState(null);
+        const [workoutPickOpen, setWorkoutPickOpen] = useState(false);
+        // The running workout: { steps, units, i, stepStartM, stepStartMs, stepStartWall, laps, done }
+        const wkRef = useRef(null);
+        const [wkView, setWkView] = useState(null);
         const [bikeDraft, setBikeDraft] = useState(null);     // feed being edited in Setup
         const [bikeRideSport, setBikeRideSport] = useState(() => { try { return localStorage.getItem("bike-ride-sport") || "bike"; } catch (_) { return "bike"; } });
         useEffect(() => { try { localStorage.setItem("bike-ride-sport", bikeRideSport); } catch (_) {} }, [bikeRideSport]);
@@ -6294,6 +6412,13 @@
                   localStorage.setItem("bike-feeds", JSON.stringify(data.bikeFeeds));
                 } else {
                   try { const c = localStorage.getItem("bike-feeds"); if (c) { const b = JSON.parse(c); if (b.length > 0) { setBikeFeedList(b); rtdb.ref("users/" + user.uid + "/bikeFeeds").set(b).catch(console.error); } } } catch(_) {}
+                }
+
+                if (data.workouts && data.workouts.length > 0) {
+                  setWorkouts(data.workouts);
+                  localStorage.setItem("workouts", JSON.stringify(data.workouts));
+                } else {
+                  try { const c = JSON.parse(localStorage.getItem("workouts") || "[]"); if (c.length > 0) rtdb.ref("users/" + user.uid + "/workouts").set(c).catch(console.error); } catch(_) {}
                 }
 
                 // Bike rider profiles: RTDB → localStorage fallback, then push local up
@@ -9427,15 +9552,89 @@
 
         // "Ride now": no wizard. A free ride under the rider's own profile, named by the clock,
         // published and started in one tap. It can be renamed when it's finished.
-        function quickRide(sport) {
+        function persistWorkouts(list) {
+          setWorkouts(list);
+          try { localStorage.setItem("workouts", JSON.stringify(list)); } catch(_) {}
+          if (currentUser) rtdb.ref("users/" + currentUser.uid + "/workouts").set(list).catch(console.error);
+        }
+        // A run with a workout: the same one-tap run, carrying the steps to call out.
+        function runWorkout(w) {
+          const steps = wkExpand(w);
+          if (!steps.length) { alert("This workout has no steps yet."); return; }
+          // iOS only lets a page talk after a tap, so say something now, inside it.
+          wkSay(`${w.name || "Workout"}. ${steps.length} steps.`);
+          setWorkoutPickOpen(false);
+          quickRide("run", { name: w.name || "Workout", units: w.units || "mi", steps });
+        }
+        // Step i starts now, at the run's current distance and elapsed time.
+        function wkBeginStep(i, announce) {
+          const wk = wkRef.current; if (!wk) return;
+          const elapsed = bikeElapsedBaseRef.current + (Date.now() - (bikeStartedAtRef.current || Date.now()));
+          wk.i = i; wk.stepStartM = bikeDistMRef.current; wk.stepStartMs = elapsed; wk.stepStartWall = Date.now();
+          wk.paceSamples = []; wk.nudgeAt = Date.now() + 30000; wk.warned = false;
+          if (i >= wk.steps.length) {
+            wk.done = true;
+            if (announce) wkSay("Workout complete. Nice work. Keep going, or tap Complete when you're done.");
+          } else if (announce) {
+            const s = wk.steps[i];
+            wkSay(`${s.label}. ${wkSpeech(s, wk.units)}.` + (i === 0 ? " Go." : ""));
+          }
+          setWkView({ ...wk });
+        }
+        // Close the current step as a lap (TrainingPeaks shows one lap per step).
+        function wkCloseLap() {
+          const wk = wkRef.current; if (!wk || wk.done || wk.i >= wk.steps.length) return;
+          const elapsed = bikeElapsedBaseRef.current + (Date.now() - (bikeStartedAtRef.current || Date.now()));
+          const s = wk.steps[wk.i];
+          wk.laps.push({ label: s.label + " · " + wkStepText(s, wk.units), start: wk.stepStartWall, ms: elapsed - wk.stepStartMs,
+                         distM: Math.round(bikeDistMRef.current - wk.stepStartM), rest: s.kind === "recover" || s.kind === "warmup" || s.kind === "cooldown" });
+        }
+        function wkNextStep() {
+          const wk = wkRef.current; if (!wk || wk.done) return;
+          wkCloseLap();
+          wkBeginStep(wk.i + 1, true);
+          persistBikeSession();
+        }
+        // Runs once a second during a workout: move on when a step's time or
+        // distance is used up, and nudge when the pace drifts out of range.
+        useEffect(() => {
+          if (!bikeRiding) return;
+          const id = setInterval(() => {
+            const wk = wkRef.current; if (!wk || wk.done) return;
+            const s = wk.steps[wk.i]; if (!s) return;
+            const elapsed = bikeElapsedBaseRef.current + (Date.now() - (bikeStartedAtRef.current || Date.now()));
+            const doneS = (elapsed - wk.stepStartMs) / 1000, doneM = bikeDistMRef.current - wk.stepStartM;
+            const left = s.by === "time" ? s.amt - doneS : s.amt - doneM;
+            // Pace over the last ~20 s, from distance actually covered.
+            const now = Date.now();
+            wk.paceSamples = [...(wk.paceSamples || []), [now, bikeDistMRef.current]].filter(x => now - x[0] <= 20000);
+            const first = wk.paceSamples[0], dm = bikeDistMRef.current - first[1], dt = (now - first[0]) / 1000;
+            wk.pace = dt >= 8 && dm > 5 ? (dt / dm) * WK_M[wk.units] : null;   // s per mile/km
+            if (left <= 0) { wkCloseLap(); wkBeginStep(wk.i + 1, true); persistBikeSession(); return; }
+            if (s.by === "time" && Math.round(left) === 10 && !wk.warned) { wk.warned = true; wkSay("10 seconds."); }
+            if (s.by === "dist" && left <= 100 && left > 50 && !wk.warned && s.amt >= 400) { wk.warned = true; wkSay("100 meters to go."); }
+            const lo = s.paceLo != null && s.paceHi != null ? Math.min(s.paceLo, s.paceHi) : (s.paceLo ?? s.paceHi);
+            const hi = s.paceLo != null && s.paceHi != null ? Math.max(s.paceLo, s.paceHi) : (s.paceLo ?? s.paceHi);
+            if (lo != null && wk.pace != null && now > (wk.nudgeAt || 0)) {
+              // A single target pace allows 5 s either side.
+              const slow = wk.pace > hi + (lo === hi ? 5 : 0), fast = wk.pace < lo - (lo === hi ? 5 : 0);
+              if (slow || fast) { wkSay(`${slow ? "Pick it up" : "Ease off"}. Running ${wkClock(wk.pace).replace(":", " ")}. Target ${wkPaceText(s, wk.units).replace(/\/(mi|km)$/, "").trim().replace(/:/g, " ").replace("–", " to ")}.`); wk.nudgeAt = now + 45000; }
+            }
+            setWkView({ ...wk, left });
+          }, 1000);
+          return () => clearInterval(id);
+        }, [bikeRiding]);
+
+        function quickRide(sport, workout) {
           let riders = bikeRiders, rider = riders[0];
           if (!rider) {
             const me = (userProfile && [userProfile.firstName, userProfile.lastName].filter(Boolean).join(" ")) || (currentUser && currentUser.email || "").split("@")[0] || "Me";
             rider = { ...newBikeRider(), name: me }; riders = [rider]; persistBikeRiders(riders);
           }
           const d = new Date();
-          const label = `${sport === "run" ? "Run" : "Ride"} · ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+          const label = `${workout ? workout.name : sport === "run" ? "Run" : "Ride"} · ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
           const feed = { ...newBikeFeed(), eventName: label, sport, riderId: rider.id, rideMode: "free", snapProfile: sport === "run" ? "hiking-mountain" : "trekking",
+            ...(workout ? { workout, units: workout.units } : {}),
             date: d.toLocaleDateString("en-CA"), time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`, liveLeadMin: 0 };
           persistBikeFeeds([feed, ...bikeFeedList]);
           publishBikeMeta(feed, riders);
@@ -9688,9 +9887,12 @@
             // effort. Older two-element crumbs still render, just uncoloured.
             const kmh = mps != null ? Math.round(mps * 3.6 * 10) / 10 : null;
             // 4th element: time (s since 1970), so the ride exports as a GPX
-            // Strava / Garmin Connect / TrainingPeaks will accept.
+            // Strava / Garmin Connect / TrainingPeaks will accept. 5th/6th: altitude
+            // and heart rate for the .tcx file (left off when unknown).
+            const crumb = [+lat.toFixed(5), +lng.toFixed(5), kmh != null ? kmh : 0, Math.round(Date.now() / 1000)];
+            if (extra.alt != null || s.hr != null) crumb.push(extra.alt != null ? Math.round(extra.alt) : null, s.hr != null ? s.hr : 0);
             rtdb.ref(`bikeFeeds/${code}/track`)
-              .push([+lat.toFixed(5), +lng.toFixed(5), kmh != null ? kmh : 0, Math.round(Date.now() / 1000)])
+              .push(crumb)
               .catch(console.error);
           }
           persistBikeSession();
@@ -9750,6 +9952,11 @@
           setBikeDone(null); setBikeDoneMsg("");
           setBikeRideFull(true);
           acquireWakeLock();
+          // Workout: pick up where a reload left off, or start at step one.
+          const wkFeed = feed.workout || (bikeFeedList.find(f => f.code === feed.code) || {}).workout;
+          if (restore && restore.wk) { wkRef.current = restore.wk; setWkView({ ...restore.wk }); }
+          else if (wkFeed && !resume) { wkRef.current = { steps: wkFeed.steps, units: wkFeed.units || "mi", laps: [] }; wkBeginStep(0, true); }
+          else { wkRef.current = null; setWkView(null); }
 
           if (!resume && !restore) {
             // Fresh ride: clear the previous trail so viewers don't see last ride's line
@@ -9894,22 +10101,22 @@
           const snap = await rtdb.ref(`bikeFeeds/${code}/track`).once("value");
           return Object.values(snap.val() || {}).filter(p => Array.isArray(p) && p.length >= 2);
         }
-        function buildGpx(name, pts, sport) {
-          const esc = x => String(x || "").replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
-          const t0 = pts.find(p => p[3]) ? pts.find(p => p[3])[3] : null;
-          const seg = pts.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}">${p[3] ? `<time>${new Date(p[3] * 1000).toISOString()}</time>` : ""}</trkpt>`).join("\n");
-          return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Timeathon" xmlns="http://www.topografix.com/GPX/1/1">\n<metadata><name>${esc(name)}</name>${t0 ? `<time>${new Date(t0 * 1000).toISOString()}</time>` : ""}</metadata>\n<trk><name>${esc(name)}</name><type>${sport === "run" ? "running" : "cycling"}</type><trkseg>\n${seg}\n</trkseg></trk>\n</gpx>\n`;
-        }
-        async function downloadRideGpx(code, name, opts) {
+        // .tcx with laps and heart rate: what TrainingPeaks, Garmin Connect and Strava import best.
+        async function downloadRideTcx(code, name, opts) {
           try {
             const pts = await bikeTrackPts(code);
-            if (pts.length < 2) { alert("No route recorded for this ride."); return; }
-            const blob = new Blob([buildGpx(name || "Timeathon ride", pts, (bikeFeedList.find(f => f.code === code) || {}).sport)], { type: "application/gpx+xml" });
-            const file = new File([blob], `${(name || "ride").replace(/[^\w\- ]+/g, "").trim() || "ride"}.gpx`, { type: "application/gpx+xml" });
-            if (!(opts && opts.download) && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name || "Ride" }); return; }
-            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+            const feed = bikeFeedList.find(f => f.code === code) || {};
+            const done = bikeDone && bikeDone.code === code ? bikeDone : null;
+            const xml = buildTcx(name || "Timeathon run", pts, feed.sport, (done && done.laps) || feed.laps, done || feed.summary);
+            if (!xml) { alert("No route recorded for this " + (feed.sport === "run" ? "run" : "ride") + "."); return false; }
+            const fname = `${(name || "activity").replace(/[^\w\- ]+/g, "").trim() || "activity"}.tcx`;
+            const blob = new Blob([xml], { type: "application/vnd.garmin.tcx+xml" });
+            const file = new File([blob], fname, { type: blob.type });
+            if (!(opts && opts.download) && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name || "Activity" }); return true; }
+            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = fname; a.click();
             setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-          } catch (e) { if (e && e.name !== "AbortError") alert("Couldn't make the GPX file: " + (e.message || e)); }
+            return true;
+          } catch (e) { if (e && e.name !== "AbortError") alert("Couldn't make the activity file: " + (e.message || e)); return false; }
         }
         async function finishBikeDone() {
           const d = bikeDone; if (!d) return;
@@ -9927,7 +10134,7 @@
             } else {
               // Finished: the ride keeps its map and stats as a record and can't be ridden again.
               const name = (o.name || "").trim();
-              persistBikeFeeds(bikeFeedList.map(x => x.code === d.code ? { ...x, eventName: name || x.eventName, finishedAt: Date.now(), past: true, summary: { distM: d.distM || 0, elapsedMs: d.elapsedMs || 0 } } : x));
+              persistBikeFeeds(bikeFeedList.map(x => x.code === d.code ? { ...x, eventName: name || x.eventName, finishedAt: Date.now(), past: true, summary: { distM: d.distM || 0, elapsedMs: d.elapsedMs || 0 }, ...(d.laps ? { laps: d.laps } : {}) } : x));
               rtdb.ref(`bikeFeeds/${d.code}/meta`).update({ finishedAt: Date.now(), ...(name ? { eventName: name } : {}) }).catch(() => {});
             }
             unlistRace(d.code);
@@ -10108,6 +10315,7 @@
               elapsedMs: bikeElapsedBaseRef.current + (Date.now() - (bikeStartedAtRef.current || Date.now())),
               simulate: !!bikeSimulate,
               lastCrumb: bikeLastCrumbRef.current,
+              wk: wkRef.current,
               savedAt: Date.now(),
             }));
           } catch(_) {}
@@ -10148,10 +10356,22 @@
           clearBikeSession();   // nothing to auto-resume once stopped or paused
           setBikeRideFull(false);
           stopBikePip();
+          // Workout laps: the step in progress closes here; running on after the
+          // last step becomes one more lap so the file covers the whole run.
+          let laps = null;
+          const wk = wkRef.current;
+          if (wk) {
+            if (finish) {
+              if (!wk.done) wkCloseLap();
+              else if (totalElapsed - wk.stepStartMs > 10000) wk.laps.push({ label: "After the workout", start: wk.stepStartWall, ms: totalElapsed - wk.stepStartMs, distM: Math.round(totalDist - wk.stepStartM), rest: true });
+            }
+            laps = wk.laps.length ? wk.laps : null;
+            wkRef.current = null; setWkView(null);
+          }
           if (finish && code) {
             const feed = bikeFeedList.find(f => f.code === code);
-            setBikeDone({ code, name: (feed && feed.eventName) || "", distM: totalDist, elapsedMs: totalElapsed });
-            setBikeDoneOpts(o => ({ ...o, name: (feed && feed.eventName) || o.name || "" }));
+            setBikeDone({ code, name: (feed && feed.eventName) || "", distM: totalDist, elapsedMs: totalElapsed, laps });
+            setBikeDoneOpts(o => ({ ...o, name: (feed && feed.eventName) || o.name || "", leg: (feed && feed.sport) === "run" ? "run" : "bike" }));
           }
           setBikeRiding(false);
           setBikeGpsStatus(finish ? (bikeRideSport === "run" ? "Run finished." : "Ride finished.") : "Paused for the day — resume when you set off again.");
@@ -11038,7 +11258,7 @@
               const tsnap = await rtdb.ref(`bikeFeeds/${sess.code}/track`).once("value");
               const v = tsnap.val();
               if (v && typeof v === "object") {
-                const pts = Object.keys(v).sort().map(k => v[k]).filter(p => Array.isArray(p) && p.length === 2);
+                const pts = Object.keys(v).sort().map(k => v[k]).filter(p => Array.isArray(p) && p.length >= 2).map(p => [p[0], p[1]]);
                 bikeRideTrailPtsRef.current = pts.slice(-3000);
               }
             } catch(_) {}
@@ -12516,6 +12736,91 @@ Start a new race anyway?`)) return;
                             <button onClick={() => quickRide("run")} style={{ ...btnStyle(TM.run), flex: "1 1 160px", minHeight: 64, fontSize: 20 }}>▶ Run now</button>
                           </div>
                           <div style={{ ...TM_CAPTION, marginTop: 6 }}>Just go — no route, no date. It records and shares live under your name; name it when you finish. Use "New ride or run" for a planned route or an event.</div>
+                          <button id="wk-open" onClick={() => { setWorkoutPickOpen(o => !o); setWorkoutDraft(null); }}
+                            style={{ ...btnStyle(TM.run, !workoutPickOpen), width: "100%", minHeight: 56, marginTop: 12, fontSize: 18 }}>📋 Run a workout</button>
+                          {workoutPickOpen && !workoutDraft && (
+                            <div style={{ ...rowStyle(TM.run), marginTop: 10 }}>
+                              <div style={{ ...TM_LABEL }}>Your workouts</div>
+                              <div style={{ ...TM_CAPTION, marginBottom: 6 }}>Type in the run your coach gave you. Timeathon tracks your route and calls out each step and your pace; when you finish, send it to TrainingPeaks.</div>
+                              {workouts.length === 0 && <div style={{ ...TM_CAPTION, padding: "8px 0" }}>No workouts yet.</div>}
+                              {workouts.map(w => (
+                                <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderTop: `2px solid ${TM.line}` }}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 800, fontSize: 17, color: TM.ink }}>{w.name || "Untitled workout"}</div>
+                                    <div style={{ ...TM_CAPTION }}>{wkSummary(w)}</div>
+                                  </div>
+                                  <button onClick={() => setWorkoutDraft(JSON.parse(JSON.stringify(w)))} style={{ ...btnStyle(TM.ink, true), minHeight: 44, padding: "0 12px" }}>Edit</button>
+                                  <button onClick={() => runWorkout(w)} style={{ ...btnStyle(TM.run), minHeight: 44, padding: "0 14px" }}>▶ Start</button>
+                                </div>
+                              ))}
+                              <button id="wk-new" onClick={() => setWorkoutDraft(wkNew())} style={{ ...btnStyle(TM.run, true), width: "100%", minHeight: 48, marginTop: 10 }}>+ New workout</button>
+                            </div>
+                          )}
+                          {workoutDraft && (() => {
+                            const w = workoutDraft;
+                            const setBlocks = blocks => setWorkoutDraft(d => ({ ...d, blocks }));
+                            const upd = (bi, si, fn) => setBlocks(w.blocks.map((b, i) => i !== bi ? b : si == null ? fn(b) : { ...b, steps: b.steps.map((s, j) => j === si ? fn(s) : s) }));
+                            const del = (bi, si) => setBlocks(si == null ? w.blocks.filter((_, i) => i !== bi) : w.blocks.map((b, i) => i !== bi ? b : { ...b, steps: b.steps.filter((_, j) => j !== si) }));
+                            const inp = { background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 8px", minHeight: 44, color: TM.ink, fontWeight: 700, fontSize: 16, minWidth: 0, boxSizing: "border-box" };
+                            const stepRow = (s, bi, si) => (
+                              <div key={si == null ? "b" + bi : bi + "-" + si} className="wk-step" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", padding: "8px 0", borderTop: `2px solid ${TM.line}` }}>
+                                <select aria-label="Step type" value={s.kind} onChange={e => upd(bi, si, x => ({ ...x, kind: e.target.value }))} style={{ ...inp, flex: "1 1 110px" }}>
+                                  {Object.entries(WK_KINDS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                                </select>
+                                <input aria-label="How long or how far" value={s.raw} inputMode="decimal" onChange={e => upd(bi, si, x => wkSetAmt(x, e.target.value, x.du))} style={{ ...inp, width: 70 }} />
+                                <select aria-label="Unit" value={s.du} onChange={e => upd(bi, si, x => wkSetAmt(x, x.raw, e.target.value))} style={{ ...inp, width: 70 }}>
+                                  {["min", "m", "mi", "km"].map(u => <option key={u} value={u}>{u}</option>)}
+                                </select>
+                                <span style={{ display: "flex", alignItems: "center", gap: 4, flex: "1 1 200px" }}>
+                                  <span style={{ ...TM_CAPTION }}>Pace</span>
+                                  <input aria-label="Pace from" value={s.pLo} placeholder="7:30" inputMode="numeric" onChange={e => upd(bi, si, x => wkSetPace(x, e.target.value, x.pHi))} style={{ ...inp, width: 66 }} />
+                                  <span>–</span>
+                                  <input aria-label="Pace to" value={s.pHi} placeholder="7:45" inputMode="numeric" onChange={e => upd(bi, si, x => wkSetPace(x, x.pLo, e.target.value))} style={{ ...inp, width: 66 }} />
+                                  <span style={{ ...TM_CAPTION }}>/{w.units}</span>
+                                  <button aria-label="Remove step" onClick={() => del(bi, si)} style={{ ...btnStyle("#B3001B", true), minHeight: 44, padding: "0 10px", marginLeft: "auto" }}>✕</button>
+                                </span>
+                              </div>
+                            );
+                            const isNew = !workouts.some(x => x.id === w.id);
+                            return (
+                              <div id="wk-editor" style={{ ...rowStyle(TM.run), marginTop: 10 }}>
+                                <div style={{ ...TM_LABEL }}>{isNew ? "New workout" : "Edit workout"}</div>
+                                <input aria-label="Workout name" value={w.name} placeholder="Name, e.g. 6 × 800 m" onChange={e => setWorkoutDraft(d => ({ ...d, name: e.target.value }))} style={{ ...inp, width: "100%", marginBottom: 8 }} />
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                                  <span style={{ ...TM_CAPTION }}>Paces per</span>
+                                  {["mi", "km"].map(u => <button key={u} onClick={() => setWorkoutDraft(d => ({ ...d, units: u }))} style={{ ...btnStyle(TM.ink, w.units !== u), minHeight: 40, padding: "0 14px" }}>{u === "mi" ? "mile" : "km"}</button>)}
+                                </div>
+                                <div style={{ ...TM_CAPTION, marginBottom: 4 }}>Time as minutes ("10" or "1:30"), or a distance. Leave pace empty for an easy, open step.</div>
+                                {w.blocks.map((b, bi) => b.repeat ? (
+                                  <div key={"r" + bi} style={{ border: `3px solid ${TM.run}`, borderRadius: 8, padding: "6px 10px", margin: "8px 0" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                      <span style={{ fontWeight: 800 }}>Repeat</span>
+                                      <input aria-label="Repeat count" value={b.repeat} inputMode="numeric" onChange={e => upd(bi, null, x => ({ ...x, repeat: Math.max(1, Math.min(50, parseInt(e.target.value) || 1)) }))} style={{ ...inp, width: 60 }} />
+                                      <span style={{ fontWeight: 800 }}>times</span>
+                                      <button aria-label="Remove repeat" onClick={() => del(bi)} style={{ ...btnStyle("#B3001B", true), minHeight: 40, padding: "0 10px", marginLeft: "auto" }}>✕</button>
+                                    </div>
+                                    {b.steps.map((s, si) => stepRow(s, bi, si))}
+                                    <button onClick={() => upd(bi, null, x => ({ ...x, steps: [...x.steps, wkNewStep("recover")] }))} style={{ ...btnStyle(TM.run, true), minHeight: 40, marginTop: 6, fontSize: 15 }}>+ Step in this repeat</button>
+                                  </div>
+                                ) : stepRow(b, bi, null))}
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                                  <button onClick={() => setBlocks([...w.blocks, wkNewStep("easy")])} style={{ ...btnStyle(TM.run, true), flex: "1 1 140px", minHeight: 44 }}>+ Step</button>
+                                  <button onClick={() => setBlocks([...w.blocks, { repeat: 4, steps: [wkNewStep("work"), wkNewStep("recover")] }])} style={{ ...btnStyle(TM.run, true), flex: "1 1 140px", minHeight: 44 }}>+ Repeat</button>
+                                </div>
+                                <div style={{ ...TM_CAPTION, marginTop: 10 }}>{wkSummary(w)}</div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                                  <button id="wk-save" onClick={() => {
+                                    if (!wkExpand(w).length) { alert("Add at least one step with a time or distance."); return; }
+                                    const clean = { ...w, name: w.name.trim() || "Workout" };
+                                    persistWorkouts(isNew ? [clean, ...workouts] : workouts.map(x => x.id === w.id ? clean : x));
+                                    setWorkoutDraft(null); setWorkoutPickOpen(true);
+                                  }} style={{ ...btnStyle("#04613F"), flex: "1 1 120px", minHeight: 48 }}>Save</button>
+                                  <button onClick={() => setWorkoutDraft(null)} style={{ ...btnStyle(TM.ink, true), flex: "1 1 100px", minHeight: 48 }}>Cancel</button>
+                                  {!isNew && <button onClick={() => { if (confirm(`Delete “${w.name || "this workout"}”?`)) { persistWorkouts(workouts.filter(x => x.id !== w.id)); setWorkoutDraft(null); } }} style={{ ...btnStyle("#B3001B", true), flex: "1 1 100px", minHeight: 48 }}>Delete</button>}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
 
@@ -17261,6 +17566,22 @@ Start a new race anyway?`)) return;
                   <div style={{ fontFamily:"var(--tm-font)", fontWeight:700, fontSize:23, letterSpacing:-0.5, color: color || "#0B0D10", lineHeight:1.2, fontVariantNumeric:"tabular-nums" }}>{value}</div>
                 </div>
               );
+              // The workout step on screen: what it is, how much is left, pace vs target.
+              const wkNow = (() => {
+                const wk = bikeRiding ? wkView : null;
+                if (!wk) return null;
+                if (wk.done || !wk.steps[wk.i]) return { wk, done: true };
+                const s = wk.steps[wk.i], nx = wk.steps[wk.i + 1];
+                const left = Math.max(0, wk.left ?? s.amt);
+                const leftTxt = s.by === "time" ? wkClock(left) : (left >= 1000 ? (left / WK_M[wk.units]).toFixed(2) + " " + wk.units : Math.round(left) + " m");
+                const lo = s.paceLo != null && s.paceHi != null ? Math.min(s.paceLo, s.paceHi) : (s.paceLo ?? s.paceHi);
+                const hi = s.paceLo != null && s.paceHi != null ? Math.max(s.paceLo, s.paceHi) : (s.paceLo ?? s.paceHi);
+                const slack = lo === hi ? 5 : 0;
+                const paceTxt = wk.pace ? wkClock(wk.pace) + " /" + wk.units : "—";
+                const paceCol = lo == null || !wk.pace ? "#0B0D10" : (wk.pace > hi + slack || wk.pace < lo - slack) ? "#B3001B" : "#04613F";
+                const paceWord = lo == null || !wk.pace ? "" : wk.pace > hi + slack ? "Too slow" : wk.pace < lo - slack ? "Too fast" : "On pace";
+                return { wk, s, nx, leftTxt, paceTxt, paceCol, paceWord, target: wkPaceText(s, wk.units) };
+              })();
 
               return (
                 <div style={{ padding: "16px 16px 60px", maxWidth: 640, margin: "0 auto" }}>
@@ -17958,6 +18279,31 @@ Start a new race anyway?`)) return;
                         </div>
                       </div>
 
+                      {wkNow && (wkNow.done ? (
+                        <div id="wk-card" style={{ ...S.card, borderColor: "#04613F", borderWidth: 3 }}>
+                          <div style={{ fontFamily: "var(--tm-font)", fontSize: 24, color: "#04613F" }}>✓ Workout complete</div>
+                          <div style={{ fontSize: 14, color: "#3D434B", marginTop: 4 }}>All {wkNow.wk.steps.length} steps done. Still recording — tap Complete when you stop.</div>
+                        </div>
+                      ) : (
+                        <div id="wk-card" style={{ ...S.card, borderColor: TM.run, borderWidth: 3 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800, letterSpacing: 1.2, color: "#3D434B" }}>
+                            <span>STEP {wkNow.wk.i + 1} OF {wkNow.wk.steps.length}</span>
+                            {wkNow.paceWord && <span style={{ color: wkNow.paceCol }}>{wkNow.paceWord.toUpperCase()}</span>}
+                          </div>
+                          <div style={{ fontFamily: "var(--tm-font)", fontSize: 28, lineHeight: 1.15, color: "#0B0D10" }}>{wkNow.s.label}</div>
+                          <div style={{ fontSize: 16, color: "#3D434B", marginTop: 2 }}>{wkStepText(wkNow.s, wkNow.wk.units)}</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                            {metricTile(wkNow.s.by === "time" ? "Time left" : "To go", wkNow.leftTxt, "#0B0D10")}
+                            {metricTile("Pace now", wkNow.paceTxt, wkNow.paceCol)}
+                            {wkNow.target && metricTile("Target", wkNow.target.replace(/ \/(mi|km)$/, ""), "#04613F")}
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0, fontSize: 14, color: "#3D434B" }}>{wkNow.nx ? <>Next: <b>{wkNow.nx.label}</b> · {wkStepText(wkNow.nx, wkNow.wk.units)}</> : "Last step"}</div>
+                            <button onClick={wkNextStep} style={{ ...btnStyle("#0B0D10", true), minHeight: 44, padding: "0 12px", flexShrink: 0 }}>⏭ Next step</button>
+                          </div>
+                        </div>
+                      ))}
+
                       <div style={{ ...S.card, background: bikeRiding ? "#EFEDE8" : "#EFEDE8" }}>
                         <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                           {metricTile("Elapsed", fmtRideClock(bikeElapsedMs), "#8A5A00")}
@@ -18044,12 +18390,14 @@ Start a new race anyway?`)) return;
                           </label>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button onClick={finishBikeDone} style={{ ...btnStyle("#04613F"), padding: "0 18px" }}>Done</button>
-                            <button onClick={() => { downloadRideGpx(bikeDone.code, bikeDoneOpts.name || bikeDone.name, { download: true }); setTimeout(() => window.open("https://connect.garmin.com/modern/import-data", "_blank"), 600); }}
-                              style={{ ...btnStyle("#0B3FCC"), padding: "0 14px" }}>⌚ Send to Garmin Connect</button>
-                            <button onClick={() => downloadRideGpx(bikeDone.code, bikeDoneOpts.name || bikeDone.name)} style={{ ...btnStyle("#0B3FCC", true), padding: "0 14px" }}>⬇ GPX for Strava / Garmin / TrainingPeaks</button>
+                            <button onClick={() => { const w = window.open("about:blank", "_blank"); downloadRideTcx(bikeDone.code, bikeDoneOpts.name || bikeDone.name, { download: true }).then(ok => { if (w) { if (ok) w.location.href = "https://app.trainingpeaks.com/"; else w.close(); } }); }}
+                              style={{ ...btnStyle("#0B3FCC"), padding: "0 14px" }}>📈 Send to TrainingPeaks</button>
+                            <button onClick={() => { const w = window.open("about:blank", "_blank"); downloadRideTcx(bikeDone.code, bikeDoneOpts.name || bikeDone.name, { download: true }).then(ok => { if (w) { if (ok) w.location.href = "https://connect.garmin.com/modern/import-data"; else w.close(); } }); }}
+                              style={{ ...btnStyle("#0B3FCC", true), padding: "0 14px" }}>⌚ Send to Garmin Connect</button>
+                            <button onClick={() => downloadRideTcx(bikeDone.code, bikeDoneOpts.name || bikeDone.name)} style={{ ...btnStyle("#0B3FCC", true), padding: "0 14px" }}>⬇ Activity file (.tcx)</button>
                           </div>
-                          <div style={{ fontSize: 14, color: "#3D434B", marginTop: 10 }}>
-                            <b>Send to Garmin Connect</b> saves the GPX file and opens Garmin's Import Data page — drop the file there and it shows up as an activity (Garmin only takes files on its website, not in the phone app). Used the Timeathon watch app? It saved this {RW.ride} as a Garmin activity, so it's already on its way to Garmin Connect — and to Strava or TrainingPeaks if they're linked there.
+                          <div style={{ fontSize: 14, color: "#3D434B", marginTop: 10, lineHeight: 1.5 }}>
+                            <b>Send to TrainingPeaks</b> saves the {RW.ride} as a .tcx file{bikeDone.laps ? ` with one lap per workout step (${bikeDone.laps.length} laps)` : ""} and opens TrainingPeaks — click the day on your calendar, then <b>Upload</b>, and pick the file. TrainingPeaks matches it to your coach's planned workout. <b>Send to Garmin Connect</b> does the same with Garmin's Import Data page. Used the Timeathon watch app? It saved this {RW.ride} as a Garmin activity already.
                           </div>
                         </div>
                       )}
@@ -18081,6 +18429,23 @@ Start a new race anyway?`)) return;
                                 <div className="tm-metric" style={{ fontSize:24, fontWeight:900, color:c, whiteSpace:"nowrap" }}>{v}</div>
                               </div>
                             ))}
+                          </div>
+                        )}
+                        {bikeRiding && bikeRideFull && wkNow && (
+                          <div id="wk-banner" style={{ position:"absolute", left:8, right:140, top:84, zIndex:700, background:"rgba(11,13,16,0.86)", color:"#FFFFFF",
+                            borderRadius:8, padding:"8px 10px", border:`3px solid ${wkNow.done ? "#2FC27A" : wkNow.paceCol === "#B3001B" ? "#FF6B6B" : wkNow.paceCol === "#04613F" ? "#2FC27A" : "#FFFFFF"}` }}>
+                            {wkNow.done ? (
+                              <div style={{ fontWeight:900, fontSize:18 }}>✓ Workout complete</div>
+                            ) : (<>
+                              <div style={{ fontSize:14, fontWeight:700, color:"#B8B3A9", letterSpacing:1 }}>STEP {wkNow.wk.i + 1}/{wkNow.wk.steps.length}{wkNow.paceWord ? " · " + wkNow.paceWord.toUpperCase() : ""}</div>
+                              <div style={{ fontWeight:900, fontSize:20, lineHeight:1.15 }}>{wkNow.s.label}</div>
+                              <div style={{ display:"flex", alignItems:"baseline", gap:6, flexWrap:"wrap" }}>
+                                <span className="tm-metric" style={{ fontSize:26, fontWeight:900, fontVariantNumeric:"tabular-nums" }}>{wkNow.leftTxt}</span>
+                                <span style={{ fontSize:14, fontWeight:700, color:"#B8B3A9" }}>{wkNow.s.by === "time" ? "left" : "to go"}</span>
+                              </div>
+                              {wkNow.target && <div style={{ fontSize:14, color:"#B8B3A9" }}>Target {wkNow.target}</div>}
+                              <button onClick={wkNextStep} style={{ marginTop:6, background:"transparent", color:"#FFFFFF", border:"2px solid #FFFFFF", borderRadius:6, padding:"4px 10px", fontSize:14, fontWeight:700 }}>⏭ Next step</button>
+                            </>)}
                           </div>
                         )}
                         {bikeRiding && bikeRideFull && (
