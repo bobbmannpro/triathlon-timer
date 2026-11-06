@@ -281,6 +281,17 @@
     <script type="text/babel" data-presets="react-classic">
       const { useState, useEffect, useRef, useCallback } = React;
 
+      // Map labels are athlete-typed names, and Leaflet puts string tooltip
+      // content in as HTML — show it as text instead.
+      if (window.L && L.Tooltip && !L.Tooltip.__textOnly) {
+        const setContent = L.Tooltip.prototype.setContent;
+        L.Tooltip.prototype.setContent = function (c) {
+          if (typeof c === "string") { const s = document.createElement("span"); s.textContent = c; c = s; }
+          return setContent.call(this, c);
+        };
+        L.Tooltip.__textOnly = true;
+      }
+
       // Run is the final segment — logging it ends the race for that athlete
       const SEGMENTS   = ["Swim", "T1", "Bike", "T2", "Run"];
       // Sunlight tokens for inline styles — the same values as the --tm-* custom
@@ -1533,12 +1544,12 @@
       // So smooth the track first and difference the smoothed positions, which
       // averages the noise out while preserving real movement.
       const TRI_EMA_ALPHA = 0.4;
-      function makeTriDistance() {
+      function makeTriDistance(maxAccM = TRI_GPS_MAX_ACC_M) {
         let prev = null, ema = null, prevEma = null;
         return {
           // Returns metres to add for this fix (0 means ignored).
           add(cur) {
-            if (cur.acc != null && cur.acc > TRI_GPS_MAX_ACC_M) return 0;
+            if (cur.acc != null && cur.acc > maxAccM) return 0;
             if (!prev) { prev = cur; ema = { lat: cur.lat, lng: cur.lng }; prevEma = { ...ema }; return 0; }
             const dtS = (cur.t - prev.t) / 1000;
             if (!(dtS > 0) || dtS > 30) { prev = cur; return 0; }
@@ -1604,7 +1615,7 @@
       function wkExpand(w) {
         const out = [];
         (w.blocks || []).forEach(b => {
-          if (b.repeat) {
+          if ((b.repeat != null || Array.isArray(b.steps))) {
             const n = Math.max(1, b.repeat | 0);
             for (let r = 1; r <= n; r++) (b.steps || []).forEach(s => out.push({ ...s, label: `${WK_KINDS[s.kind] || "Step"} ${r} of ${n}` }));
           } else out.push({ ...b, label: WK_KINDS[b.kind] || "Step" });
@@ -1862,6 +1873,8 @@
       // a map with several dots. Falls back to initials when there's no picture.
       function bikeRiderIcon({ photo, name, color, place, size = 44, dim = false }) {
         const initials = (name || "?").split(/\s+/).slice(0, 2).map(w => w[0] || "").join("").toUpperCase();
+        // photo is a typed link anyone following the feed loads — only real image URLs, escaped.
+        photo = /^(https:\/\/|data:image\/)/i.test(String(photo || "")) ? escHtml(photo) : "";
         const inner = photo
           ? `<img src="${photo}" alt="" style="width:100%;height:100%;object-fit:cover;display:block"
                  onerror="this.style.display='none';this.parentNode.classList.add('tm-noimg')"/>`
@@ -1875,7 +1888,7 @@
                     border:3px solid ${color};background:#EFEDE8;box-shadow:0 2px 10px rgba(0,0,0,0.75);
                     display:flex;align-items:center;justify-content:center;
                     font:800 ${Math.round(size * 0.34)}px/1 Archivo,Arial,sans-serif;color:${color}">
-                 ${inner}<span style="position:absolute">${photo ? "" : initials}</span>
+                 ${inner}<span style="position:absolute">${photo ? "" : escHtml(initials)}</span>
                </div>
                ${place ? `<div style="position:absolute;right:-3px;bottom:-3px;min-width:22px;height:22px;
                     border-radius:11px;background:${color};color:#FFFFFF;font:800 14px/18px Archivo,Arial,sans-serif;
@@ -2154,7 +2167,10 @@
 
       function calcAge(dob) {
         if (!dob) return null;
-        const d = new Date(dob), today = new Date();
+        // "YYYY-MM-DD" parses as UTC midnight — the day before in the US — so read it as local.
+        const ymd = String(dob).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        const d = ymd ? new Date(+ymd[1], +ymd[2] - 1, +ymd[3]) : new Date(dob), today = new Date();
+        if (isNaN(d)) return null;
         let age = today.getFullYear() - d.getFullYear();
         if (today.getMonth() - d.getMonth() < 0 || (today.getMonth() === d.getMonth() && today.getDate() < d.getDate())) age--;
         return age;
@@ -2195,6 +2211,17 @@
       function asList(x) {
         if (Array.isArray(x)) return x.filter(v => v != null);
         return (x && typeof x === "object") ? Object.values(x).filter(v => v != null) : [];
+      }
+      // Like asList but keeps positions, for lists where the index is the athlete's
+      // id (live race athletes): an object with keys {0,1,2,7} becomes [a,b,c,,,,,d].
+      // localStorage is only a cache of what's in Firebase; a full quota (logos are
+      // big) mustn't throw and abort the save or the login load that called it.
+      function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+      function byIndex(x) {
+        if (Array.isArray(x)) return x;
+        const out = [];
+        if (x && typeof x === "object") Object.keys(x).forEach(k => { if (/^\d+$/.test(k)) out[+k] = x[k]; });
+        return out;
       }
       function normSavedRaces(list) {
         return asList(list).map(r => {
@@ -2316,6 +2343,11 @@
         if (!str || !str.trim()) return null;
         const clean = str.trim().replace(/[^0-9:.]/g, "");
         const parts = clean.split(":");
+        if (parts.length === 3) {   // H:MM:SS — long bike legs and totals
+          const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10), s = parseFloat(parts[2]);
+          if (isNaN(h) || isNaN(m) || isNaN(s)) return null;
+          return ((h * 60 + m) * 60 + s) * 1000;
+        }
         if (parts.length === 2) {
           const m = parseInt(parts[0], 10);
           const s = parseFloat(parts[1]);
@@ -2612,7 +2644,7 @@
         const finishOf = a => (a && a.finished && !a.dnf && a.startOffset != null && a.splits) ? a.splits[a.splits.length - 1] - a.startOffset : null;
         const finishers = all.filter(a => finishOf(a) != null).sort((x, y) => finishOf(x) - finishOf(y));
         const overall = finishers.findIndex(a => a.id === ath.id) + 1 || null;
-        const agList = finishers.filter(a => a.ageGroup && a.ageGroup === ath.ageGroup);
+        const agList = finishers.filter(a => a.ageGroup && a.ageGroup === ath.ageGroup && (a.gender || "") === (ath.gender || ""));
         const agPlace = ath.ageGroup ? agList.findIndex(a => a.id === ath.id) + 1 || null : null;
         const segs = asList(race.segments).length ? asList(race.segments) : SEGMENTS;
         const sp = ath.splits || [];
@@ -3077,24 +3109,35 @@
         if (!label) return;
         const field = leg === "bike" ? "bike" : "tread";
         const serverNow = now + (TT_BT.offset || 0);
+        // Two waves can share a machine number with overlapping legs (a wave started
+        // a minute early): only the athlete whose leg began first is on the machine.
+        let owner = null, ownerStart = Infinity;
+        Object.entries(race.athletes || {}).forEach(([aid, a]) => {
+          if (!a || String(a[field] || "").trim().toLowerCase() !== label || (a.manual && a.manual[leg])) return;
+          const w = ttLegWindow(race, a.wave || 0, leg);
+          if (w && serverNow >= w[0] && serverNow <= w[1] && w[0] < ownerStart) { owner = aid; ownerStart = w[0]; }
+        });
         Object.entries(race.athletes || {}).forEach(([aid, a]) => {
           if (!a || String(a[field] || "").trim().toLowerCase() !== label) return;
           if (a.manual && a.manual[leg]) return;
           const win = ttLegWindow(race, a.wave || 0, leg);
-          const key = aid + "|" + leg;
+          // The leg's start is in the key so a reset-and-restarted wave starts fresh on
+          // every laptop, not just the one where Reset was tapped.
+          const key = aid + "|" + leg + "|" + (win ? win[0] : "");
           if (win && serverNow > win[1]) {
             // Leg just ended: save the last few metres since the previous write, once.
             const done = TT_BT.acc[key];
             if (done && !done.final) { done.final = true; rtdb.ref(`timedRaces/${code}/athletes/${aid}/dist/${leg}`).set(Math.round(done.dist * 10) / 10).catch(() => {}); }
             return;
           }
-          if (!win || serverNow < win[0]) return;
+          if (!win || serverNow < win[0] || aid !== owner) return;
           let acc = TT_BT.acc[key];
           const stored = +(a.dist && a.dist[leg]) || 0;
           if (!acc) acc = TT_BT.acc[key] = { base: r.total != null ? r.total - stored : null, dist: stored, t: now };
           // A machine switched off and on starts counting from zero again: carry on from where it was.
           if (r.total != null && acc.lastTotal != null && r.total < acc.lastTotal - 5) acc.base = r.total - acc.dist;
           if (r.total != null) acc.lastTotal = r.total;
+          if (r.total != null && acc.base == null) acc.base = r.total - acc.dist;   // first packets lacked the odometer
           if (r.total != null && acc.base != null) acc.dist = Math.max(acc.dist, r.total - acc.base);
           else if (r.kmh != null) acc.dist += (r.kmh / 3.6) * Math.min(5, (now - acc.t) / 1000);
           acc.t = now;
@@ -3122,14 +3165,16 @@
         if (!kind) throw new Error("This device doesn't send bike or treadmill data (no FTMS or running sensor).");
         const ch = await (await server.getPrimaryService(svcU)).getCharacteristic(charU);
         await ch.startNotifications();
-        ch.addEventListener("characteristicvaluechanged", e => { try { ttOnReading(device.id, kind, parse(e.target.value)); } catch (_) {} });
+        // Handler properties, not addEventListener: every reconnect runs this again,
+        // and stacked listeners doubled readings and reconnect attempts per dropout.
+        ch.oncharacteristicvaluechanged = e => { try { ttOnReading(device.id, kind, parse(e.target.value)); } catch (_) {} };
         const prev = TT_BT.devices.get(device.id) || {};
         TT_BT.devices.set(device.id, { ...prev, device, kind, label: prev.label || ttLabels()[device.id] || "", name: device.name || "Device", connected: true });
-        device.addEventListener("gattserverdisconnected", () => {
+        device.ongattserverdisconnected = () => {
           const d = TT_BT.devices.get(device.id); if (d) d.connected = false;
           if (TT_BT.onChange) TT_BT.onChange();
           setTimeout(() => ttConnect(device).then(() => TT_BT.onChange && TT_BT.onChange()).catch(() => {}), 3000);   // keep trying
-        });
+        };
         if (TT_BT.onChange) TT_BT.onChange();
         return kind;
       }
@@ -3154,6 +3199,8 @@
           TT_BT.onChange = () => tick(x => x + 1);
           return () => { ref.off("value", fn); clearInterval(iv); };
         }, [code]);
+        // viewer can settle after mount (the host role loads late); the machines need the race either way.
+        React.useEffect(() => { if (!viewer && race) { TT_BT.race = race; TT_BT.code = code; } }, [viewer, race, code]);
         // Listed in Today's races while sign-ups are open or it's live.
         const firstWave = (race && ttList(race.waves)[0]) || {};
         // Over once every wave has run its last leg: drops out of Today's races and the header says finished.
@@ -3425,7 +3472,7 @@
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ ...TM_LABEL, flex: 1, margin: 0 }}>Waves: {waves.length}</div>
                 <button onClick={() => set("waves", [...waves.map((x, i) => ({ ...x, n: i + 1 })), { n: waves.length + 1 }])} style={{ ...btnStyle(TM.ink, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>+ Wave</button>
-                {waves.length > 1 && !waves[waves.length - 1].startAt && <button onClick={() => set("waves", waves.slice(0, -1))} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>− Wave</button>}
+                {waves.length > 1 && !waves[waves.length - 1].startAt && <button onClick={() => { if (waveCount(waves.length - 1) > 0) { alert(`Move the ${waveCount(waves.length - 1)} athlete(s) in wave ${waves.length} to another wave first.`); return; } set("waves", waves.slice(0, -1)); }} style={{ ...btnStyle(TM.live, true), minHeight: 40, padding: "0 12px", fontSize: 15 }}>− Wave</button>}
               </div>
               {waves.map((wv, w) => (
                 <div key={w} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
@@ -3667,6 +3714,8 @@
       function chFmt(m, unit) { const v = chDist(m, unit); return (v >= 100 ? v.toFixed(1) : v.toFixed(2)) + " " + (unit === "km" ? "km" : "mi"); }
       function chDur(ms) { if (!ms) return ""; const s = Math.round(ms / 1000); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); }
       function chDay(t) { return t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""; }
+      // The real moment in the viewer's own time zone — the host's midnight isn't theirs.
+      function chWhen(t) { return t ? new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; }
       function chOrd(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
       const chIsGoal = c => c && c.format === "goal";
       const chSportsOf = c => chIsGoal(c) ? ((c.sports && c.sports.length) ? c.sports : ["swim", "bike", "run"]) : ["run"];
@@ -3884,7 +3933,7 @@
           return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
         const phaseLine = phase === "unset" ? "Dates not set yet"
           : phase === "before" ? `Starts ${chDay(c.startAt)} · in ${countdown(c.startAt)}`
-          : phase === "on" ? `● On now · ends ${chDay(c.endAt)} 11:59 PM · ${countdown(c.endAt)} left`
+          : phase === "on" ? `● On now · ends ${chWhen(c.endAt)} · ${countdown(c.endAt)} left`
           : `Finished ${chDay(c.endAt)}`;
         const goalsLine = d => sports.filter(s => +(d.goals || {})[s] > 0).map(s => `${CH_KIND[s].label} ${d.goals[s]}`).join(" · ") + " " + (unit === "km" ? "km" : "mi");
 
@@ -4086,7 +4135,7 @@
                 {goal && sports.includes("bike") && <button onClick={() => startRun("bike")} style={{ ...btnStyle(TM.bike), minHeight: 56 }}>🚴 Ride now with this phone's GPS</button>}
               </div>
             )}
-            {phase === "before" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>You're in! Activities count from {chDay(c.startAt)} 12:00 AM.</div>}
+            {phase === "before" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>You're in! Activities count from {chWhen(c.startAt)}.</div>}
             {phase === "ended" && <div style={{ ...rowStyle(), marginTop: 12, fontWeight: 700 }}>The challenge is over — no more activities can be added.{goal && me.pledge ? " Look back at your pledge above — what did you prove?" : ""}</div>}
 
             {run && (
@@ -4426,7 +4475,7 @@
                 if (!ath || !ath.gps || ath.gps.lat == null || ath.gps.lng == null) return;
                 const pos = [ath.gps.lat, ath.gps.lng];
                 const markerId = ath.id || idx;
-                const curSeg = (ath.splits || []).findIndex(s => s === null);
+                const curSeg = Array.from({ length: SEGMENTS.length }, (_, k) => (ath.splits && ath.splits[k] != null) ? ath.splits[k] : null).findIndex(s => s === null);
                 const col = segColors[curSeg === -1 ? SEGMENTS.length - 1 : curSeg] || "#0B3FCC";
                 const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
                 const distLabel = ath.gps.distanceMi != null ? ` · ${ath.gps.distanceMi.toFixed(2)} mi` : "";
@@ -4526,7 +4575,7 @@
             if (!ath || !ath.gps || ath.gps.lat == null || ath.gps.lng == null) return;
             const pos = [ath.gps.lat, ath.gps.lng];
             const markerId = ath.id || idx;
-            const curSeg = (ath.splits || []).findIndex(s => s === null);
+            const curSeg = Array.from({ length: SEGMENTS.length }, (_, k) => (ath.splits && ath.splits[k] != null) ? ath.splits[k] : null).findIndex(s => s === null);
             const col = segColors[curSeg === -1 ? SEGMENTS.length - 1 : curSeg] || "#0B3FCC";
             const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
             const distLabel = ath.gps.distanceMi != null ? ` · ${ath.gps.distanceMi.toFixed(2)} mi` : "";
@@ -4624,8 +4673,8 @@
         }
         const [emailKind, setEmailKind] = useState("watch");     // watch | results | custom
         const [emailSkip, setEmailSkip] = useState({});           // athlete id → left off this email
-        const [emailSubject, setEmailSubject] = useState("");
-        const [emailBody, setEmailBody] = useState("");
+        const [emailSubject, setEmailSubject] = useState(null);
+        const [emailBody, setEmailBody] = useState(null);
         const [emailCopied, setEmailCopied] = useState("");
         // The triathlon's code before it's locked in by sign-ups or going live.
         const [customRaceCode, setCustomRaceCode] = useState("");
@@ -5396,6 +5445,7 @@
         const [archiveOpenId, setArchiveOpenId] = useState(null);
         const [archiveOpenAthId, setArchiveOpenAthId] = useState(null);
         const archiveSessionRef = useRef(null);
+        const archiveForRef = useRef(null);   // which saved race archiveSessionRef belongs to
         const [archiveDeleteConfirm, setArchiveDeleteConfirm] = useState(null);
         const [photoAlbum, setPhotoAlbum] = useState(null); // { raceId, raceName, files:[{name,url,file}], loading, lightboxIdx, shareCode, uploading, uploadProgress:{done,total} }
         const photoAlbumUrlsRef = useRef([]);
@@ -5630,6 +5680,8 @@
         const bikeLastPubRef   = useRef(0);
         const bikeDistMRef     = useRef(0);
         const bikePrevFixRef   = useRef(null);
+        const bikeDistCalcRef  = useRef(null);
+        const bikeSimNoSensorRef = useRef(false);
         const bikeLastCrumbRef = useRef(null);
         const bikeStartedAtRef = useRef(null);
         const bikeSensorRef    = useRef({ cadence: null, power: null, hr: null, sensorSpeed: null });
@@ -5791,6 +5843,7 @@
           rtdb.ref("liveRaces/" + code).update({ status: "closed", endedAt: Date.now(), clockRunning: false, clockMs: clockMs,
             clock: clockStamp(clockMs, false, true), updatedAt: Date.now() }).catch(console.error);
           unlistRace(code);
+          stopRegListener();   // late sign-ups mustn't keep changing a finished race
           if (liveRaceUnsubRef.current) { liveRaceUnsubRef.current.ref.off("value", liveRaceUnsubRef.current.fn); liveRaceUnsubRef.current = null; }
           try { localStorage.removeItem("tri-active-live"); } catch (_) {}
           setLiveRaceCode(null);
@@ -5800,7 +5853,7 @@
         // a minute later unless the host keeps it live.
         const [endPrompt, setEndPrompt] = useState(null);   // { code, at } while counting down
         const keepLiveRef = useRef(null);
-        const allDoneStopped = !!liveRaceCode && clockStarted && !clockRunning
+        const allDoneStopped = !!liveRaceCode && clockStarted && !clockRunning && !hostLost
           && athletes.some(a => a.started) && athletes.filter(a => a.started).every(a => a.finished || a.dnf);
         useEffect(() => {
           if (!allDoneStopped) { keepLiveRef.current = null; setEndPrompt(null); return; }
@@ -5848,7 +5901,7 @@
           }
           const ref = rtdb.ref(`liveRaces/${liveRaceCode}/athletes`);
           const fn = snap => {
-            const athArr = snap.val() || [];
+            const athArr = byIndex(snap.val());
             liveAthCountRef.current = Array.isArray(athArr) ? athArr.length : Object.keys(athArr).reduce((m, k) => Math.max(m, +k + 1), 0);
             const now = Date.now();
             const gpsMap = {};
@@ -6290,7 +6343,7 @@
                 const pos = [ath.gps.lat, ath.gps.lng];
                 const markerId = `ath-${idx}`;
                 const athName = ath.firstName ? `${ath.firstName} ${ath.lastName || ""}`.trim() : ath.name || `Athlete ${idx + 1}`;
-                const theirSplits = ath.splits || [];
+                const theirSplits = Array.from({ length: SEGMENTS.length }, (_, k) => (ath.splits && ath.splits[k] != null) ? ath.splits[k] : null);
                 const theirSeg = theirSplits.findIndex(s => s === null);
                 const theirCol = segColors[theirSeg === -1 ? SEGMENTS.length - 1 : theirSeg] || "#0B3FCC";
                 if (joinAllMarkersRef.current[markerId]) {
@@ -6385,7 +6438,7 @@
                 if (data.profile) {
                   setUserProfile(data.profile);
                   setEditProfile({ firstName: data.profile.firstName || "", lastName: data.profile.lastName || "", birthday: data.profile.birthday || "", gender: data.profile.gender || "", role: data.profile.role || "athlete" });
-                  localStorage.setItem("tri-user-profile", JSON.stringify(data.profile));
+                  lsSet("tri-user-profile", JSON.stringify(data.profile));
                   const role = data.profile.role || "athlete";
                   if (!roleFreshRef.current) setView(role === "host" ? "myraces" : role === "spectator" || role === "timer" ? "spectate" : "join");
                 } else {
@@ -6409,14 +6462,14 @@
                 // Bike Live Feed configs: RTDB → localStorage fallback, then push local up
                 if (data.bikeFeeds && data.bikeFeeds.length > 0) {
                   setBikeFeedList(data.bikeFeeds);
-                  localStorage.setItem("bike-feeds", JSON.stringify(data.bikeFeeds));
+                  lsSet("bike-feeds", JSON.stringify(data.bikeFeeds));
                 } else {
                   try { const c = localStorage.getItem("bike-feeds"); if (c) { const b = JSON.parse(c); if (b.length > 0) { setBikeFeedList(b); rtdb.ref("users/" + user.uid + "/bikeFeeds").set(b).catch(console.error); } } } catch(_) {}
                 }
 
                 if (data.workouts && data.workouts.length > 0) {
                   setWorkouts(data.workouts);
-                  localStorage.setItem("workouts", JSON.stringify(data.workouts));
+                  lsSet("workouts", JSON.stringify(data.workouts));
                 } else {
                   try { const c = JSON.parse(localStorage.getItem("workouts") || "[]"); if (c.length > 0) rtdb.ref("users/" + user.uid + "/workouts").set(c).catch(console.error); } catch(_) {}
                 }
@@ -6424,7 +6477,7 @@
                 // Bike rider profiles: RTDB → localStorage fallback, then push local up
                 if (data.bikeRiders && data.bikeRiders.length > 0) {
                   setBikeRiders(data.bikeRiders);
-                  localStorage.setItem("bike-riders", JSON.stringify(data.bikeRiders));
+                  lsSet("bike-riders", JSON.stringify(data.bikeRiders));
                 } else {
                   try { const c = localStorage.getItem("bike-riders"); if (c) { const b = JSON.parse(c); if (b.length > 0) { setBikeRiders(b); rtdb.ref("users/" + user.uid + "/bikeRiders").set(b).catch(console.error); } } } catch(_) {}
                 }
@@ -6592,7 +6645,7 @@
             cred.user.sendEmailVerification().catch(() => {});
             const profile = { firstName: authFirstName.trim(), lastName: authLastName.trim(), displayName, email: authEmail, birthday: authBirthday, gender: authGender, role: authRole, createdAt: new Date().toISOString() };
             await rtdb.ref("users/" + cred.user.uid + "/profile").set(profile);
-            localStorage.setItem("tri-user-profile", JSON.stringify(profile));
+            lsSet("tri-user-profile", JSON.stringify(profile));
             setUserProfile(profile);
           } catch(e) { setAuthError(friendlyAuthError(e.code)); }
           setAuthWorking(false);
@@ -7056,7 +7109,7 @@
               const segCount = (data.segments || SEGMENTS).length;
               // RTDB strips null from arrays — restore them so split logic works
               if (data.athletes) {
-                data.athletes = data.athletes.map(ath => ({
+                data.athletes = byIndex(data.athletes).map(ath => ({
                   ...ath,
                   splits: Array.from({ length: segCount }, (_, i) =>
                     (ath.splits && ath.splits[i] !== undefined && ath.splits[i] !== null) ? ath.splits[i] : null
@@ -7085,7 +7138,12 @@
           if (typeof fv === "string") archiveSessionRef.current = fv;
           // One results entry per race per day: a reload or reopening the race
           // keeps updating the same entry instead of starting a copy.
-          else if (raceKey) archiveSessionRef.current = `race_${raceKey}_${new Date().toISOString().slice(0, 10)}`;
+          // Set once per race (reset when another race is opened): the code changes when
+          // the race ends, and an evening race crosses midnight UTC — both made a second copy.
+          else if (raceKey && (!String(archiveSessionRef.current || "").startsWith("race_") || archiveForRef.current !== loadedRaceId)) {
+            archiveSessionRef.current = `race_${raceKey}_${new Date().toLocaleDateString("en-CA")}`;
+            archiveForRef.current = loadedRaceId;
+          }
           else if (!archiveSessionRef.current) archiveSessionRef.current = `session_${Date.now()}`;
           const sessionId = archiveSessionRef.current;
           const prevEntry = savedArchive.find(r => r.id === sessionId) || {};
@@ -7129,17 +7187,18 @@
             const agp = archiveAgPlace(race.athletes, ath);
             const ac = raceCourses.find(c => c.id === ath.courseId) || raceCourses[0] || { name: "Race" };
             const segTimes = segs.map((_, si) => { const d = archiveSegDur(ath, si); return d !== null ? formatElapsed(d) : "--"; });
-            return `<tr><td>${place + 1}</td><td>${ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td><td>${ath.name}</td><td>${ath.gender}</td><td>${ath.ageGroup}</td><td>${agp !== null ? agp : "--"}</td><td>${ac.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`;
+            return `<tr><td>${place + 1}</td><td>${ath.raceNumber != null ? `#${escHtml(ath.raceNumber)}` : "—"}</td><td>${escHtml(ath.name)}</td><td>${escHtml(ath.gender)}</td><td>${escHtml(ath.ageGroup)}</td><td>${agp !== null ? agp : "--"}</td><td>${escHtml(ac.name)}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`;
           }).join("");
           const agGroups = {};
           (race.athletes || []).filter(a => a.finished).forEach(a => { const key = `${a.gender} ${a.ageGroup}`; if (!agGroups[key]) agGroups[key] = []; agGroups[key].push(a); });
           Object.values(agGroups).forEach(g => g.sort((a, b) => (a.finishMs || Infinity) - (b.finishMs || Infinity)));
           const agSections = Object.entries(agGroups).map(([label, group]) => {
-            const rows = group.map((ath, i) => { const segTimes = segs.map((_, si) => { const d = archiveSegDur(ath, si); return d !== null ? formatElapsed(d) : "--"; }); return `<tr><td>${i + 1}</td><td>${ath.name}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`; }).join("");
-            return `<div class="ag-section"><div class="ag-label">${label}</div><table><thead><tr><th>#</th><th>Athlete</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+            const rows = group.map((ath, i) => { const segTimes = segs.map((_, si) => { const d = archiveSegDur(ath, si); return d !== null ? formatElapsed(d) : "--"; }); return `<tr><td>${i + 1}</td><td>${escHtml(ath.name)}</td>${segTimes.map(t => `<td>${t}</td>`).join("")}<td><strong>${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</strong></td></tr>`; }).join("");
+            return `<div class="ag-section"><div class="ag-label">${escHtml(label)}</div><table><thead><tr><th>#</th><th>Athlete</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${rows}</tbody></table></div>`;
           }).join("");
           const win = window.open("", "_blank");
-          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${cfg.eventName}</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'Archivo',Arial,sans-serif;color:#0B0D10;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Archivo',Arial,sans-serif;font-size:32px;letter-spacing:4px;color:#0B0D10;}.subtitle{font-size:14px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;}.dist{font-size:14px;color:#3D434B;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#3D434B;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#0B0D10;color:#EFEDE8;font-size:14px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(3){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:2px solid #eef2f6;}td:nth-child(3){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;margin-bottom:4px;border-left:3px solid #0B3FCC;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${cfg.eventName || "Timeathon Results"}</div><div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div></div></div><div class="dist">${raceCourses.map(c => `${c.name}: ${courseDists(c)}`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
+          if (!win) { alert("Your browser blocked the pop-up — allow pop-ups for this site and try again."); return; }
+          win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Results — ${escHtml(cfg.eventName)}</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:portrait;margin:.5in;}body{font-family:'Archivo',Arial,sans-serif;color:#0B0D10;background:#fff;padding:20px;}.header{display:flex;align-items:center;gap:16px;margin-bottom:6px;}.logo{height:60px;object-fit:contain;}.title{font-family:'Archivo',Arial,sans-serif;font-size:32px;letter-spacing:4px;color:#0B0D10;}.subtitle{font-size:14px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;}.dist{font-size:14px;color:#3D434B;margin-top:10px;letter-spacing:2px;text-transform:uppercase;}h2{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#3D434B;margin:20px 0 6px;}table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:14px;}th{text-align:center;padding:5px 4px;background:#0B0D10;color:#EFEDE8;font-size:14px;text-transform:uppercase;letter-spacing:1px;}th:nth-child(3){text-align:left;}td{padding:5px 4px;text-align:center;border-bottom:2px solid #eef2f6;}td:nth-child(3){text-align:left;font-weight:700;}.ag-section{margin-bottom:20px;}.ag-label{font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;margin-bottom:4px;border-left:3px solid #0B3FCC;padding-left:6px;}@media print{.ag-section{break-inside:avoid;}}</style></head><body><div class="header"><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div><div class="title">${escHtml(cfg.eventName || "Timeathon Results")}</div><div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div></div></div><div class="dist">${raceCourses.map(c => `${escHtml(c.name)}: ${courseDists(c)}`).join(" &nbsp;&middot;&nbsp; ")}</div><h2>Overall Standings</h2><table><thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${segs.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead><tbody>${overallRows}</tbody></table><h2>Age Group Breakdown</h2>${agSections}<script>window.onload=()=>window.print();<\/script></body></html>`);
           win.document.close();
         }
 
@@ -7160,9 +7219,10 @@
             const medal = place >= 0 && place < 3 ? medalEmoji[place] : "🏅";
             const agp = archiveAgPlace(race.athletes, ath);
             const segPills = segs.map((seg, si) => { const dur = archiveSegDur(ath, si); return dur !== null ? `<div class="seg"><div class="seg-name">${seg}</div><div class="seg-time">${formatElapsed(dur)}</div></div>` : ""; }).join("");
-            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${cfg.eventName}</div>${cfg.orgName ? `<div class="org">${cfg.orgName}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${ath.dnf ? "Did Not Finish" : place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${ath.name}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">${ath.dnf ? "Result" : "Chip Time"}</div><div class="time-val">${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div>${hostSig && hostSig.img ? `<div class="sig"><img src="${hostSig.img}" alt="Signature" /><div class="sig-line"></div>${hostSig.name ? `<div class="sig-name">${hostSig.name}</div>` : ""}<div class="sig-title">${hostSig.title || "Race Director"}</div></div>` : ""}</div>`;
+            return `<div class="cert"><img src="${cfg.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" /><img src="${cfg.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" /><div class="top-rule"></div><div class="event">${escHtml(cfg.eventName)}</div>${cfg.orgName ? `<div class="org">${escHtml(cfg.orgName)}</div>` : ""}<div class="medal-emoji">${medal}</div><div class="place" style="color:${pColor}">${ath.dnf ? "Did Not Finish" : place >= 0 ? placeSuffix(place + 1) + " Place Overall" : "Finisher"}</div><div class="name">${escHtml(ath.name)}</div>${ath.raceNumber != null ? `<div class="bib-num">Bib #${escHtml(ath.raceNumber)}</div>` : ""}${agp !== null ? `<div class="ag-place">${escHtml(ath.gender)} ${escHtml(ath.ageGroup)} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}<div class="time-row"><div class="time-block"><div class="time-label">${ath.dnf ? "Result" : "Chip Time"}</div><div class="time-val">${ath.dnf ? "DNF" : ath.finishMs != null ? formatElapsed(ath.finishMs) : "--"}</div></div></div><div class="segs">${segPills}</div><div class="paces">${sp ? `<span>🏊 ${sp}</span>` : ""}${bp ? `<span>🚴 ${bp}</span>` : ""}${rp ? `<span>🏃 ${rp}</span>` : ""}</div><div class="bottom-rule"></div>${hostSig && hostSig.img ? `<div class="sig"><img src="${hostSig.img}" alt="Signature" /><div class="sig-line"></div>${hostSig.name ? `<div class="sig-name">${escHtml(hostSig.name)}</div>` : ""}<div class="sig-title">${escHtml(hostSig.title || "Race Director")}</div></div>` : ""}</div>`;
           }).join("");
           const win = window.open("", "_blank");
+          if (!win) { alert("Your browser blocked the pop-up — allow pop-ups for this site and try again."); return; }
           win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Certificate</title><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}@page{size:11in 8.5in;margin:0;}@media screen{html{background:#8f949b;}body{background:#8f949b;padding:16px 0;}.cert{margin:0 auto 16px;box-shadow:0 6px 24px rgba(0,0,0,.35);}}@media print{html,body{zoom:1!important;padding:0!important;background:#fff!important;}.cert{margin:0!important;box-shadow:none!important;}}body{background:#fff;font-family:'Archivo',Arial,sans-serif;}.cert{width:11in;height:8.5in;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;border:5px solid #0B3FCC;background:linear-gradient(150deg,#EFEDE8 0%,#ffffff 55%,#EFEDE8 100%);padding:28px 50px;position:relative;overflow:hidden;}.bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44%;opacity:.09;pointer-events:none;object-fit:contain;}.logo{height:84px;object-fit:contain;margin-bottom:2px;}.top-rule,.bottom-rule{width:60%;height:2px;background:linear-gradient(90deg,transparent,#0B3FCC,transparent);}.event{font-size:18px;letter-spacing:3px;text-transform:uppercase;color:#3D434B;text-align:center;}.org{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#0B3FCC;text-align:center;margin-top:-4px;}.medal-emoji{font-size:64px;line-height:1;}.place{font-family:'Archivo',Arial,sans-serif;font-size:40px;letter-spacing:4px;}.ag-place{font-size:18px;letter-spacing:2px;color:#0B0D10;font-weight:700;text-align:center;}.name{font-family:'Archivo',Arial,sans-serif;font-size:92px;letter-spacing:5px;color:#0B0D10;line-height:1;text-align:center;}.time-row{display:flex;gap:30px;align-items:center;margin:4px 0;}.time-block{text-align:center;}.time-label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.time-val{font-family:'Archivo',Arial,sans-serif;font-size:48px;letter-spacing:3px;color:#0B0D10;}.segs{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}.seg{text-align:center;}.seg-name{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:#3D434B;font-weight:700;}.seg-time{font-family:'Archivo',Arial,sans-serif;font-size:26px;letter-spacing:2px;color:#0B0D10;}.paces{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;}.paces span{font-size:14px;color:#3D434B;font-weight:600;background:#EFEDE8;border:2px solid #C9C5BC;border-radius:20px;padding:3px 12px;}.bib-num{font-size:14px;letter-spacing:3px;color:#0B3FCC;font-weight:700;text-transform:uppercase;margin-top:-4px;}.sig{position:absolute;left:56px;bottom:34px;width:250px;text-align:center;}.sig img{max-width:240px;max-height:70px;object-fit:contain;display:block;margin:0 auto;}.sig-line{height:2px;background:#3D434B;margin-top:2px;}.sig-name{font-size:15px;font-weight:800;color:#0B0D10;margin-top:4px;}.sig-title{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#3D434B;font-weight:700;}</style></head><body>${certHTML}<script>(function(){var w=11*96+32;if(innerWidth<w)document.body.style.zoom=(innerWidth/w).toFixed(3);})();window.onload=()=>{window.print();}<\/script></body></html>`);
           win.document.close();
         }
@@ -7262,7 +7322,7 @@
 
         function persistRaces(races) {
           setSavedRaces(races);
-          localStorage.setItem("tri-saved-races", JSON.stringify(races));
+          lsSet("tri-saved-races", JSON.stringify(races));
           // A JSON round trip drops undefined fields, which Firebase would
           // otherwise reject outright — silently losing the save on refresh.
           const clean = JSON.parse(JSON.stringify(races));
@@ -7363,7 +7423,7 @@
           try {
             const ls = normSavedRaces(JSON.parse(localStorage.getItem("tri-saved-races") || "[]"))
               .map(r => r.id === raceId ? { ...r, code: newCode, plannedCode: newCode, oldCodes: [...new Set([...(r.oldCodes || []), oldCode])] } : r);
-            localStorage.setItem("tri-saved-races", JSON.stringify(ls));
+            lsSet("tri-saved-races", JSON.stringify(ls));
             rtdb.ref("users/" + auth.currentUser.uid + "/races").set(JSON.parse(JSON.stringify(ls))).catch(console.error);
           } catch(_) {}
           return true;
@@ -7858,10 +7918,13 @@
         // folder again only adds the new ones.
         async function addAlbumPhotos(code, fileList) {
           if (!currentUser || !fileList || !fileList.length) return;
-          const rec = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val());
-          if (!rec || rec.ownerUid !== currentUser.uid) { setAlbumMsg({ ok: false, text: "Couldn't open that album." }); return; }
-          const sid = rec.sid || newPhotoCode(12);
-          if (!rec.sid) await rtdb.ref("photoAlbums/" + code + "/sid").set(sid);
+          let rec = null, sid = null;
+          try {
+            rec = await rtdb.ref("photoAlbums/" + code).once("value").then(sn => sn.val());
+            if (!rec || rec.ownerUid !== currentUser.uid) { setAlbumMsg({ ok: false, text: "Couldn't open that album." }); return; }
+            sid = rec.sid || newPhotoCode(12);
+            if (!rec.sid) await rtdb.ref("photoAlbums/" + code + "/sid").set(sid);
+          } catch (e) { setAlbumMsg({ ok: false, text: "Couldn't reach the album — check your connection and try again." }); return; }
           const have = new Set(Object.values(rec.photos || {}).map(ph => String(ph.n).toLowerCase()));
           const files = Array.from(fileList).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name));
           const todo = files.filter(f => !have.has(f.name.toLowerCase()));
@@ -7893,7 +7956,7 @@
             }
           }
           await Promise.all([worker(), worker(), worker()]);
-          const count = await rtdb.ref("photoAlbums/" + code + "/photos").once("value").then(sn => sn.numChildren());
+          const count = await rtdb.ref("photoAlbums/" + code + "/photos").once("value").then(sn => sn.numChildren()).catch(() => (rec.photos ? Object.keys(rec.photos).length : 0) + added);
           await rtdb.ref("photoAlbums/" + code + "/updatedAt").set(Date.now()).catch(() => {});
           await rtdb.ref("users/" + currentUser.uid + "/photoAlbums/" + code + "/count").set(count).catch(() => {});
           setHostAlbums(a => a[code] ? { ...a, [code]: { ...a[code], count } } : a);
@@ -8037,7 +8100,7 @@
 
         function persistSavedAthletes(list) {
           setSavedAthletes(list);
-          localStorage.setItem("tri-saved-athletes", JSON.stringify(list));
+          lsSet("tri-saved-athletes", JSON.stringify(list));
           if (currentUser) rtdb.ref("users/" + currentUser.uid + "/athletes").set(list).catch(console.error);
         }
         function saveAthleteEdit(oldName, newData) {
@@ -8114,7 +8177,7 @@
         }
         const logoInputRef = useRef(null);
         function importResultsObjects(objs) {
-          const mmss = s => { if (!s || !String(s).trim()) return null; const [m, sec] = String(s).trim().split(":").map(Number); return ((m || 0) * 60 + (sec || 0)) * 1000; };
+          const mmss = s => { if (!s || !String(s).trim()) return null; return String(s).trim().split(":").map(Number).reduce((t, v) => t * 60 + (v || 0), 0) * 1000; };
           const newAthletes = objs.map((o, idx) => {
             const sw = mmss(o.swim), t1 = mmss(o.t1), bk = mmss(o.bike), t2 = mmss(o.t2), rn = mmss(o.run);
             const s0 = sw, s1 = (s0 != null && t1 != null ? s0 + t1 : null), s2 = (s1 != null && bk != null ? s1 + bk : null), s3 = (s2 != null && t2 != null ? s2 + t2 : null), s4 = (s3 != null && rn != null ? s3 + rn : null);
@@ -8436,7 +8499,7 @@
           const data = snap.val();
           const segs = data.segments || SEGMENTS;
           if (data.athletes) {
-            data.athletes = data.athletes.map(ath => ({
+            data.athletes = byIndex(data.athletes).map(ath => ({
               ...ath,
               splits: Array.from({ length: segs.length }, (_, i) =>
                 ath.splits && ath.splits[i] !== undefined && ath.splits[i] !== null ? ath.splits[i] : null
@@ -8565,7 +8628,7 @@
             const lapMi = (lapWp && lapWp.lapMi > 0 && laps != null) ? +(laps * lapWp.lapMi).toFixed(3) : null;
 
             if (!joinRaceEndedRef.current) rtdb.ref(`liveRaces/${joinRace.code}/athletes/${joinAthIdx}/gps`)
-              .update({ lat, lng, heading, speed,
+              .update({ lat, lng, heading: Number.isFinite(heading) ? Math.round(heading) : null, speed: Number.isFinite(speed) && speed >= 0 ? speed : null,
                      distanceMi: +totalDistMi.toFixed(3),
                      accuracy: accM != null ? Math.round(accM) : null,
                      laps, lapMi, rejected,
@@ -9322,13 +9385,13 @@
                 <img src="${certConfig.customLogoB64 || LOGO_B64}" class="bg-logo" alt="" />
                 <img src="${certConfig.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" />
                 <div class="top-rule"></div>
-                <div class="event">${certConfig.eventName}</div>
-                ${certConfig.orgName ? `<div class="org">${certConfig.orgName}</div>` : ""}
+                <div class="event">${escHtml(certConfig.eventName)}</div>
+                ${certConfig.orgName ? `<div class="org">${escHtml(certConfig.orgName)}</div>` : ""}
                 <div class="medal-emoji">${medal}</div>
                 <div class="place" style="color:${pColor}">${ath.dnf ? "Did Not Finish" : `${placeSuffix(place+1)} Place Overall`}</div>
-                <div class="name">${ath.name}</div>
-                ${ath.raceNumber != null ? `<div class="bib-num">Bib #${ath.raceNumber}</div>` : ""}
-                ${agp !== null ? `<div class="ag-place">${ath.gender} ${ath.ageGroup} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}
+                <div class="name">${escHtml(ath.name)}</div>
+                ${ath.raceNumber != null ? `<div class="bib-num">Bib #${escHtml(ath.raceNumber)}</div>` : ""}
+                ${agp !== null ? `<div class="ag-place">${escHtml(ath.gender)} ${escHtml(ath.ageGroup)} &mdash; ${placeSuffix(agp)} in Age Group</div>` : ""}
                 <div class="time-row">
                   <div class="time-block"><div class="time-label">${ath.dnf ? "Result" : "Chip Time"}</div><div class="time-val">${ath.dnf ? "DNF" : chip !== null ? formatElapsed(chip) : "--"}</div></div>
                   ${gt !== null && !ath.dnf ? `<div class="time-block"><div class="time-label">Gun Time</div><div class="time-val gun">${formatElapsed(gt)}</div></div>` : ""}
@@ -9340,12 +9403,13 @@
                   ${rp ? `<span>🏃 ${rp}</span>` : ""}
                 </div>
                 <div class="bottom-rule"></div>
-                <div class="dist-note">${ac.name} &mdash; ${courseDists(ac, " &middot; ", undefined, true)}</div>
-                ${hostSig && hostSig.img ? `<div class="sig"><img src="${hostSig.img}" alt="Signature" /><div class="sig-line"></div>${hostSig.name ? `<div class="sig-name">${hostSig.name}</div>` : ""}<div class="sig-title">${hostSig.title || "Race Director"}</div></div>` : ""}
+                <div class="dist-note">${escHtml(ac.name)} &mdash; ${courseDists(ac, " &middot; ", undefined, true)}</div>
+                ${hostSig && hostSig.img ? `<div class="sig"><img src="${hostSig.img}" alt="Signature" /><div class="sig-line"></div>${hostSig.name ? `<div class="sig-name">${escHtml(hostSig.name)}</div>` : ""}<div class="sig-title">${escHtml(hostSig.title || "Race Director")}</div></div>` : ""}
               </div>`;
           }).join("");
 
           const win = window.open("", "_blank");
+          if (!win) { alert("Your browser blocked the pop-up — allow pop-ups for this site and try again."); return; }
           win.document.write(`<!DOCTYPE html><html><head>
             <meta charset="UTF-8">
             <title>Certificates — Timeathon</title>
@@ -9401,12 +9465,12 @@
             const segs = SEGMENTS.map((_, si) => { const d = segmentDuration(ath, si); return d !== null ? formatElapsed(d) : "--"; });
             return `<tr>
               <td>${place + 1}</td>
-              <td>${ath.raceNumber != null ? `#${ath.raceNumber}` : "—"}</td>
-              <td>${ath.name}</td>
-              <td>${ath.gender}</td>
-              <td>${ath.ageGroup}</td>
+              <td>${ath.raceNumber != null ? `#${escHtml(ath.raceNumber)}` : "—"}</td>
+              <td>${escHtml(ath.name)}</td>
+              <td>${escHtml(ath.gender)}</td>
+              <td>${escHtml(ath.ageGroup)}</td>
               <td>${agp !== null ? agp : "--"}</td>
-              <td>${ac.name}</td>
+              <td>${escHtml(ac.name)}</td>
               ${segs.map(t => `<td>${t}</td>`).join("")}
               <td><strong>${chip !== null ? formatElapsed(chip) : "--"}</strong></td>
               <td>${gt !== null ? formatElapsed(gt) : "--"}</td>
@@ -9419,13 +9483,13 @@
               const segs = SEGMENTS.map((_, si) => { const d = segmentDuration(ath, si); return d !== null ? formatElapsed(d) : "--"; });
               return `<tr>
                 <td>${i + 1}</td>
-                <td>${ath.name}</td>
+                <td>${escHtml(ath.name)}</td>
                 ${segs.map(t => `<td>${t}</td>`).join("")}
                 <td><strong>${chip !== null ? formatElapsed(chip) : "--"}</strong></td>
               </tr>`;
             }).join("");
             return `<div class="ag-section">
-              <div class="ag-label">${label}</div>
+              <div class="ag-label">${escHtml(label)}</div>
               <table>
                 <thead><tr><th>#</th><th>Athlete</th>${SEGMENTS.map(s => `<th>${s}</th>`).join("")}<th>Chip</th></tr></thead>
                 <tbody>${rows}</tbody>
@@ -9434,9 +9498,10 @@
           }).join("");
 
           const win = window.open("", "_blank");
+          if (!win) { alert("Your browser blocked the pop-up — allow pop-ups for this site and try again."); return; }
           win.document.write(`<!DOCTYPE html><html><head>
             <meta charset="UTF-8">
-            <title>Results — ${certConfig.eventName || "Timeathon"}</title>
+            <title>Results — ${escHtml(certConfig.eventName || "Timeathon")}</title>
             <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&display=swap" rel="stylesheet">
             <style>
               *{box-sizing:border-box;margin:0;padding:0;}
@@ -9461,11 +9526,11 @@
             <div class="header">
               <img src="${certConfig.customLogoB64 || LOGO_B64}" class="logo" alt="Logo" />
               <div>
-                <div class="title">${certConfig.eventName || "Timeathon Results"}</div>
+                <div class="title">${escHtml(certConfig.eventName || "Timeathon Results")}</div>
                 <div class="subtitle">${LEG_ORDER.map(k => LEG_KIND_NAME[k]).join(" &middot; ")}</div>
               </div>
             </div>
-            <div class="dist">${courses.map(c => `${c.name}: ${courseDists(c)}`).join(" &nbsp;&middot;&nbsp; ")}</div>
+            <div class="dist">${courses.map(c => `${escHtml(c.name)}: ${courseDists(c)}`).join(" &nbsp;&middot;&nbsp; ")}</div>
             <h2>Overall Standings</h2>
             <table>
               <thead><tr><th>#</th><th>Bib</th><th>Athlete</th><th>Gender</th><th>Age Grp</th><th>Ag #</th><th>Course</th>${SEGMENTS.map(s=>`<th>${s}</th>`).join("")}<th>Chip</th><th>Gun</th></tr></thead>
@@ -9478,7 +9543,7 @@
           win.document.close();
         }
 
-        const allFinished  = athletes.length > 0 && athletes.every(a => a.finished);
+        const allFinished  = athletes.length > 0 && athletes.every(a => a.finished || a.dnf);
         const anyStarted   = athletes.some(a => a.started);
         const anyUnstarted = athletes.some(a => !a.started);
 
@@ -9611,7 +9676,7 @@
             const first = wk.paceSamples[0], dm = bikeDistMRef.current - first[1], dt = (now - first[0]) / 1000;
             wk.pace = dt >= 8 && dm > 5 ? (dt / dm) * WK_M[wk.units] : null;   // s per mile/km
             if (left <= 0) { wkCloseLap(); wkBeginStep(wk.i + 1, true); persistBikeSession(); return; }
-            if (s.by === "time" && Math.round(left) === 10 && !wk.warned) { wk.warned = true; wkSay("10 seconds."); }
+            if (s.by === "time" && left <= 10.5 && left > 3 && s.amt >= 15 && !wk.warned) { wk.warned = true; wkSay("10 seconds."); }
             if (s.by === "dist" && left <= 100 && left > 50 && !wk.warned && s.amt >= 400) { wk.warned = true; wkSay("100 meters to go."); }
             const lo = s.paceLo != null && s.paceHi != null ? Math.min(s.paceLo, s.paceHi) : (s.paceLo ?? s.paceHi);
             const hi = s.paceLo != null && s.paceHi != null ? Math.max(s.paceLo, s.paceHi) : (s.paceLo ?? s.paceHi);
@@ -9929,6 +9994,7 @@
           bikeDayRef.current         = day;
           bikeDistMRef.current   = baseDist;
           bikePrevFixRef.current = null;
+          bikeDistCalcRef.current = makeTriDistance(150);
           // Keep the restored crumb anchor, or breadcrumb spacing restarts from
           // scratch and drops a point right where the last one already is.
           if (!restore) bikeLastCrumbRef.current = null;
@@ -9987,13 +10053,22 @@
                 p => { bikeSimCenterRef.current = [p.coords.latitude, p.coords.longitude]; }, () => {},
                 { enableHighAccuracy: false, timeout: 5000 });
             }
-            setBikeGpsStatus(((feed.sport || bikeRideSport) === "run" ? "Treadmill mode" : "Trainer mode") + " · movement simulated from sensor speed");
+            setBikeGpsStatus(((feed.sport || bikeRideSport) === "run" ? "Treadmill mode" : "Trainer mode") + " · distance from sensor speed");
+            bikeSimNoSensorRef.current = false;
             bikeSimTimerRef.current = setInterval(() => {
               const now = Date.now();
               const s   = bikeSensorRef.current;
-              // Real wheel speed from the trainer drives the dot. No sensor yet?
-              // hold at a plausible pace so the feed is still visibly alive.
-              const mps = s.sensorSpeed != null ? s.sensorSpeed / 3.6 : ((feed.sport || bikeRideSport) === "run" ? 3.0 : 7.5);
+              // Real wheel / belt speed from the sensor drives the dot and the distance.
+              // No sensor: count nothing — a made-up pace used to finish workout steps
+              // and land in the activity file as real distance.
+              const mps = s.sensorSpeed != null ? s.sensorSpeed / 3.6 : 0;
+              if (s.sensorSpeed == null && !bikeSimNoSensorRef.current) {
+                bikeSimNoSensorRef.current = true;
+                setBikeGpsStatus("No speed sensor connected — distance counts once a " + ((feed.sport || bikeRideSport) === "run" ? "treadmill or foot pod" : "trainer or speed sensor") + " sends speed.");
+              } else if (s.sensorSpeed != null && bikeSimNoSensorRef.current) {
+                bikeSimNoSensorRef.current = false;
+                setBikeGpsStatus(((feed.sport || bikeRideSport) === "run" ? "Treadmill mode" : "Trainer mode") + " · distance from sensor speed");
+              }
               const dt  = Math.min(5, Math.max(0, (now - bikeSimLastRef.current) / 1000));
               bikeSimLastRef.current = now;
               bikeDistMRef.current += mps * dt;
@@ -10022,7 +10097,11 @@
           bikeGpsWatchRef.current = navigator.geolocation.watchPosition(pos => {
             const { latitude: lat, longitude: lng, heading, speed, altitude, accuracy } = pos.coords;
             bikeHandleFix(feed.code, lat, lng, { heading, speed, altitude, accuracy });
-          }, err => setBikeGpsStatus("GPS error: " + err.message),
+          }, err => {
+            // Denied permission never recovers on its own; don't leave the ride "live".
+            if (err.code === 1) { stopBikeRide(false); setBikeGpsStatus("Location is blocked — allow location for timeathon.com in your browser settings, then start again."); }
+            else setBikeGpsStatus("GPS error: " + err.message);
+          },
           { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
         }
 
@@ -10030,19 +10109,13 @@
         function bikeHandleFix(feedCode, lat, lng, { heading = null, speed = null, altitude = null, accuracy = null, fromWatch = false } = {}) {
             const now  = Date.now();
             const prev = bikePrevFixRef.current;
-            if (prev) {
-              // Reject implausible jumps rather than merely imprecise fixes — indoors
-              // or among tall buildings accuracy is often 50m+ yet still usable.
-              const dM  = haversineM(prev.lat, prev.lng, lat, lng);
-              const dtS = (now - prev.t) / 1000;
-              // Reject teleports only — a bad almanac or stale A-GPS fix can land
-              // hundreds of km away. Ordinary GPS wander (tens of metres between
-              // consecutive fixes) must survive, or the dot freezes in city streets;
-              // that noise is what the accuracy gate below is for.
-              if (dM > 500 && dM / Math.max(dtS, 1) > 50) return;
-              if (accuracy != null && accuracy > 150) return;       // unusable fix
-              bikeDistMRef.current += dM;
-            }
+            // Indoors or among tall buildings accuracy is often 50m+ yet still usable.
+            if (accuracy != null && accuracy > 150) return;         // unusable fix
+            // Same smoothing as tri GPS: raw fix-to-fix sums count standing-still
+            // jitter as distance, and a bad first fix (stale A-GPS, cell tower) used
+            // to anchor everything after it and then land as one big jump.
+            if (!bikeDistCalcRef.current) bikeDistCalcRef.current = makeTriDistance(150);
+            bikeDistMRef.current += bikeDistCalcRef.current.add({ lat, lng, t: now, acc: accuracy, spd: speed });
             // Plenty of phones report coords.speed as null. Without a fallback the
             // rider looks stationary — which drops publishing to the idle rate and
             // leaves every breadcrumb uncoloured — so derive it from the fixes.
@@ -10112,7 +10185,11 @@
             const fname = `${(name || "activity").replace(/[^\w\- ]+/g, "").trim() || "activity"}.tcx`;
             const blob = new Blob([xml], { type: "application/vnd.garmin.tcx+xml" });
             const file = new File([blob], fname, { type: blob.type });
-            if (!(opts && opts.download) && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name || "Activity" }); return true; }
+            if (!(opts && opts.download) && navigator.canShare && navigator.canShare({ files: [file] })) {
+              try { await navigator.share({ files: [file], title: name || "Activity" }); return true; }
+              // iOS refuses to share once the tap is "used up" by the wait above; save the file instead.
+              catch (e) { if (e && e.name === "AbortError") return false; }
+            }
             const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = fname; a.click();
             setTimeout(() => URL.revokeObjectURL(a.href), 4000);
             return true;
@@ -10194,7 +10271,8 @@
         }
         function drawBikePip(ctx, W, H) {
           const live = bikeLiveRef.current || {};
-          const km = (bikeDraft && bikeDraft.units === "km");
+          const pipFeed = bikeFeedList.find(f => f.code === bikeRideCodeRef.current) || {};
+          const km = (pipFeed.units || (bikeRideMeta && bikeRideMeta.units) || (bikeDraft && bikeDraft.units)) === "km";
           ctx.fillStyle = "#0B0D10"; ctx.fillRect(0, 0, W, H);
           const el = bikeElapsedBaseRef.current + (bikeRidingRef.current ? Date.now() - (bikeStartedAtRef.current || Date.now()) : 0);
           const s = Math.floor(el / 1000), hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
@@ -10308,7 +10386,7 @@
           const code = bikeRideCodeRef.current;
           if (!code) return;
           try {
-            localStorage.setItem("bike-active-ride", JSON.stringify({
+            lsSet("bike-active-ride", JSON.stringify({
               code,
               day: bikeDayRef.current,
               distM: Math.round(bikeDistMRef.current),
@@ -11196,10 +11274,9 @@
           } catch(_) {}
         }, [bikeWatchLive, bikeWatchMeta, bikeMapReady]);
 
-        // Stop GPS if the rider navigates away from bike mode entirely.
-        useEffect(() => {
-          if (appMode !== "bike" && (bikeGpsWatchRef.current !== null || bikeSimTimerRef.current !== null)) stopBikeRide();
-        }, [appMode]);
+        // Leaving Bike / Run (Switch role, opening another race) used to pause the
+        // ride, which threw away a workout and its laps mid-run. It keeps recording
+        // now, and a "Back to your run" button floats over the other screens.
 
         // A shared follow link shouldn't demand an account. Anonymous auth keeps the
         // database rules satisfied while asking nothing of the viewer.
@@ -11879,7 +11956,7 @@
         }
         // A parent counting an athlete says so (30 s heartbeat), so the host can
         // see who's covered and who still needs a counter.
-        const countingIdxs = !isHost && !isAthlete && lapCountCode ? Object.keys(lapMine).filter(k => lapMine[k]) : [];
+        const countingIdxs = view === "lapcount" && !isHost && !isAthlete && lapCountCode ? Object.keys(lapMine).filter(k => lapMine[k]) : [];
         // Only while the race is live: a beat after the host stops would leave a stray
         // record under the code and lock the host out of sharing it again.
         const counterRaceLive = !!(liveRace && liveRace.code === lapCountCode && liveRace.status === "live");
@@ -12351,7 +12428,13 @@ Start a new race anyway?`)) return;
         const roleHome = roleLanding(effectiveRole);
         const atRoleHome = view === roleHome && !(isAthlete && joinRace);
         function goRoleHome() {
-          if (isAthlete && view === "join" && joinRace) { setJoinRace(null); setJoinAthIdx(null); return; }
+          if (isAthlete && view === "join" && joinRace) {
+            // Same as Leave: going back without stopping GPS left it streaming with no Stop button.
+            if (gpsWatchRef.current != null && !confirm("Leave this race? Your GPS tracking will stop.")) return;
+            setJoinRace(null); setJoinAthIdx(null); stopGpsTracking(); joinGpsTrailRef.current = []; setJoinGpsTrail([]); setJoinLiveData(null);
+            try { localStorage.removeItem("tri-active-join"); localStorage.removeItem("tri-gps-trail"); } catch(_) {}
+            return;
+          }
           if (!isHost) { selectMode(null); }
           setView(roleHome);
         }
@@ -12495,7 +12578,7 @@ Start a new race anyway?`)) return;
                 const bikeWhen = (f, w) => {
                   const pf = { date: w.date || "", time: w.time || "", liveLeadMin: w.lead };
                   persistBikeFeeds(bikeFeedList.map(x => x.code === f.code ? { ...x, ...pf, past: null } : x));
-                  if (bikeDraft.code === f.code) setBikeDraft(d => ({ ...d, ...pf }));
+                  if (bikeDraft && bikeDraft.code === f.code) setBikeDraft(d => ({ ...d, ...pf }));
                 };
                 // A Timed Tri moves all its waves together: the first wave takes the new time.
                 const timedWhen = async (c, w) => {
@@ -12759,8 +12842,8 @@ Start a new race anyway?`)) return;
                           {workoutDraft && (() => {
                             const w = workoutDraft;
                             const setBlocks = blocks => setWorkoutDraft(d => ({ ...d, blocks }));
-                            const upd = (bi, si, fn) => setBlocks(w.blocks.map((b, i) => i !== bi ? b : si == null ? fn(b) : { ...b, steps: b.steps.map((s, j) => j === si ? fn(s) : s) }));
-                            const del = (bi, si) => setBlocks(si == null ? w.blocks.filter((_, i) => i !== bi) : w.blocks.map((b, i) => i !== bi ? b : { ...b, steps: b.steps.filter((_, j) => j !== si) }));
+                            const upd = (bi, si, fn) => setBlocks(w.blocks.map((b, i) => i !== bi ? b : si == null ? fn(b) : { ...b, steps: (b.steps || []).map((s, j) => j === si ? fn(s) : s) }));
+                            const del = (bi, si) => setBlocks(si == null ? w.blocks.filter((_, i) => i !== bi) : w.blocks.map((b, i) => i !== bi ? b : { ...b, steps: (b.steps || []).filter((_, j) => j !== si) }));
                             const inp = { background: "#FFFFFF", border: `2px solid ${TM.line}`, borderRadius: 6, padding: "0 8px", minHeight: 44, color: TM.ink, fontWeight: 700, fontSize: 16, minWidth: 0, boxSizing: "border-box" };
                             const stepRow = (s, bi, si) => (
                               <div key={si == null ? "b" + bi : bi + "-" + si} className="wk-step" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", padding: "8px 0", borderTop: `2px solid ${TM.line}` }}>
@@ -12791,16 +12874,16 @@ Start a new race anyway?`)) return;
                                   {["mi", "km"].map(u => <button key={u} onClick={() => setWorkoutDraft(d => ({ ...d, units: u }))} style={{ ...btnStyle(TM.ink, w.units !== u), minHeight: 40, padding: "0 14px" }}>{u === "mi" ? "mile" : "km"}</button>)}
                                 </div>
                                 <div style={{ ...TM_CAPTION, marginBottom: 4 }}>Time as minutes ("10" or "1:30"), or a distance. Leave pace empty for an easy, open step.</div>
-                                {w.blocks.map((b, bi) => b.repeat ? (
+                                {w.blocks.map((b, bi) => (b.repeat != null || Array.isArray(b.steps)) ? (
                                   <div key={"r" + bi} style={{ border: `3px solid ${TM.run}`, borderRadius: 8, padding: "6px 10px", margin: "8px 0" }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                       <span style={{ fontWeight: 800 }}>Repeat</span>
-                                      <input aria-label="Repeat count" value={b.repeat} inputMode="numeric" onChange={e => upd(bi, null, x => ({ ...x, repeat: Math.max(1, Math.min(50, parseInt(e.target.value) || 1)) }))} style={{ ...inp, width: 60 }} />
+                                      <input aria-label="Repeat count" value={b.repeat} inputMode="numeric" onChange={e => upd(bi, null, x => ({ ...x, repeat: e.target.value.trim() === "" ? "" : Math.max(1, Math.min(50, parseInt(e.target.value) || 1)) }))} style={{ ...inp, width: 60 }} />
                                       <span style={{ fontWeight: 800 }}>times</span>
                                       <button aria-label="Remove repeat" onClick={() => del(bi)} style={{ ...btnStyle("#B3001B", true), minHeight: 40, padding: "0 10px", marginLeft: "auto" }}>✕</button>
                                     </div>
-                                    {b.steps.map((s, si) => stepRow(s, bi, si))}
-                                    <button onClick={() => upd(bi, null, x => ({ ...x, steps: [...x.steps, wkNewStep("recover")] }))} style={{ ...btnStyle(TM.run, true), minHeight: 40, marginTop: 6, fontSize: 15 }}>+ Step in this repeat</button>
+                                    {(b.steps || []).map((s, si) => stepRow(s, bi, si))}
+                                    <button onClick={() => upd(bi, null, x => ({ ...x, steps: [...(x.steps || []), wkNewStep("recover")] }))} style={{ ...btnStyle(TM.run, true), minHeight: 40, marginTop: 6, fontSize: 15 }}>+ Step in this repeat</button>
                                   </div>
                                 ) : stepRow(b, bi, null))}
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
@@ -12811,7 +12894,9 @@ Start a new race anyway?`)) return;
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                                   <button id="wk-save" onClick={() => {
                                     if (!wkExpand(w).length) { alert("Add at least one step with a time or distance."); return; }
-                                    const clean = { ...w, name: w.name.trim() || "Workout" };
+                                    const blank = w.blocks.flatMap(b => (b.repeat != null || Array.isArray(b.steps)) ? (b.steps || []) : [b]).filter(s => !(s.amt > 0)).length;
+                                    if (blank && !confirm(`${blank === 1 ? "One step has" : blank + " steps have"} no time or distance and will be skipped. Save anyway?`)) return;
+                                    const clean = { ...w, name: w.name.trim() || "Workout", blocks: w.blocks.map(b => (b.repeat != null || Array.isArray(b.steps)) ? { ...b, repeat: Math.max(1, parseInt(b.repeat) || 1) } : b) };
                                     persistWorkouts(isNew ? [clean, ...workouts] : workouts.map(x => x.id === w.id ? clean : x));
                                     setWorkoutDraft(null); setWorkoutPickOpen(true);
                                   }} style={{ ...btnStyle("#04613F"), flex: "1 1 120px", minHeight: 48 }}>Save</button>
@@ -12960,9 +13045,9 @@ Start a new race anyway?`)) return;
                 const missing = athletes.filter(a => !a.email);
                 const chosen = withEmail.filter(a => !emailSkip[a.id]);
                 const addresses = [...new Set(chosen.map(a => a.email.toLowerCase()))];
-                const subject = emailSubject || templates[emailKind].subject;
-                const body = emailBody || templates[emailKind].body;
-                const pick = (k) => { setEmailKind(k); setEmailSubject(""); setEmailBody(""); setEmailCopied(""); };
+                const subject = emailSubject ?? templates[emailKind].subject;
+                const body = emailBody ?? templates[emailKind].body;
+                const pick = (k) => { setEmailKind(k); setEmailSubject(null); setEmailBody(null); setEmailCopied(""); };
                 const openMail = (to, bcc, subj, text) => {
                   const q = [bcc && bcc.length ? `bcc=${bcc.join(",")}` : "", `subject=${encodeURIComponent(subj)}`, `body=${encodeURIComponent(text)}`].filter(Boolean).join("&");
                   window.location.href = `mailto:${encodeURIComponent(to || "")}?${q}`;
@@ -13626,7 +13711,7 @@ Start a new race anyway?`)) return;
                                   const entry = { ...resultsRace, id: "manual_" + Date.now() };
                                   const updated = [...savedArchive, entry];
                                   setSavedArchive(updated);
-                                  localStorage.setItem("tri-archive", JSON.stringify(updated));
+                                  lsSet("tri-archive", JSON.stringify(updated));
                                   if (currentUser) rtdb.ref("users/" + currentUser.uid + "/archive").set(updated).catch(console.error);
                                   setManualSavedMsg("Saved to Past Results!");
                                   setTimeout(() => setManualSavedMsg(""), 3000);
@@ -13736,7 +13821,7 @@ Start a new race anyway?`)) return;
                                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
                                   <span style={{ fontSize: 14, color: "#3D434B" }}>Photo code:</span>
                                   <span style={{ fontFamily: "var(--tm-font)", fontSize: 16, color: "#0B3FCC", letterSpacing: 0.5 }}>{race.photoCode}</span>
-                                  <button onClick={() => navigator.clipboard.writeText(race.photoCode)} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 3, color: "#0B3FCC", fontSize: 14, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
+                                  <button onClick={() => { try { navigator.clipboard.writeText(race.photoCode).catch(() => {}); } catch (_) {} }} style={{ background: "none", border: "2px solid #C9C5BC", borderRadius: 3, color: "#0B3FCC", fontSize: 14, padding: "1px 6px", cursor: "pointer" }}>Copy</button>
                                 </div>
                               ) : null}
                               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
@@ -15034,7 +15119,7 @@ Start a new race anyway?`)) return;
                         try { await currentUser.updateProfile({ displayName }); } catch(e) { console.error("Auth update:", e); }
                         // Always update local state and localStorage immediately
                         setUserProfile(updated);
-                        localStorage.setItem("tri-user-profile", JSON.stringify(updated));
+                        lsSet("tri-user-profile", JSON.stringify(updated));
                         setProfileSaved(true);
                         setTimeout(() => setProfileSaved(false), 2500);
                         rtdb.ref("users/" + currentUser.uid + "/profile").set(updated)
@@ -15929,7 +16014,7 @@ Start a new race anyway?`)) return;
                               <div key={course.id} style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
                                 <label htmlFor={`d-${seg}-${course.id}`} style={{ flex: 1, minWidth: 0, fontWeight: 800, fontSize: 16 }}>{course.name || "Course"}</label>
                                 <NumInput id={`d-${seg}-${course.id}`} type="number" min={step} step={step} value={course[field]}
-                                  onChange={e => updateCourse(course.id, field, Number(e.target.value))}
+                                  onChange={e => { if (e.target.value.trim() === "") return; const n = Number(e.target.value); if (!isNaN(n) && n >= 0) updateCourse(course.id, field, n); }}
                                   style={{ width: 130, background: "#FFFFFF", border: "none", borderRadius: 6, padding: "4px 10px",
                                            color: TM.ink, textAlign: "center", outline: "none" }} />
                                 <span style={{ width: 34, fontWeight: 800, fontSize: 17 }}>{short}</span>
@@ -16378,7 +16463,7 @@ Start a new race anyway?`)) return;
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <span style={{ fontSize: 14, color: "#3D434B" }}>±</span>
                             <NumInput type="number" min="5" max="500" value={wp.radiusM}
-                              onChange={e => setWaypoints(wps => wps.map((w, i) => i === wi ? { ...w, radiusM: +e.target.value } : w))}
+                              onChange={e => setWaypoints(wps => wps.map((w, i) => i === wi ? { ...w, radiusM: e.target.value.trim() === "" || isNaN(+e.target.value) ? w.radiusM : Math.min(500, Math.max(5, +e.target.value)) } : w))}
                               style={{ width: 52, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 6px", color: "#0B0D10", fontSize: 14, outline: "none", textAlign: "center" }} />
                             <span style={{ fontSize: 14, color: "#3D434B" }}>m</span>
                           </div>
@@ -17516,6 +17601,12 @@ Start a new race anyway?`)) return;
             
 
             {/* ══ BIKE LIVE FEED ══════════════════════════════════════════════ */}
+            {bikeRiding && (appMode !== "bike" || view !== "bike") && (
+              <button id="bike-back-btn" onClick={() => { selectMode("bike"); setView("bike"); setBikeView("ride"); }}
+                style={{ position: "fixed", left: 16, right: 16, bottom: 16, zIndex: 3000, background: TM.live, color: "#FFFFFF", border: "none", borderRadius: 6, padding: "14px 16px", fontWeight: 800, fontSize: 16, boxShadow: "0 4px 16px rgba(0,0,0,.3)" }}>
+                ● Still recording — back to your {bikeRideSport === "run" ? "run" : "ride"}
+              </button>
+            )}
             {view === "bike" && (() => {
               const S = {
                 card:  { background:"#FFFFFF", border:`2px solid ${TM.line}`, borderRadius:6, padding:"16px", marginBottom:12 },
@@ -17524,7 +17615,8 @@ Start a new race anyway?`)) return;
                 row:   { display:"flex", gap:8, alignItems:"center" },
               };
               const M_PER_MI = 1609.344;
-              const useKm = (bikeView === "feed" ? (bikeWatchMeta?.units || "mi") : (bikeDraft?.units || "mi")) === "km";
+              const rideFeed = bikeFeedList.find(f => f.code === (bikeRideCode || "").trim().toUpperCase()) || {};
+              const useKm = (bikeView === "feed" ? bikeWatchMeta?.units : bikeView === "ride" ? (rideFeed.units || bikeRideMeta?.units || bikeDraft?.units) : bikeDraft?.units) === "km";
               const rideFeedSport = bikeRiding ? bikeRideSport : ((bikeFeedList.find(f => f.code === bikeRideCode) || {}).sport || bikeRideSport);
               const sport = (bikeView === "feed" ? bikeWatchMeta?.sport : bikeView === "ride" ? rideFeedSport : bikeDraft?.sport) || "bike";
               const isRun = sport === "run";

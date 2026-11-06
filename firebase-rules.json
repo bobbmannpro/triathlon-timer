@@ -4,6 +4,7 @@
       "$token": {
         ".read": true,
         ".write": "auth != null && (!data.exists() ? newData.child('createdBy').val() === auth.uid : (data.child('createdBy').val() === auth.uid || !data.child('createdBy').exists() || root.child('liveRaces').child(data.child('raceCode').val() + '').child('publishedBy').val() === auth.uid))",
+        ".validate": "!newData.child('uid').exists() || newData.child('uid').val() === auth.uid || newData.child('uid').val() === data.child('uid').val()",
         "race": {
           ".write": "auth != null && (root.child('watchTokens').child($token).child('createdBy').val() === auth.uid || root.child('liveRaces').child(root.child('watchTokens').child($token).child('raceCode').val() + '').child('publishedBy').val() === auth.uid)"
         }
