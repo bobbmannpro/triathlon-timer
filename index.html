@@ -5236,6 +5236,7 @@
         const setupMapPinsRef = useRef({});
         const activePlacementRef = useRef(null);
         const [activePlacementId, setActivePlacementId] = useState(null);
+        const [wpOptsOpen, setWpOptsOpen] = useState(null);   // which course pin has its options open
         const waypointsRef = useRef(waypoints);
 
         // Stable ref callback for setup map — useCallback([]) prevents destroy/recreate on every render
@@ -12483,10 +12484,10 @@ Start a new race anyway?`)) return;
             </header>
 
             {/* NAV — hosts only. Athletes and spectators move with a back arrow. */}
-            {isHost && view !== "timed" && view !== "challenge" && (() => {
+            {isHost && !["timed", "challenge", "myraces", "newrace"].includes(view) && (() => {
               const navTabs = appMode === "bike"
                 ? [["myraces","My Races"],["__bike_setup__","Setup"],["__bike_ride__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Run" : "Ride"],["__bike_feed__","Follow"],["__bike_riders__", ((bikeDraft && bikeDraft.sport) || bikeRideSport) === "run" ? "Runners" : "Riders"]]
-                : [["myraces","My Races"],["setup","Setup"],["race","Race"], ...(courseMapOn ? [["racemap","Map"]] : []),["results","Results"],["athletes","Athletes"],["devices","Devices"]];
+                : [["myraces","My Races"],["setup","Setup"],["race","Race"], ...(courseMapOn ? [["racemap","Map"]] : []),["results","Results"]];
               return (
                 <nav className="tm-nav-wrap" aria-label="Host">
                 <div className="tm-nav" ref={navStripRef}>
@@ -12552,6 +12553,8 @@ Start a new race anyway?`)) return;
                         </div>
                       </div>
                     )}
+                    <button onClick={() => { setClockMore(false); setView("devices"); }}
+                      style={{ ...btnStyle(TM.ink, true), minHeight: 44, padding: "0 12px", fontSize: 15, width: "100%", marginTop: 8 }}>📡 Devices — sensors, bikes, watch</button>
                     {(courses || []).some(c => courseHasLaps(c) || ["distance", "trainer", "spin"].includes(c.bikeType)) && (
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase" }}>Leg finishes</span>
@@ -12925,6 +12928,8 @@ Start a new race anyway?`)) return;
                           {menuBtn(`Past ${K.label.toLowerCase()}s`, past.length ? n(past.length) : "None yet", () => { setPastOpen(true); window.scrollTo(0, 0); }, TM.ink, "🗂")}
                           {k === "triathlon" && menuBtn("Results", savedArchive.length ? `${savedArchive.length} finished` : "None yet", () => { selectMode("triathlon"); setView("archive"); }, K.colour, "📊")}
                           {(k === "triathlon" || k === "bike" || k === "challenge") && menuBtn("Photo library", "Albums parents and athletes open by code", () => { setAlbumDraft(null); setAlbumMsg(null); setView("photos"); }, K.colour, "📷")}
+                          {k === "triathlon" && menuBtn("Athletes", "Everyone who's raced with you", () => { selectMode("triathlon"); setView("athletes"); }, K.colour, "👥")}
+                          {k === "triathlon" && menuBtn("Devices", "Bluetooth sensors, Keiser bikes, Garmin watch", () => { selectMode("triathlon"); setView("devices"); }, K.colour, "📡")}
                           {k === "triathlon" && menuBtn("Manual entry", "Type in times from a race that already happened", () => { selectMode("triathlon"); setView("manual"); }, K.colour, "✍")}
                         </div>
                         {(k === "triathlon" || k === "bike" || k === "challenge") && (
@@ -12980,7 +12985,10 @@ Start a new race anyway?`)) return;
 
               {/* ── NEW RACE: step 1 of the wizard, the only place a kind is chosen ── */}
               {view === "newrace" && (
-                <WizardFrame step={1} titles={[`New ${KIND_NAMES[newRaceKind] || "race"}`, "Who's racing?", "Distances", "Details", "Course"]}
+                <WizardFrame step={1} total={newRaceKind === "timed" || newRaceKind === "challenge" ? 1 : 5}
+                  titles={newRaceKind === "triathlon" ? [`New ${KIND_NAMES.triathlon}`, "Age groups", "Who's racing?", "Distances", "Course & certificate"]
+                    : newRaceKind === "bike" ? [`New ${KIND_NAMES.bike || "ride"}`, "Who's going?", "Details", "Map & route", "Save & publish"]
+                    : [`New ${KIND_NAMES[newRaceKind] || "race"}`]}
                   title={`New ${KIND_NAMES[newRaceKind] || "race"}`}
                   onJump={() => {}}
                   onBack={() => setView("myraces")}
@@ -15105,13 +15113,6 @@ Start a new race anyway?`)) return;
                           </select>
                         </div>
                       </div>
-                      <div style={{ ...rowStyle(isHost ? TM.swim : isAthlete ? TM.bike : TM.run), display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={TM_LABEL}>Role</div>
-                          <div style={{ fontSize: 17, fontWeight: 800 }}>{isHost ? "Host" : isAthlete ? "Athlete" : "Spectator"}</div>
-                        </div>
-                        <button onClick={() => setRolePickerOpen(true)} style={btnStyle(TM.ink, true)}>Switch role</button>
-                      </div>
                       <button onClick={async () => {
                         setProfileSaving(true); setProfileSaved(false); setProfileError("");
                         const displayName = `${editProfile.firstName.trim()} ${editProfile.lastName.trim()}`;
@@ -15576,7 +15577,7 @@ Start a new race anyway?`)) return;
 
               {/* ── SETUP ── */}
               {view === "setup" && (() => {
-                const TRI_STEPS = ["What kind of race?", "Age groups", "Who's racing?", "How far is each leg?", courseMapOn ? "Certificate & course map" : "Certificate & save"];
+                const TRI_STEPS = ["What kind of race?", "Age groups", "Who's racing?", "Distances", courseMapOn ? "Course & certificate" : "Certificate & save"];
                 const setRaceName = (v) => {
                   const prev = saveRaceName;
                   setSaveRaceName(v);
@@ -16430,6 +16431,27 @@ Start a new race anyway?`)) return;
                             : <input value={wp.label} onChange={e => setWaypoints(pws => pws.map(w => w.id === wp.id ? { ...w, label: e.target.value } : w))}
                                 style={{ flex: 1, background: "transparent", border: "none", borderBottom: "2px solid #C9C5BC", color: "#04613F", fontSize: 14, fontWeight: 700, outline: "none", padding: "0 0 2px 0" }} />
                           }
+                          <button onClick={() => setWpOptsOpen(o => o === wp.id ? null : wp.id)} aria-expanded={wpOptsOpen === wp.id}
+                            style={{ background: "none", border: "none", color: "#3D434B", fontSize: 14, fontWeight: 700, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>
+                            {wpOptsOpen === wp.id ? "Less ▲" : "Options ▼"}</button>
+                          {!wp.fixed && <button onClick={() => setWaypoints(wps => wps.filter(w => w.id !== wp.id))} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 16, cursor: "pointer", lineHeight: 1, padding: "0 2px" }}>&times;</button>}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          <button onClick={() => { const id = activePlacementId === wp.id ? null : wp.id; activePlacementRef.current = id; setActivePlacementId(id); }}
+                            style={{ ...btnStyle(activePlacementId === wp.id ? "#8A5A00" : "#04613F", activePlacementId !== wp.id), padding: "5px 10px", fontSize: 14 }}>
+                            {activePlacementId === wp.id ? "✕ Cancel" : "🗺 Pick on Map"}
+                          </button>
+                          <button onClick={() => dropWaypointHere(wi)} style={{ ...btnStyle("#04613F", true), padding: "5px 10px", fontSize: 14 }}>
+                            📍 My Location
+                          </button>
+                          {wp.lat != null
+                            ? <div style={{ fontSize: 14, fontWeight: 700, color: "#04613F" }} title={`${wp.lat.toFixed(5)}, ${wp.lng.toFixed(5)}`}>✓ Placed</div>
+                            : <div style={{ fontSize: 14, color: "#3D434B" }}>Not placed</div>}
+                          {wp.lat != null && <button onClick={() => setWaypoints(wps => wps.map((w, i) => i === wi ? { ...w, lat: null, lng: null } : w))} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 14, cursor: "pointer" }}>&times;</button>}
+                        </div>
+                        {wpOptsOpen === wp.id && (
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "2px solid #EFEDE8" }}>
+                            <span style={{ fontSize: 14, color: "#3D434B" }}>When an athlete gets here:</span>
                           <select
                             value={wp.action === "start" ? "start" : wp.action === "marker" ? "marker" : `seg_${wp.segIdx}`}
                             onChange={e => {
@@ -16450,16 +16472,6 @@ Start a new race anyway?`)) return;
                             style={{ background: wp.enabled !== false ? "#EFEDE8" : "#EFEDE8", border: `2px solid ${wp.enabled !== false ? "#C9C5BC" : "#C9C5BC"}`, borderRadius: 4, padding: "2px 7px", fontSize: 14, color: wp.enabled !== false ? "#04613F" : "#B3001B", cursor: "pointer", letterSpacing: 1, flexShrink: 0 }}>
                             {wp.enabled !== false ? "GPS ON" : "GPS OFF"}
                           </button>
-                          {!wp.fixed && <button onClick={() => setWaypoints(wps => wps.filter(w => w.id !== wp.id))} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 16, cursor: "pointer", lineHeight: 1, padding: "0 2px" }}>&times;</button>}
-                        </div>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          <button onClick={() => { const id = activePlacementId === wp.id ? null : wp.id; activePlacementRef.current = id; setActivePlacementId(id); }}
-                            style={{ ...btnStyle(activePlacementId === wp.id ? "#8A5A00" : "#04613F", activePlacementId !== wp.id), padding: "5px 10px", fontSize: 14 }}>
-                            {activePlacementId === wp.id ? "✕ Cancel" : "🗺 Pick on Map"}
-                          </button>
-                          <button onClick={() => dropWaypointHere(wi)} style={{ ...btnStyle("#04613F", true), padding: "5px 10px", fontSize: 14 }}>
-                            📍 My Location
-                          </button>
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <span style={{ fontSize: 14, color: "#3D434B" }}>±</span>
                             <NumInput type="number" min="5" max="500" value={wp.radiusM}
@@ -16467,11 +16479,8 @@ Start a new race anyway?`)) return;
                               style={{ width: 52, background: "#FFFFFF", border: "2px solid #C9C5BC", borderRadius: 4, padding: "5px 6px", color: "#0B0D10", fontSize: 14, outline: "none", textAlign: "center" }} />
                             <span style={{ fontSize: 14, color: "#3D434B" }}>m</span>
                           </div>
-                          {wp.lat != null
-                            ? <div style={{ fontSize: 14, color: "#04613F" }}>✓ {wp.lat.toFixed(4)}, {wp.lng.toFixed(4)}</div>
-                            : <div style={{ fontSize: 14, color: "#3D434B" }}>Not placed</div>}
-                          {wp.lat != null && <button onClick={() => setWaypoints(wps => wps.map((w, i) => i === wi ? { ...w, lat: null, lng: null } : w))} style={{ background: "none", border: "none", color: "#3D434B", fontSize: 14, cursor: "pointer" }}>&times;</button>}
-                        </div>
+                          </div>
+                        )}
                         </div>
                       </div>
                     ); })}
