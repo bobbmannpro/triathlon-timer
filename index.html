@@ -52,6 +52,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
@@ -2808,8 +2809,18 @@
       // subscription, or a promo code the owner hands out.
       const OWNER_UIDS = ["nfH10ASvHbZkazkXMkEIoo8IbGY2", "yomrf3PDWoRGMsAZJudT7Y4LuYE3"];
       const TESTER_UIDS = ["zaZlSgcfROeSKUwgFz2Qwsu0WVg2"];   // host.test@example.com — QA and tutorial recording
-      const HOST_PRICE = "$10/month";
-      const STRIPE_HOST_LINK = "https://buy.stripe.com/test_4gM00k5RB7Dj6EK7uY0Jq00";   // TEST mode — swap for the live link once Stripe activates the account   // Stripe Payment Link for the host subscription, once the account is set up
+      // Subscriptions run themselves: the billing functions (Claude Apps/timeathon-billing) make the
+      // Stripe checkout and switch hostAccess on and off. BILLING_LIVE turns the Subscribe buttons on.
+      const BILLING_APP = "tri";
+      const BILLING_LIVE = false;
+      const HOST_PLANS = [
+        { key: "month", price: "$10", per: "a month", note: "Month to month" },
+      ];
+      const billingCall = (name, data) => firebase.app().functions("us-central1").httpsCallable(name)(data || {}).then(r => r.data);
+      // Access counts for this app when it came from a code or the owner, or from a subscription to this app.
+      const hostAccessLive = v => !!v && (v.via !== "stripe"
+        ? (!v.until || v.until > Date.now())
+        : !!(v.stripe && v.stripe[BILLING_APP] && v.stripe[BILLING_APP].until > Date.now()));
 
       // Draw a signature with a finger or mouse. Hands back a trimmed PNG with a
       // transparent background, so it sits on any certificate.
@@ -11404,17 +11415,32 @@
           if (OWNER_UIDS.includes(currentUser.uid)) { setHostAccess({ via: "owner" }); return; }
           if (TESTER_UIDS.includes(currentUser.uid)) { setHostAccess({ via: "tester" }); return; }
           const ref = rtdb.ref("hostAccess/" + currentUser.uid);
-          const fn = sn => { const v = sn.val(); setHostAccess(v && (!v.until || v.until > Date.now()) ? v : null); };
+          const fn = sn => { const v = sn.val(); setHostAccess(hostAccessLive(v) ? v : null); };
           ref.on("value", fn, () => setHostAccess(null));
           return () => ref.off("value", fn);
         }, [currentUser && currentUser.uid]);
         // Back from Stripe checkout (?subscribed=1): note it so the owner can switch hosting on.
-        const [subPending, setSubPending] = useState(() => /[?&]subscribed=1/.test(location.search));
+        // Back from Stripe checkout (?subscribed=plan): Stripe tells the server within seconds, and
+        // this asks the server to re-check too, so the page unlocks by itself either way.
+        const [subPending, setSubPending] = useState(() => /[?&]subscribed=\w+/.test(location.search));
         useEffect(() => {
           if (!subPending || !currentUser || currentUser.isAnonymous) return;
-          rtdb.ref("hostPending/" + currentUser.uid).set({ email: currentUser.email || "", at: Date.now() }).catch(() => {});
           try { history.replaceState(null, "", location.pathname); } catch (_) {}
+          let stop = false;
+          (async () => { for (let i = 0; i < 6 && !stop; i++) {
+            try { const r = await billingCall("billingRefresh"); if (r && r.access) break; } catch (_) {}
+            await new Promise(r => setTimeout(r, 2500)); } })();
+          return () => { stop = true; };
         }, [subPending, currentUser && currentUser.uid]);
+        const [billBusy, setBillBusy] = useState(null);     // plan key, or "portal", while Stripe's page is being fetched
+        const [billErr, setBillErr] = useState(null);
+        async function goBilling(name, data, busyKey) {
+          setBillBusy(busyKey); setBillErr(null);
+          try { const r = await billingCall(name, data); if (r && r.url) { location.href = r.url; return; } throw new Error("no link"); }
+          catch (e) { setBillErr("Couldn't reach checkout — check your connection and try again."); setBillBusy(null); }
+        }
+        const subscribe = plan => goBilling("billingCheckout", { app: BILLING_APP, plan }, plan);
+        const manageBilling = () => goBilling("billingPortal", { app: BILLING_APP }, "portal");
         const [pendingList, setPendingList] = useState({});
         useEffect(() => {
           if (!currentUser || !OWNER_UIDS.includes(currentUser.uid)) return;
@@ -12398,15 +12424,21 @@ Start a new race anyway?`)) return;
                 <div style={{ fontSize: 17, lineHeight: 1.5 }}>
                   Live timing from phones, lap counting by parents, live standings, certificates, results emails and photo albums — for triathlons, timed tris, challenges and bike rides.
                 </div>
-                <div style={{ ...rowStyle(TM.swim), marginTop: 18 }}>
-                  <div style={{ fontSize: 30, fontWeight: 900 }}>{HOST_PRICE}</div>
-                  <div style={{ ...TM_CAPTION, marginTop: 2 }}>Cancel any time. Athletes and spectators are always free.</div>
-                  {STRIPE_HOST_LINK
-                    ? <a href={`${STRIPE_HOST_LINK}?client_reference_id=${encodeURIComponent(currentUser.uid)}&prefilled_email=${encodeURIComponent(currentUser.email || "")}`}
-                        style={{ ...btnStyle(TM.swim), display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", marginTop: 12 }}>Subscribe →</a>
-                    : <div style={{ fontSize: 15, fontWeight: 700, marginTop: 12 }}>Have a promo code? Enter it below.</div>}
-                  {subPending && <div style={{ fontSize: 15, fontWeight: 700, color: TM.run, marginTop: 10 }}>✓ Thanks for subscribing! Your hosting is being switched on — usually within a few hours. This page unlocks by itself.</div>}
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
+                  {HOST_PLANS.map((pl, pi) => (
+                    <div key={pl.key} style={{ ...rowStyle(pi === 0 ? TM.swim : TM.ink), flex: "1 1 220px", display: "flex", flexDirection: "column" }}>
+                      <div><span style={{ fontSize: 34, fontWeight: 900 }}>{pl.price}</span> <span style={{ fontSize: 17, fontWeight: 800 }}>{pl.per}</span></div>
+                      <div style={{ ...TM_CAPTION, marginTop: 2 }}>{pl.note}</div>
+                      {BILLING_LIVE && <button onClick={() => subscribe(pl.key)} disabled={!!billBusy}
+                        style={{ ...btnStyle(pi === 0 ? TM.swim : TM.ink), marginTop: 12, opacity: billBusy ? 0.6 : 1 }}>
+                        {billBusy === pl.key ? "Opening checkout…" : HOST_PLANS.length > 1 ? `Subscribe ${pl.key === "year" ? "yearly" : "monthly"} →` : "Subscribe →"}</button>}
+                    </div>
+                  ))}
                 </div>
+                <div style={{ ...TM_CAPTION, marginTop: 8 }}>Cancel any time. Athletes and spectators are always free.</div>
+                {billErr && <div role="alert" style={{ fontSize: 15, fontWeight: 700, color: TM.live, marginTop: 10 }}>{billErr}</div>}
+                {!BILLING_LIVE && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 10 }}>Online sign-up opens soon. Have a promo code? Enter it below.</div>}
+                {subPending && <div style={{ fontSize: 15, fontWeight: 700, color: TM.run, marginTop: 10 }}>✓ Thanks for subscribing! Switching your hosting on — this page unlocks by itself in a few seconds.</div>}
                 <div style={{ marginTop: 22 }}>
                   <label htmlFor="promo" style={TM_LABEL}>Promo code</label>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -15162,11 +15194,19 @@ Start a new race anyway?`)) return;
                     Sign Out
                   </button>
 
-                  {hostAccess && hostAccess.until && (
+                  {hostAccess && hostAccess.stripe && hostAccess.stripe[BILLING_APP] ? (
+                    <div style={{ ...rowStyle(TM.swim), marginTop: 20, fontSize: 15 }}>
+                      <strong>Hosting subscription</strong>{hostAccess.stripe[BILLING_APP].plan === "year" ? " · yearly" : hostAccess.stripe[BILLING_APP].plan === "month" ? " · monthly" : ""}
+                      {" — "}{hostAccess.stripe[BILLING_APP].cancels ? "ends" : "renews"} around {new Date(hostAccess.stripe[BILLING_APP].until - 3 * 86400000).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}.
+                      <button onClick={manageBilling} disabled={!!billBusy} style={{ ...btnStyle(TM.ink, true), display: "block", marginTop: 10, minHeight: 44 }}>
+                        {billBusy === "portal" ? "Opening…" : "Manage subscription — card, receipts, cancel"}</button>
+                      {billErr && <div role="alert" style={{ fontWeight: 700, color: TM.live, marginTop: 8 }}>{billErr}</div>}
+                    </div>
+                  ) : hostAccess && hostAccess.until ? (
                     <div style={{ ...rowStyle(TM.swim), marginTop: 20, fontSize: 15 }}>
                       <strong>Hosting access</strong> from code {hostAccess.code || ""} runs until {new Date(hostAccess.until).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}.
                     </div>
-                  )}
+                  ) : null}
                   {/* Privacy: confirm the email, take a copy of your data, or delete the account. */}
                   <div style={{ ...rowStyle(), marginTop: 20 }}>
                     <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: TM.inkMuted, marginBottom: 8 }}>Your data & privacy</div>
